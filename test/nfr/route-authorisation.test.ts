@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { ROUTES, type RouteDefinition } from '@chorus/api'
+import { routeTable, type RouteDefinition } from '@chorus/api'
 
 /**
  * WS-4 AC4 — every route declares the role and scope it requires.
@@ -10,8 +10,13 @@ import { ROUTES, type RouteDefinition } from '@chorus/api'
  * is what turns that from an intention into a build failure.
  *
  * plan.md §5 requires this to grow automatically — every new route appears here
- * without anyone remembering to add it.
+ * without anyone remembering to add it. That is why the table comes from the
+ * same function the app mounts, rather than from the subset that happens to be
+ * declared statically: a route the suite cannot see is precisely the silently
+ * unguarded route the declaration was meant to make impossible.
  */
+const ROUTES = routeTable()
+
 describe('WS-4 AC4 route authorisation is declared, not remembered', () => {
   it('WS-4 AC4: the route table is non-empty, so this suite is not vacuous', () => {
     expect(ROUTES.length).toBeGreaterThan(0)

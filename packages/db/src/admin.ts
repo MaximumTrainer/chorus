@@ -100,6 +100,11 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
         [ulid(), workspaceId, userId, ulid()],
       )
       await owner.query(
+        `INSERT INTO policies (id, workspace_id, team_id, checkpoint_kind, mode)
+         VALUES ($1, $2, $3, 'before_external_write', 'ask')`,
+        [ulid(), workspaceId, teamId],
+      )
+      await owner.query(
         `INSERT INTO audit_events (id, workspace_id, actor_type, actor_id, action, target_type, target_id)
          VALUES ($1, $2, 'user', $3, 'seed', 'workspace', $2)`,
         [ulid(), workspaceId, userId],
@@ -144,6 +149,15 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
             [id, workspaceId, userId, id],
           )
           return
+        case 'policies': {
+          const [team] = await tx.query<{ id: string }>(`SELECT id FROM teams LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO policies (id, workspace_id, team_id, checkpoint_kind, mode)
+             VALUES ($1, $2, $3, 'before_coding_job', 'ask')`,
+            [id, workspaceId, team?.id ?? null],
+          )
+          return
+        }
         case 'audit_events':
           await tx.execute(
             `INSERT INTO audit_events (id, workspace_id, actor_type, action, target_type)

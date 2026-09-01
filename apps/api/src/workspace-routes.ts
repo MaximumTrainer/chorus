@@ -1,13 +1,6 @@
-import {
-  ForbiddenError,
-  NotFoundError,
-  UnauthenticatedError,
-  ValidationError,
-  ROLES,
-  atLeast,
-  type Role,
-} from '@chorus/core'
-import { route, type AppContext, type RouteDefinition } from './routes.js'
+import { ValidationError, ROLES, type Role } from '@chorus/core'
+import { route, type RouteDefinition } from './routes.js'
+import { requireRole, requireUser } from './authorisation.js'
 import type { WorkspaceService } from './workspaces.js'
 
 /**
@@ -18,33 +11,6 @@ import type { WorkspaceService } from './workspaces.js'
  * non-member is answered with not-found rather than forbidden: confirming that
  * a workspace exists would let anyone enumerate them by id (WS-2 AC4).
  */
-
-function requireUser(c: AppContext): { id: string; email: string } {
-  const user = c.get('user')
-  if (!user) throw new UnauthenticatedError('Sign in to continue')
-  return user
-}
-
-async function requireRole(
-  c: AppContext,
-  workspaces: WorkspaceService,
-  workspaceId: string,
-  minimum: Role,
-): Promise<{ userId: string; role: Role }> {
-  const user = requireUser(c)
-  const role = await workspaces.roleOf(workspaceId, user.id)
-
-  // Not a member: indistinguishable from a workspace that does not exist.
-  if (!role) throw new NotFoundError('No such workspace', { workspaceId })
-
-  if (!atLeast(role, minimum)) {
-    throw new ForbiddenError(`This action requires the ${minimum} role`, {
-      required: minimum,
-      held: role,
-    })
-  }
-  return { userId: user.id, role }
-}
 
 function parseRole(value: unknown): Role {
   if (typeof value !== 'string' || !(ROLES as readonly string[]).includes(value)) {

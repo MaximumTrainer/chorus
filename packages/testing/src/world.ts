@@ -43,6 +43,7 @@ export interface SignedInUser {
   get(path: string): Promise<Response>
   post(path: string, body?: unknown): Promise<Response>
   patch(path: string, body?: unknown): Promise<Response>
+  put(path: string, body?: unknown): Promise<Response>
   delete(path: string): Promise<Response>
   createWorkspace(name: string): Promise<Workspace>
 }
@@ -125,6 +126,7 @@ export function createTestClient(app: RequestableApp, mailer: RecordingMailer): 
         get: (path) => send(path, withCookie()),
         post: (path, body) => send(path, withCookie(json(body))),
         patch: (path, body) => send(path, withCookie({ ...json(body), method: 'PATCH' })),
+        put: (path, body) => send(path, withCookie({ ...json(body), method: 'PUT' })),
         delete: (path) => send(path, withCookie({ method: 'DELETE' })),
         async createWorkspace(name) {
           const response = await send('/workspaces', withCookie(json({ name })))

@@ -660,7 +660,7 @@ Categories: **brain** (`retrieve`, `get_entity`), **artefacts** (`create_task`, 
 
 ### 11.5 Checkpoints (AGENT-3)
 
-Built-in kinds: `before_create_artefacts`, `before_external_write`, `before_coding_job`, `before_spend_over`. Policy resolution order: team+workflow+kind → team+kind → workflow default → platform default (`ask`). An `ask` checkpoint sets the run to `waiting_human`, persists the proposed action payload, and notifies through every configured channel (in-app, email, Slack, Teams) with a single decision token; the first decision wins and the others update in place. Decisions are recorded with the deciding user and any edits they made.
+Built-in kinds: `before_create_artefacts`, `before_external_write`, `before_coding_job`, `before_spend_over`. Policy resolution order: team+workflow+kind → team+kind → workflow default → platform default (`ask`). The first three tiers are rows in `policies`, distinguished by which of `team_id` and `workflow_name` are set; the “workflow default” is the row scoped to a workflow and no team. The platform default lives in code, not in a row, and a policy scoped to *neither* a team nor a workflow is refused by a check constraint — a single row that opened every gate in a workspace is not something to set in passing. Workspace-wide policy arrives deliberately with WS-7. Resolution itself is a pure function in `packages/core` consumed by both the API and the agent runtime, because two implementations would eventually disagree and a disagreement here is a gate that silently stopped gating. An `ask` checkpoint sets the run to `waiting_human`, persists the proposed action payload, and notifies through every configured channel (in-app, email, Slack, Teams) with a single decision token; the first decision wins and the others update in place. Decisions are recorded with the deciding user and any edits they made.
 
 ### 11.6 Traces (AGENT-4)
 
@@ -908,7 +908,12 @@ GET    /.well-known/oauth-authorization-server
 POST   /oauth/register | /oauth/token       dynamic client registration, token exchange
 GET    /oauth/authorize                     authorization code + PKCE
 
-GET|POST   /workspaces  /teams  /members  /policies  /integrations  /repositories
+GET|POST   /workspaces
+GET|POST|PATCH /workspaces/{id}/teams  /workspaces/{id}/teams/{teamId}
+GET|PUT|DELETE /workspaces/{id}/teams/{teamId}/members/{userId}
+GET|PUT    /workspaces/{id}/teams/{teamId}/policies      resolved checkpoint policy, and which tier decided
+PUT        /workspaces/{id}/policies                     a workflow's default, for every team
+GET|POST   /workspaces/{id}/members  /integrations  /repositories
 POST       /sessions                        create a session
 POST       /sessions/{id}/messages          SSE stream of the agent turn
 GET        /sessions/{id}

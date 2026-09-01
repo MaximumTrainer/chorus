@@ -12,6 +12,7 @@ export const TENANT_TABLES = [
   'team_members',
   'invitations',
   'api_tokens',
+  'policies',
   'audit_events',
 ] as const
 

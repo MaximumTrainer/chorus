@@ -5,6 +5,7 @@ import {
   NotFoundError,
   ValidationError,
   atLeast,
+  slugify,
   ulid,
   type Role,
 } from '@chorus/core'
@@ -22,17 +23,6 @@ export interface WorkspaceRecord {
   readonly id: string
   readonly name: string
   readonly slug: string
-}
-
-/** URL-safe, collision-resolved slug. */
-export function slugify(name: string): string {
-  const base = name
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 48)
-  return base || 'workspace'
 }
 
 const hashToken = (token: string): string => createHash('sha256').update(token, 'utf8').digest('hex')
@@ -79,7 +69,7 @@ export function createWorkspaceService(config: DbConfig): WorkspaceService {
       if (!trimmed) throw new ValidationError('A workspace needs a name', { field: 'name' })
 
       const id = ulid()
-      let slug = slugify(trimmed)
+      let slug = slugify(trimmed, 'workspace')
 
       // Resolve a slug collision deterministically rather than failing: the
       // name a team chooses is not their problem to deduplicate.
