@@ -4,6 +4,7 @@ import { withTenant, configFromEnv, type DbConfig } from '@chorus/db'
 import { route, type RouteDefinition, type AppEnv, type ReadinessResult } from './routes.js'
 import { createAuth, type Mailer, type OidcConfig } from './auth.js'
 import { createTokenLedger } from './single-use-tokens.js'
+import { createAuthEventLog, eventForRequest, subjectOf } from './auth-events.js'
 
 /**
  * The API process (architecture.md §6).
@@ -109,6 +110,15 @@ export const ROUTES: readonly RouteDefinition[] = [
   }),
 ]
 
+/**
+ * A subject for events where the request carries no address — a verification
+ * link, an OAuth callback. Recorded as unknown rather than omitted, so the row
+ * still exists and the gap is visible.
+ */
+function subjectFromResponsePath(path: string): string {
+  return `unknown:${path}`
+}
+
 export function createApp(options: AppOptions = {}): Hono<AppEnv> {
   const app = new Hono<AppEnv>()
 
@@ -137,9 +147,27 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
     // WS-1 AC2: the library's verification tokens are stateless and therefore
     // replayable. Consumption is recorded here and a replay refused, before the
     // request reaches the library.
-    const ledger = createTokenLedger(options.dbConfig ?? configFromEnv())
+    const dbConfig = options.dbConfig ?? configFromEnv()
+    const ledger = createTokenLedger(dbConfig)
+    const authEvents = createAuthEventLog(dbConfig)
 
     app.on(['GET', 'POST'], '/auth/*', async (c) => {
+      // The subject is read before the handler runs: a POST body can only be
+      // consumed once, and the handler needs it.
+      let subject = await subjectOf(c.req.raw)
+
+      // Sign-out carries a cookie, not an address, and the handler destroys the
+      // session it would be resolved from -- so resolve it first, or the most
+      // ordinary event in the trail is the one that cannot be attributed.
+      if (!subject && c.req.path.endsWith('/sign-out')) {
+        try {
+          const session = await auth.api.getSession({ headers: c.req.raw.headers })
+          subject = session?.user?.email
+        } catch {
+          // An unresolvable session still gets a row, labelled unknown.
+        }
+      }
+
       if (c.req.path.startsWith('/auth/verify-email')) {
         const token = new URL(c.req.url).searchParams.get('token')
         if (token && !(await ledger.consume(token, 'verify-email'))) {
@@ -148,7 +176,27 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
           })
         }
       }
-      return auth.handler(c.req.raw)
+
+      const response = await auth.handler(c.req.raw)
+
+      const kind = eventForRequest(c.req.path, response.status)
+      if (kind) {
+        // Awaited, not fired-and-forgotten. An audit event that may or may not
+        // have been written is not an audit trail, and the few milliseconds
+        // matter less than the guarantee. record() swallows its own failures,
+        // so this still cannot break authentication.
+        await authEvents.record({
+          kind,
+          subject: subject ?? subjectFromResponsePath(c.req.path),
+          ...(c.req.header('x-forwarded-for')
+            ? { ipAddress: c.req.header('x-forwarded-for')! }
+            : {}),
+          ...(c.req.header('user-agent') ? { userAgent: c.req.header('user-agent')! } : {}),
+          detail: { path: c.req.path, status: response.status },
+        })
+      }
+
+      return response
     })
   }
 
