@@ -39,6 +39,9 @@ export async function createIsolatedDatabase(
     password: base.ownerPassword,
     max: 1,
   })
+  maintenance.on('error', (error) => {
+    console.warn(JSON.stringify({ level: 'warn', message: 'maintenance pool error', error: String(error) }))
+  })
 
   await maintenance.query(`CREATE DATABASE ${name}`)
 

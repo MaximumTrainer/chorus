@@ -12,6 +12,22 @@ import { configFromEnv, type DbConfig, type TenantTx } from './client.js'
  * went through the tenant accessor, the test could pass by symmetry.
  */
 
+/**
+ * An idle client whose backend is terminated -- a dropped test database, a
+ * failover -- emits on its pool. Without a handler that becomes an unhandled
+ * rejection and fails a run in which every test passed. Every pool this
+ * package creates gets one; missing it on a single pool is enough to
+ * reintroduce the failure.
+ */
+function swallowIdleErrors(pool: Pool, label: string): Pool {
+  pool.on('error', (error) => {
+    console.warn(
+      JSON.stringify({ level: 'warn', message: `idle database client error (${label})`, error: String(error) }),
+    )
+  })
+  return pool
+}
+
 export const MIGRATIONS_DIR = join(import.meta.dirname, '..', 'migrations')
 
 export interface AdminConnection {
@@ -27,23 +43,29 @@ export interface AdminConnection {
 }
 
 export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<AdminConnection> {
-  const owner = new Pool({
-    host: config.host,
-    port: config.port,
-    database: config.database,
-    user: config.ownerUser,
-    password: config.ownerPassword,
-    max: 4,
-  })
+  const owner = swallowIdleErrors(
+    new Pool({
+      host: config.host,
+      port: config.port,
+      database: config.database,
+      user: config.ownerUser,
+      password: config.ownerPassword,
+      max: 4,
+    }),
+    'owner',
+  )
 
-  const appRole = new Pool({
-    host: config.host,
-    port: config.port,
-    database: config.database,
-    user: config.appUser,
-    password: config.appPassword,
-    max: 2,
-  })
+  const appRole = swallowIdleErrors(
+    new Pool({
+      host: config.host,
+      port: config.port,
+      database: config.database,
+      user: config.appUser,
+      password: config.appPassword,
+      max: 2,
+    }),
+    'app-role',
+  )
 
   // Make the application role's name available to assertions that check it has
   // neither BYPASSRLS nor superuser.
