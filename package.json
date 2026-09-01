@@ -15,7 +15,8 @@
     "test:acceptance": "vitest run --passWithNoTests --project acceptance",
     "test:nfr": "vitest run --project nfr",
     "test:watch": "vitest",
-    "verify": "pnpm typecheck && pnpm lint && pnpm test && pnpm test:acceptance && pnpm test:nfr"
+    "verify": "pnpm typecheck && pnpm lint && pnpm test && pnpm test:acceptance && pnpm test:nfr",
+    "prepare": "git config core.hooksPath .githooks || true"
   },
   "devDependencies": {
     "@chorus/api": "workspace:*",

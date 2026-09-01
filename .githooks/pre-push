@@ -1,0 +1,17 @@
+#!/bin/sh
+# Runs the same gate CI runs, before anything reaches the remote.
+#
+# Added after a commit was pushed with a failing `pnpm verify`: the gate had
+# been run, but its exit code was not read. A machine reads exit codes
+# reliably; a person under momentum does not.
+#
+# To bypass in a genuine emergency: git push --no-verify (and say so in the PR).
+set -e
+
+echo "pre-push: running pnpm verify (the same gate CI runs)"
+if ! pnpm verify; then
+  echo ""
+  echo "pre-push: verify FAILED - push aborted."
+  echo "  Fix the failure, or push with --no-verify and explain why in the PR."
+  exit 1
+fi

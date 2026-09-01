@@ -15,6 +15,8 @@ pnpm verify
 ```
 <!-- /quick-start -->
 
+`pnpm install` also points git at `.githooks`, so `pnpm verify` runs automatically before every push. That safeguard exists because a commit was once pushed with a failing gate: it had been run, but its exit code was not read.
+
 `pnpm verify` runs exactly what CI runs — typecheck, lint, the unit/integration/contract suites, and the non-functional suites. If it passes locally and fails in CI, that divergence is itself a bug (NFR-12 AC4).
 
 To bring up the reference infrastructure:
