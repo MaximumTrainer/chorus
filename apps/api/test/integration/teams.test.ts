@@ -94,23 +94,65 @@ describe('WS-3 team service', () => {
 
   it('WS-3: a per-team role override replaces the workspace role, in either direction', async () => {
     // An override that could only raise would make "an admin deliberately
-    // restricted in a sensitive team" impossible to express (WS-4).
+    // restricted in a sensitive team" impossible to express (WS-4 AC3).
     const team = await teams.create({ workspaceId, actorId, name: 'Overrides' })
-    await teams.addMember({ workspaceId, actorId, teamId: team.id, userId: actorId })
 
-    expect(await teams.roleIn(workspaceId, team.id, actorId, 'owner')).toBe('owner')
+    const subject = ulid()
+    await db.admin.execute(`INSERT INTO users (id, email) VALUES ($1, $2)`, [
+      subject,
+      `${subject}@example.test`,
+    ])
+    await db.admin.execute(
+      `INSERT INTO workspace_members (id, workspace_id, user_id, role) VALUES ($1, $2, $3, 'admin')`,
+      [ulid(), workspaceId, subject],
+    )
+
+    await teams.addMember({ workspaceId, actorId, teamId: team.id, userId: subject })
+    expect(await teams.roleIn(workspaceId, team.id, subject, 'admin')).toBe('admin')
 
     await teams.addMember({
       workspaceId,
       actorId,
       teamId: team.id,
-      userId: actorId,
+      userId: subject,
       roleOverride: 'member',
     })
     expect(
-      await teams.roleIn(workspaceId, team.id, actorId, 'owner'),
+      await teams.roleIn(workspaceId, team.id, subject, 'admin'),
       'an override must be able to lower a role, not only raise it',
     ).toBe('member')
+
+    await teams.addMember({
+      workspaceId,
+      actorId,
+      teamId: team.id,
+      userId: subject,
+      roleOverride: 'owner',
+    })
+    expect(await teams.roleIn(workspaceId, team.id, subject, 'admin')).toBe('owner')
+  })
+
+  it('WS-4 AC3: an override may not lower an owner, which would strand the team', async () => {
+    // Without this, an override could leave a team with nobody able to
+    // administer it and no way back short of database surgery — the same hazard
+    // WS-2 AC6 guards for the workspace.
+    const team = await teams.create({ workspaceId, actorId, name: 'Owner Guard' })
+    await teams.addMember({ workspaceId, actorId, teamId: team.id, userId: actorId })
+
+    await expect(
+      teams.addMember({
+        workspaceId,
+        actorId,
+        teamId: team.id,
+        userId: actorId,
+        roleOverride: 'member',
+      }),
+    ).rejects.toThrow(/unadministrable/)
+
+    expect(
+      await teams.roleIn(workspaceId, team.id, actorId, 'owner'),
+      'the refused override must not have been partly applied',
+    ).toBe('owner')
   })
 
   it('WS-3 AC5: setting a policy twice replaces the row rather than accumulating contradictions', async () => {

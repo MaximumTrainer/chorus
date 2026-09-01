@@ -1,4 +1,5 @@
 import type { Context } from 'hono'
+import type { AuthRequirement, Role } from '@chorus/core'
 
 /**
  * The route table (WS-4 AC4).
@@ -10,8 +11,9 @@ import type { Context } from 'hono'
  * request, so a new route appears there without anyone remembering to add it.
  */
 
-export type Role = 'member' | 'senior_member' | 'admin' | 'owner'
-export type Scope = 'read:artefacts' | 'write:artefacts' | 'run:coding' | 'read:brain'
+// One definition of each, in core, because the MCP server declares its tools
+// against the same types and AC5 requires the two permitted sets to be equal.
+export type { Role, Scope, AuthRequirement } from '@chorus/core'
 
 export interface ReadinessResult {
   readonly ready: boolean
@@ -37,17 +39,20 @@ export interface AppEnv {
     checkReadiness: () => Promise<ReadinessResult>
     /** Absent when the caller is unauthenticated. */
     user?: AuthenticatedUser
+    /**
+     * The role the caller holds in the workspace named by the path, and the
+     * role they effectively hold once a team override is applied. Both are set
+     * by the authorisation middleware, so a handler never re-derives them —
+     * re-deriving is how a handler comes to disagree with its own declaration.
+     */
+    workspaceRole?: Role
+    effectiveRole?: Role
     mailer?: MailSender
     baseUrl: string
   }
 }
 
 export type AppContext = Context<AppEnv>
-
-export type AuthRequirement =
-  /** Deliberately unauthenticated. `reason` makes that a decision, not an omission. */
-  | { readonly kind: 'public'; readonly reason: string }
-  | { readonly kind: 'workspace'; readonly role: Role; readonly scopes: readonly Scope[] }
 
 export interface RouteDefinition {
   readonly method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'

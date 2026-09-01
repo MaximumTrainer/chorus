@@ -56,6 +56,20 @@ export interface AnonymousCaller {
 export interface TestClient {
   /** A verified, signed-in user. Drives the real sign-up and sign-in flow. */
   signedInUser(email?: string): Promise<SignedInUser>
+  /**
+   * A signed-in user holding `role` in `workspaceId`, admitted through the real
+   * invitation flow rather than by writing a membership row.
+   *
+   * Every permission test needs one caller per role, and fabricating the
+   * membership directly would test a state the product cannot actually produce
+   * — the invitation path is where a role is really conferred.
+   */
+  memberWithRole(
+    inviter: SignedInUser,
+    workspaceId: string,
+    role: string,
+    email?: string,
+  ): Promise<SignedInUser>
   anonymous(): AnonymousCaller
   /**
    * The most recent *invitation* link sent to an address.
@@ -135,6 +149,32 @@ export function createTestClient(app: RequestableApp, mailer: RecordingMailer): 
           }
           return (await response.json()) as Workspace
         },
+      }
+      return user
+    },
+
+    async memberWithRole(inviter, workspaceId, role, email) {
+      const address =
+        email ?? `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.test`
+
+      const invited = await send(
+        `/workspaces/${workspaceId}/invitations`,
+        {
+          ...json({ email: address, role }),
+          headers: { 'content-type': 'application/json', cookie: inviter.cookie },
+        },
+      )
+      if (invited.status !== 201) {
+        throw new Error(`could not invite a ${role}: ${invited.status} ${await invited.text()}`)
+      }
+
+      const user = await this.signedInUser(address)
+      const link = this.lastInvitationLink(address)
+      if (!link) throw new Error(`no invitation email was sent to ${address}`)
+
+      const accepted = await user.post('/invitations/accept', { token: tokenFrom(link) })
+      if (accepted.status !== 200) {
+        throw new Error(`could not accept as ${role}: ${accepted.status} ${await accepted.text()}`)
       }
       return user
     },

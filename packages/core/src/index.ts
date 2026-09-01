@@ -14,6 +14,8 @@ export { ulid, ulidAt, isUlid, decodeUlidTime, createIdGen } from './ids.js'
 export type { IdGenOptions } from './ids.js'
 export { ROLES, SCOPES, atLeast, resolveRole, effectivePermission } from './permissions.js'
 export type { Role, Scope, Membership, PermissionRequest, PermissionDecision } from './permissions.js'
+export { decideAccess } from './access.js'
+export type { AuthRequirement, AccessRequest, AccessDecision } from './access.js'
 export { slugify, uniqueSlug, MAX_SLUG_LENGTH } from './slugs.js'
 export {
   CHECKPOINT_KINDS,

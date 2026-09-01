@@ -66,6 +66,20 @@ const appPools = new Map<string, Pool>()
  */
 const managedPools = new Set<Pool>()
 
+/**
+ * Pools are cached by identity, because construction is not free.
+ *
+ * `createApp` builds an auth pool, a token-ledger pool and an event-log pool,
+ * and a test suite builds an app per test. Uncached, that is three new pools
+ * per test, each holding up to five connections, against a server that permits
+ * a hundred. The result was not an error anyone could read: requests were
+ * dropped sporadically under load and surfaced as a missing audit row or an
+ * unsent email in whichever unrelated suite happened to be running. Caching by
+ * identity makes the count a function of how many databases are in play rather
+ * than of how many tests have run.
+ */
+const managedByKey = new Map<string, Pool>()
+
 export function createManagedPool(options: {
   host: string
   port: number
@@ -75,6 +89,12 @@ export function createManagedPool(options: {
   max?: number
   label: string
 }): Pool {
+  // The label is part of the key: two pools with different purposes and
+  // different sizes against the same database are deliberately distinct.
+  const key = `${options.label}:${options.user}@${options.host}:${options.port}/${options.database}`
+  const existing = managedByKey.get(key)
+  if (existing) return existing
+
   const pool = new Pool({
     host: options.host,
     port: options.port,
@@ -96,6 +116,7 @@ export function createManagedPool(options: {
     )
   })
   managedPools.add(pool)
+  managedByKey.set(key, pool)
   return pool
 }
 
@@ -193,6 +214,7 @@ function wrapClient(client: PoolClient): TenantTx {
 export async function closePool(): Promise<void> {
   const pools = [...managedPools]
   managedPools.clear()
+  managedByKey.clear()
   appPools.clear()
   await Promise.all(pools.map((pool) => pool.end().catch(() => undefined)))
 }

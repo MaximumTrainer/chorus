@@ -10,9 +10,8 @@ import {
   type Role,
 } from '@chorus/core'
 import { route, type RouteDefinition } from './routes.js'
-import { requireRole } from './authorisation.js'
+import { caller } from './authorisation.js'
 import type { TeamService } from './teams.js'
-import type { WorkspaceService } from './workspaces.js'
 
 /**
  * Team routes (WS-3).
@@ -69,10 +68,7 @@ async function body<T>(c: { req: { json(): Promise<unknown> } }): Promise<T> {
   return (await c.req.json().catch(() => ({}))) as T
 }
 
-export function teamRoutes(
-  teams: TeamService,
-  workspaces: WorkspaceService,
-): RouteDefinition[] {
+export function teamRoutes(teams: TeamService): RouteDefinition[] {
   return [
     route({
       method: 'POST',
@@ -81,7 +77,7 @@ export function teamRoutes(
       auth: { kind: 'workspace', role: 'admin', scopes: ['write:artefacts'] },
       handler: async (c) => {
         const workspaceId = c.req.param('workspaceId')
-        const { userId } = await requireRole(c, workspaces, workspaceId, 'admin')
+        const { userId } = caller(c)
         const input = await body<TeamBody>(c)
         if (typeof input.name !== 'string') {
           throw new ValidationError('A team needs a name', { field: 'name' })
@@ -104,9 +100,7 @@ export function teamRoutes(
       summary: 'List the teams in a workspace.',
       auth: { kind: 'workspace', role: 'member', scopes: ['read:artefacts'] },
       handler: async (c) => {
-        const workspaceId = c.req.param('workspaceId')
-        await requireRole(c, workspaces, workspaceId, 'member')
-        return c.json(await teams.list(workspaceId))
+        return c.json(await teams.list(c.req.param('workspaceId')))
       },
     }),
 
@@ -116,9 +110,9 @@ export function teamRoutes(
       summary: 'Read one team, including its charter.',
       auth: { kind: 'workspace', role: 'member', scopes: ['read:artefacts'] },
       handler: async (c) => {
-        const workspaceId = c.req.param('workspaceId')
-        await requireRole(c, workspaces, workspaceId, 'member')
-        return c.json(await teams.get(workspaceId, c.req.param('teamId')))
+        return c.json(
+          await teams.get(c.req.param('workspaceId'), c.req.param('teamId')),
+        )
       },
     }),
 
@@ -129,7 +123,7 @@ export function teamRoutes(
       auth: { kind: 'workspace', role: 'admin', scopes: ['write:artefacts'] },
       handler: async (c) => {
         const workspaceId = c.req.param('workspaceId')
-        const { userId } = await requireRole(c, workspaces, workspaceId, 'admin')
+        const { userId } = caller(c)
         const input = await body<TeamBody>(c)
         return c.json(
           await teams.update({
@@ -150,7 +144,6 @@ export function teamRoutes(
       auth: { kind: 'workspace', role: 'member', scopes: ['read:artefacts'] },
       handler: async (c) => {
         const workspaceId = c.req.param('workspaceId')
-        await requireRole(c, workspaces, workspaceId, 'member')
         const teamId = c.req.param('teamId')
         // Establishes the team belongs to this workspace before listing, so a
         // foreign id yields not-found rather than an empty list that reads as
@@ -167,7 +160,7 @@ export function teamRoutes(
       auth: { kind: 'workspace', role: 'admin', scopes: ['write:artefacts'] },
       handler: async (c) => {
         const workspaceId = c.req.param('workspaceId')
-        const { userId: actorId } = await requireRole(c, workspaces, workspaceId, 'admin')
+        const { userId: actorId } = caller(c)
         const input = await body<{ roleOverride?: unknown }>(c)
         const roleOverride = parseRoleOverride(input.roleOverride)
         const teamId = c.req.param('teamId')
@@ -190,7 +183,7 @@ export function teamRoutes(
       auth: { kind: 'workspace', role: 'admin', scopes: ['write:artefacts'] },
       handler: async (c) => {
         const workspaceId = c.req.param('workspaceId')
-        const { userId: actorId } = await requireRole(c, workspaces, workspaceId, 'admin')
+        const { userId: actorId } = caller(c)
         await teams.removeMember({
           workspaceId,
           actorId,
@@ -208,7 +201,6 @@ export function teamRoutes(
       auth: { kind: 'workspace', role: 'member', scopes: ['read:artefacts'] },
       handler: async (c) => {
         const workspaceId = c.req.param('workspaceId')
-        await requireRole(c, workspaces, workspaceId, 'member')
         const workflow = c.req.query('workflow')
         return c.json(
           await teams.resolvePolicies(
@@ -227,7 +219,7 @@ export function teamRoutes(
       auth: { kind: 'workspace', role: 'admin', scopes: ['write:artefacts'] },
       handler: async (c) => {
         const workspaceId = c.req.param('workspaceId')
-        const { userId } = await requireRole(c, workspaces, workspaceId, 'admin')
+        const { userId } = caller(c)
         const input = await body<PolicyBody>(c)
         const teamId = c.req.param('teamId')
 
@@ -255,7 +247,7 @@ export function teamRoutes(
       auth: { kind: 'workspace', role: 'admin', scopes: ['write:artefacts'] },
       handler: async (c) => {
         const workspaceId = c.req.param('workspaceId')
-        const { userId } = await requireRole(c, workspaces, workspaceId, 'admin')
+        const { userId } = caller(c)
         const input = await body<PolicyBody>(c)
 
         // A workflow must be named. A policy scoped to neither a team nor a

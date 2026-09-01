@@ -13,6 +13,7 @@ import { createWorkspaceService } from './workspaces.js'
 import { workspaceRoutes } from './workspace-routes.js'
 import { createTeamService } from './teams.js'
 import { teamRoutes } from './team-routes.js'
+import { authorise, type AuthorisationDeps } from './authorisation.js'
 import { createTokenLedger } from './single-use-tokens.js'
 import {
   createAuthEventLog,
@@ -138,13 +139,19 @@ export const ROUTES: readonly RouteDefinition[] = [
  * config — so this is safe to call from a test that has no database.
  */
 export function routeTable(dbConfig?: DbConfig): readonly RouteDefinition[] {
-  const config = dbConfig ?? configFromEnv()
+  return buildRoutes(dbConfig ?? configFromEnv()).table
+}
+
+function buildRoutes(config: DbConfig): {
+  table: readonly RouteDefinition[]
+  deps: AuthorisationDeps
+} {
   const workspaces = createWorkspaceService(config)
-  return [
-    ...ROUTES,
-    ...workspaceRoutes(workspaces),
-    ...teamRoutes(createTeamService(config), workspaces),
-  ]
+  const teams = createTeamService(config)
+  return {
+    table: [...ROUTES, ...workspaceRoutes(workspaces), ...teamRoutes(teams)],
+    deps: { workspaces, teams, dbConfig: config },
+  }
 }
 
 /**
@@ -286,12 +293,23 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
   }
 
   const isProduction = process.env.NODE_ENV === 'production'
-  const table =
-    options.dbConfig || options.mailer ? routeTable(options.dbConfig) : ROUTES
+  const built =
+    options.dbConfig || options.mailer
+      ? buildRoutes(options.dbConfig ?? configFromEnv())
+      : undefined
 
-  for (const definition of table) {
+  for (const definition of built?.table ?? ROUTES) {
     if (definition.path.startsWith('/__test/') && isProduction) continue
-    app.on(definition.method, definition.path, definition.handler)
+
+    // The declaration is what enforces (WS-4 AC4). Mounting the handler alone
+    // is what made the declaration decorative, so authorisation is attached
+    // here, from the same data the permission suite enumerates — a route
+    // cannot be mounted without the check its declaration describes.
+    if (built) {
+      app.on(definition.method, definition.path, authorise(definition, built.deps), definition.handler)
+    } else {
+      app.on(definition.method, definition.path, definition.handler)
+    }
   }
 
   app.notFound((c) =>

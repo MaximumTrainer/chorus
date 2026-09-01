@@ -1,5 +1,6 @@
 import {
   ConflictError,
+  ForbiddenError,
   NotFoundError,
   ValidationError,
   CHECKPOINT_KINDS,
@@ -280,14 +281,30 @@ export function createTeamService(config: DbConfig): TeamService {
             targetId: userId,
             after: { teamId, roleOverride: roleOverride ?? null },
             apply: async () => {
-              const isMember = await t.query(
-                `SELECT 1 FROM workspace_members
+              const membership = await t.query<{ role: Role }>(
+                `SELECT role FROM workspace_members
                   WHERE user_id = $1 AND deleted_at IS NULL`,
                 [userId],
               )
               // A team is a subdivision of a workspace, not a way into one.
-              if (isMember.length === 0) {
+              if (membership.length === 0) {
                 throw new NotFoundError('No such member of this workspace', { userId })
+              }
+
+              // An override replaces rather than raises, so it can lower an
+              // admin inside a sensitive team — but never the owner, or a team
+              // could be left with nobody able to administer it and no way back
+              // short of database surgery. The same hazard WS-2 AC6 guards for
+              // the workspace (WS-4 AC3).
+              if (
+                roleOverride !== undefined &&
+                roleOverride !== 'owner' &&
+                membership[0]!.role === 'owner'
+              ) {
+                throw new ForbiddenError(
+                  'An owner cannot be restricted within a team; that could leave it unadministrable.',
+                  { reason: 'would_strand_team', userId },
+                )
               }
 
               await t.execute(

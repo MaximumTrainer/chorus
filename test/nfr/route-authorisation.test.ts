@@ -32,6 +32,13 @@ describe('WS-4 AC4 route authorisation is declared, not remembered', () => {
         // omission that nobody notices.
         expect(route.auth.reason, 'a public route must justify itself').toBeTruthy()
         expect(route.auth.reason.length).toBeGreaterThan(10)
+      } else if (route.auth.kind === 'authenticated') {
+        // Requiring a session but no membership is also a decision, and it is
+        // the one most easily reached for by mistake — so it justifies itself
+        // on the same terms as `public`.
+        expect(route.auth.reason, 'a membership-free route must justify itself').toBeTruthy()
+        expect(route.auth.reason.length).toBeGreaterThan(10)
+        expect(Array.isArray(route.auth.scopes)).toBe(true)
       } else {
         expect(['member', 'senior_member', 'admin', 'owner']).toContain(route.auth.role)
         expect(Array.isArray(route.auth.scopes)).toBe(true)
@@ -39,12 +46,40 @@ describe('WS-4 AC4 route authorisation is declared, not remembered', () => {
     },
   )
 
+  it.each(ROUTES.map((r) => [`${r.method} ${r.path}`, r] as const))(
+    'WS-4 AC4: %s can actually be enforced as declared',
+    (_name, route: RouteDefinition) => {
+      // Structural, not stylistic: the middleware resolves the caller's role
+      // from `:workspaceId`. A route declaring a workspace role without that
+      // parameter could never have that role resolved, and would be silently
+      // unenforceable — the exact failure the declaration exists to prevent.
+      if (route.auth.kind !== 'workspace') return
+      expect(
+        route.path.includes(':workspaceId'),
+        `${route.method} ${route.path} requires a workspace role but names no workspace`,
+      ).toBe(true)
+    },
+  )
+
+  it('WS-4 AC4: a route requiring no membership is rare and deliberate', () => {
+    // If this list grows, someone has reached for `authenticated` to dodge a
+    // permission check rather than because no workspace is in scope.
+    const membershipFree = ROUTES.filter((r) => r.auth.kind === 'authenticated').map(
+      (r) => `${r.method} ${r.path}`,
+    )
+    expect(membershipFree.sort()).toEqual([
+      'GET /workspaces',
+      'POST /invitations/accept',
+      'POST /workspaces',
+    ])
+  })
+
   it('WS-4 AC4: no two routes share a method and path', () => {
     const keys = ROUTES.map((r) => `${r.method} ${r.path}`)
     expect(new Set(keys).size).toBe(keys.length)
   })
 
-  it('WS-4 AC4: only health and well-known endpoints are public', () => {
+  it('WS-4 AC4: only health and well-known endpoints are fully public', () => {
     const publicPaths = ROUTES.filter((r) => r.auth.kind === 'public').map((r) => r.path)
     for (const path of publicPaths) {
       expect(
