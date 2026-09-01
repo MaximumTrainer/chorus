@@ -11,3 +11,6 @@ export type { Mailer, RecordingMailer, SentMail } from './fakes/mailer.js'
 
 export { startStubOidcProvider } from './fakes/oidc-provider.js'
 export type { StubOidcProvider, StubOidcUser } from './fakes/oidc-provider.js'
+
+export { createTestClient } from './world.js'
+export type { TestClient, SignedInUser, AnonymousCaller, Workspace, RequestableApp } from './world.js'

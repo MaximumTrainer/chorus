@@ -1,8 +1,16 @@
 import { Hono } from 'hono'
 import { AppError, NotFoundError, ForbiddenError, ValidationError, ulid } from '@chorus/core'
 import { withTenant, configFromEnv, type DbConfig } from '@chorus/db'
-import { route, type RouteDefinition, type AppEnv, type ReadinessResult } from './routes.js'
+import {
+  route,
+  type RouteDefinition,
+  type AppEnv,
+  type AppContext,
+  type ReadinessResult,
+} from './routes.js'
 import { createAuth, type Mailer, type OidcConfig } from './auth.js'
+import { createWorkspaceService } from './workspaces.js'
+import { workspaceRoutes } from './workspace-routes.js'
 import { createTokenLedger } from './single-use-tokens.js'
 import {
   createAuthEventLog,
@@ -124,6 +132,27 @@ function subjectFromResponsePath(path: string): string {
   return `unknown:${path}`
 }
 
+/**
+ * Resolves the session into `user`, or leaves it absent.
+ *
+ * Deliberately does not reject: routes declare their own requirement, and a
+ * middleware that refused everything unauthenticated would make a public route
+ * impossible to express (WS-4 AC4).
+ */
+function sessionResolver(auth: ReturnType<typeof createAuth>) {
+  return async (c: AppContext, next: () => Promise<void>): Promise<void> => {
+    try {
+      const session = await auth.api.getSession({ headers: c.req.raw.headers })
+      if (session?.user?.id && session.user.email) {
+        c.set('user', { id: session.user.id, email: session.user.email })
+      }
+    } catch {
+      // An unreadable session is simply an absent one.
+    }
+    await next()
+  }
+}
+
 export function createApp(options: AppOptions = {}): Hono<AppEnv> {
   const app = new Hono<AppEnv>()
 
@@ -132,6 +161,8 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
     const requestId = c.req.header('x-request-id') ?? ulid()
     c.set('requestId', requestId)
     c.set('checkReadiness', options.checkReadiness ?? defaultReadiness(options.dbConfig))
+    c.set('baseUrl', options.baseUrl ?? 'http://localhost:3000')
+    if (options.mailer) c.set('mailer', options.mailer)
     await next()
     c.header('x-request-id', requestId)
   })
@@ -139,6 +170,7 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
   // WS-1: authentication is mounted under /auth/*, per architecture.md §18.
   // The library owns these routes; they are public by necessity because a
   // caller has no credential until they have used them.
+  let authInstance: ReturnType<typeof createAuth> | undefined
   if (options.mailer) {
     const auth = createAuth({
       mailer: options.mailer,
@@ -149,6 +181,7 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
         : { maxSignInAttempts: options.maxSignInAttempts }),
       ...(options.oidc ? { oidc: options.oidc } : {}),
     })
+    authInstance = auth
     // WS-1 AC2: the library's verification tokens are stateless and therefore
     // replayable. Consumption is recorded here and a replay refused, before the
     // request reaches the library.
@@ -219,9 +252,21 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
     })
   }
 
-  const isProduction = process.env.NODE_ENV === 'production'
+  // Resolve the session once per request. Routes then declare the role they
+  // need rather than each re-deriving identity (WS-4 AC4).
+  if (options.mailer) {
+    const auth = authInstance!
+    app.use('/workspaces/*', sessionResolver(auth))
+    app.use('/workspaces', sessionResolver(auth))
+    app.use('/invitations/*', sessionResolver(auth))
+  }
 
-  for (const definition of ROUTES) {
+  const isProduction = process.env.NODE_ENV === 'production'
+  const routeTable = options.dbConfig || options.mailer
+    ? [...ROUTES, ...workspaceRoutes(createWorkspaceService(options.dbConfig ?? configFromEnv()))]
+    : ROUTES
+
+  for (const definition of routeTable) {
     if (definition.path.startsWith('/__test/') && isProduction) continue
     app.on(definition.method, definition.path, definition.handler)
   }

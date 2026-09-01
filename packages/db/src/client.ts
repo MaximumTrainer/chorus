@@ -136,7 +136,16 @@ export interface TenantTx {
 export async function withTenant<T>(
   workspaceId: string,
   fn: (tx: TenantTx) => Promise<T>,
-  options: { userId?: string; config?: DbConfig } = {},
+  options: {
+    userId?: string
+    config?: DbConfig
+    /**
+     * Additional `SET LOCAL` values the row-level security policies read.
+     * Confined to the transaction like the tenant id, so nothing leaks into
+     * the next caller on a pooled connection.
+     */
+    settings?: Readonly<Record<string, string>>
+  } = {},
 ): Promise<T> {
   const client = await getAppPool(options.config).connect()
   try {
@@ -144,6 +153,9 @@ export async function withTenant<T>(
     await client.query('SELECT set_config($1, $2, true)', ['app.workspace_id', workspaceId])
     if (options.userId) {
       await client.query('SELECT set_config($1, $2, true)', ['app.user_id', options.userId])
+    }
+    for (const [name, value] of Object.entries(options.settings ?? {})) {
+      await client.query('SELECT set_config($1, $2, true)', [name, value])
     }
 
     const result = await fn(wrapClient(client))

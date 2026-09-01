@@ -22,10 +22,23 @@ export interface ReadinessResult {
  * Request-scoped values. Declared here so `c.get`/`c.set` are type-checked:
  * an untyped context is how a typo becomes an `undefined` at runtime.
  */
+export interface AuthenticatedUser {
+  readonly id: string
+  readonly email: string
+}
+
+export interface MailSender {
+  send(message: { to: string; subject: string; text: string; html?: string }): Promise<void>
+}
+
 export interface AppEnv {
   Variables: {
     requestId: string
     checkReadiness: () => Promise<ReadinessResult>
+    /** Absent when the caller is unauthenticated. */
+    user?: AuthenticatedUser
+    mailer?: MailSender
+    baseUrl: string
   }
 }
 
