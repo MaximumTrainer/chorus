@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { AppError, NotFoundError, ForbiddenError, ValidationError, ulid } from '@chorus/core'
 import { withTenant, configFromEnv, type DbConfig } from '@chorus/db'
 import { route, type RouteDefinition, type AppEnv, type ReadinessResult } from './routes.js'
-import { createAuth, type Mailer } from './auth.js'
+import { createAuth, type Mailer, type OidcConfig } from './auth.js'
 import { createTokenLedger } from './single-use-tokens.js'
 
 /**
@@ -28,6 +28,8 @@ export interface AppOptions {
   baseUrl?: string
   /** Failed attempts tolerated per window before throttling (WS-1 AC5). */
   maxSignInAttempts?: number
+  /** A generic OIDC provider, discovered from its issuer (WS-1 AC3). */
+  oidc?: OidcConfig
 }
 
 /**
@@ -130,6 +132,7 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
       ...(options.maxSignInAttempts === undefined
         ? {}
         : { maxSignInAttempts: options.maxSignInAttempts }),
+      ...(options.oidc ? { oidc: options.oidc } : {}),
     })
     // WS-1 AC2: the library's verification tokens are stateless and therefore
     // replayable. Consumption is recorded here and a replay refused, before the

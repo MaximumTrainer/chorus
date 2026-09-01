@@ -1,4 +1,5 @@
 import { betterAuth } from 'better-auth'
+import { genericOAuth } from 'better-auth/plugins'
 import { configFromEnv, createManagedPool, type DbConfig } from '@chorus/db'
 
 /**
@@ -24,9 +25,23 @@ export interface Mailer {
   send(message: MailMessage): Promise<void>
 }
 
+/**
+ * A generic OIDC provider, configured by issuer so any compliant provider works
+ * from its discovery document (WS-1 AC3). Self-hosters are not limited to the
+ * providers Chorus happens to have special-cased.
+ */
+export interface OidcConfig {
+  readonly issuer: string
+  readonly clientId: string
+  readonly clientSecret: string
+  /** Defaults to `${issuer}/.well-known/openid-configuration`. */
+  readonly discoveryUrl?: string
+}
+
 export interface AuthOptions {
   dbConfig?: DbConfig
   mailer: Mailer
+  oidc?: OidcConfig
   baseUrl?: string
   secret?: string
   /** Failed sign-in attempts tolerated per window before throttling (WS-1 AC5). */
@@ -66,6 +81,34 @@ export function createAuth(options: AuthOptions) {
       max: 5,
       label: 'auth',
     }),
+
+    ...(options.oidc
+      ? {
+          socialProviders: {},
+          plugins: [
+            genericOAuth({
+              config: [
+                {
+                  providerId: 'generic-oidc',
+                  clientId: options.oidc.clientId,
+                  clientSecret: options.oidc.clientSecret,
+                  discoveryUrl:
+                    options.oidc.discoveryUrl ??
+                    `${options.oidc.issuer}/.well-known/openid-configuration`,
+                  scopes: ['openid', 'email', 'profile'],
+                  // WS-1 AC4: linking hinges on this claim. Without it an
+                  // account is created rather than taken over.
+                  mapProfileToUser: (profile: Record<string, unknown>) => ({
+                    email: String(profile.email ?? ''),
+                    name: String(profile.name ?? profile.email ?? ''),
+                    emailVerified: profile.email_verified === true,
+                  }),
+                },
+              ],
+            }),
+          ],
+        }
+      : {}),
 
     emailAndPassword: {
       enabled: true,
@@ -107,6 +150,11 @@ export function createAuth(options: AuthOptions) {
         '/verify-email': { window: RATE_LIMIT_WINDOW_SECONDS, max: DEFAULT_ATTEMPT_LIMIT },
         '/get-session': { window: RATE_LIMIT_WINDOW_SECONDS, max: DEFAULT_ATTEMPT_LIMIT },
         '/sign-out': { window: RATE_LIMIT_WINDOW_SECONDS, max: DEFAULT_ATTEMPT_LIMIT },
+        // OAuth start and callback are redirect-driven, not credential guesses.
+        // Left to the library's stricter default they cap at 3 per window,
+        // which would refuse a fourth person signing in from one office IP.
+        '/sign-in/social': { window: RATE_LIMIT_WINDOW_SECONDS, max: DEFAULT_ATTEMPT_LIMIT },
+        '/callback/generic-oidc': { window: RATE_LIMIT_WINDOW_SECONDS, max: DEFAULT_ATTEMPT_LIMIT },
       },
     },
 
