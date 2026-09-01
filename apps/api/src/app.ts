@@ -4,7 +4,12 @@ import { withTenant, configFromEnv, type DbConfig } from '@chorus/db'
 import { route, type RouteDefinition, type AppEnv, type ReadinessResult } from './routes.js'
 import { createAuth, type Mailer, type OidcConfig } from './auth.js'
 import { createTokenLedger } from './single-use-tokens.js'
-import { createAuthEventLog, eventForRequest, subjectOf } from './auth-events.js'
+import {
+  createAuthEventLog,
+  eventForRequest,
+  resolveResetSubject,
+  subjectOf,
+} from './auth-events.js'
 
 /**
  * The API process (architecture.md §6).
@@ -155,6 +160,20 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
       // The subject is read before the handler runs: a POST body can only be
       // consumed once, and the handler needs it.
       let subject = await subjectOf(c.req.raw)
+
+      // A reset submission carries only an opaque token, and the handler
+      // consumes the row that maps it to a person. Resolve first, or the most
+      // security-sensitive event in the system cannot be attributed.
+      if (!subject && c.req.path.endsWith('/reset-password')) {
+        try {
+          const body = (await c.req.raw.clone().json()) as { token?: unknown }
+          if (typeof body.token === 'string') {
+            subject = await resolveResetSubject(dbConfig, body.token)
+          }
+        } catch {
+          // Unparseable body: the row is still written, labelled unknown.
+        }
+      }
 
       // Sign-out carries a cookie, not an address, and the handler destroys the
       // session it would be resolved from -- so resolve it first, or the most

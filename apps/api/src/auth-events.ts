@@ -95,7 +95,7 @@ const PATH_EVENTS: ReadonlyArray<{
   { match: /\/sign-out$/, onSuccess: 'sign_out' },
   { match: /\/verify-email/, onSuccess: 'email_verified' },
   { match: /\/callback\//, onSuccess: 'account_linked' },
-  { match: /\/forget-password$/, onSuccess: 'password_reset_requested' },
+  { match: /\/request-password-reset$/, onSuccess: 'password_reset_requested' },
   { match: /\/reset-password$/, onSuccess: 'password_reset' },
 ]
 
@@ -161,6 +161,44 @@ export async function subjectOf(request: Request): Promise<string | undefined> {
     }
   }
   return undefined
+}
+
+/**
+ * The address a password-reset token concerns.
+ *
+ * The link carries an opaque token; the library stores it as
+ * `identifier = 'reset-password:<token>'` with the user id in `value`. This
+ * must run *before* the handler, which consumes the row — otherwise the most
+ * security-sensitive event in the system is the one that cannot be attributed.
+ *
+ * Used only to label an audit row, never to authorise: the library still
+ * validates the token itself.
+ */
+export async function resolveResetSubject(
+  config: DbConfig,
+  token: string,
+): Promise<string | undefined> {
+  const pool = createManagedPool({
+    host: config.host,
+    port: config.port,
+    database: config.database,
+    user: config.ownerUser,
+    password: config.ownerPassword,
+    max: 1,
+    label: 'auth-events-lookup',
+  })
+  try {
+    const result = await pool.query<{ email: string }>(
+      `SELECT u.email FROM verifications v
+         JOIN users u ON u.id = v.value
+        WHERE v.identifier = $1
+        LIMIT 1`,
+      [`reset-password:${token}`],
+    )
+    return result.rows[0]?.email
+  } catch {
+    return undefined
+  }
 }
 
 export function isAppError(error: unknown): error is AppError {

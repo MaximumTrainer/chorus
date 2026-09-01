@@ -115,6 +115,27 @@ export function createAuth(options: AuthOptions) {
       // WS-1 AC1: an unverified account cannot sign in.
       requireEmailVerification: true,
       minPasswordLength: 12,
+
+      // Reset is a supported path to taking over an account, so it is the most
+      // valuable target in the system. The link goes only to the address on
+      // file, and the response says nothing about whether that address exists.
+      async sendResetPassword({ user, url }) {
+        await options.mailer.send({
+          to: user.email,
+          subject: 'Reset your Chorus password',
+          text:
+            `Use this link to choose a new password.
+
+${url}
+
+` +
+            'The link can be used once and expires shortly. If you did not ask ' +
+            'to reset your password, you can ignore this message — nothing has changed.',
+        })
+      },
+      // Signing out other sessions on reset: someone resetting because they
+      // believe they were compromised must not leave the attacker signed in.
+      revokeSessionsOnPasswordReset: true,
     },
 
     emailVerification: {
@@ -155,6 +176,8 @@ export function createAuth(options: AuthOptions) {
         // which would refuse a fourth person signing in from one office IP.
         '/sign-in/social': { window: RATE_LIMIT_WINDOW_SECONDS, max: DEFAULT_ATTEMPT_LIMIT },
         '/callback/generic-oidc': { window: RATE_LIMIT_WINDOW_SECONDS, max: DEFAULT_ATTEMPT_LIMIT },
+        '/request-password-reset': { window: RATE_LIMIT_WINDOW_SECONDS, max: DEFAULT_ATTEMPT_LIMIT },
+        '/reset-password': { window: RATE_LIMIT_WINDOW_SECONDS, max: DEFAULT_ATTEMPT_LIMIT },
       },
     },
 
