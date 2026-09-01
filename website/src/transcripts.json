@@ -1,0 +1,229 @@
+{
+  "exchanges": [
+    {
+      "title": "A new workspace is usable immediately",
+      "note": "Creating a workspace makes the creator its owner and seeds exactly one team, so there is no empty-state setup step before the first piece of work.",
+      "steps": [
+        {
+          "method": "POST",
+          "path": "/workspaces",
+          "as": "ada (signed in)",
+          "status": 201,
+          "body": {
+            "name": "Acme Product"
+          },
+          "response": {
+            "id": "01M1F1SVV0YKJPBKYK1ZXVEGJ4",
+            "name": "Acme Product",
+            "slug": "acme-product"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/workspaces/{id}/teams",
+          "as": "ada (owner)",
+          "status": 200,
+          "response": [
+            {
+              "id": "01M1F1SVVRBRD1NMYM0MRAEP7N",
+              "name": "Default",
+              "slug": "default",
+              "charter": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Every team carries a charter",
+      "note": "The charter is injected into every agent prompt, so it is bounded — and an oversized one is refused rather than truncated, because a charter cut off mid-sentence is a corrupted instruction rather than a long one.",
+      "steps": [
+        {
+          "method": "PATCH",
+          "path": "/workspaces/{id}/teams/{teamId}",
+          "as": "ada (owner)",
+          "status": 200,
+          "body": {
+            "charter": "# Mission\n\nWe own money movement. …"
+          },
+          "response": {
+            "id": "01M1F1SVVRBRD1NMYM0MRAEP7N",
+            "name": "Default",
+            "slug": "default",
+            "charter": "# Mission\n\nWe own money movement.\n\nNever guess at a currency conversion."
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/workspaces/{id}/teams",
+          "as": "ada (owner)",
+          "status": 400,
+          "body": {
+            "name": "Verbose",
+            "charter": "\"x\" × 8001"
+          },
+          "response": {
+            "type": "https://chorus.dev/problems/validation",
+            "title": "ValidationError",
+            "status": 400,
+            "detail": "A charter may be at most 8000 characters",
+            "field": "charter",
+            "limit": 8000,
+            "length": 8001,
+            "requestId": "01M1F1SVX8GZ963PW7PZ5TN7XE"
+          }
+        }
+      ]
+    },
+    {
+      "title": "Humans hold the gates",
+      "note": "A checkpoint policy decides whether an autonomous step runs unattended. Resolution runs team → workflow → platform, and the platform default is `ask`: it fails closed, so an unconfigured workspace is never autonomous by omission. Each answer names the tier that decided it.",
+      "steps": [
+        {
+          "method": "PUT",
+          "path": "/workspaces/{id}/policies",
+          "as": "ada (owner)",
+          "status": 200,
+          "body": {
+            "workflowName": "implement-task",
+            "checkpointKind": "before_external_write",
+            "mode": "auto"
+          },
+          "response": {
+            "workflowName": "implement-task",
+            "checkpointKind": "before_external_write"
+          }
+        },
+        {
+          "method": "PUT",
+          "path": "/workspaces/{id}/teams/{teamId}/policies",
+          "as": "ada (owner)",
+          "status": 200,
+          "body": {
+            "checkpointKind": "before_external_write",
+            "mode": "ask"
+          },
+          "response": null
+        },
+        {
+          "method": "GET",
+          "path": "/workspaces/{id}/teams/{teamId}/policies?workflow=implement-task",
+          "as": "ada (owner)",
+          "status": 200,
+          "response": {
+            "before_create_artefacts": {
+              "mode": "ask",
+              "source": "platform"
+            },
+            "before_external_write": {
+              "mode": "ask",
+              "source": "team"
+            },
+            "before_coding_job": {
+              "mode": "ask",
+              "source": "platform"
+            },
+            "before_spend_over": {
+              "mode": "ask",
+              "source": "platform"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "title": "Refusals are specific, and absence is not information",
+      "note": "A member may read a team but not create one, and the refusal says what was required and what was held. A non-member is answered not-found rather than forbidden — confirming that a workspace exists would let anyone enumerate them by id.",
+      "steps": [
+        {
+          "method": "GET",
+          "path": "/workspaces/{id}/teams",
+          "as": "grace (member)",
+          "status": 200,
+          "response": "[ … the teams grace may read … ]"
+        },
+        {
+          "method": "POST",
+          "path": "/workspaces/{id}/teams",
+          "as": "grace (member)",
+          "status": 403,
+          "body": {
+            "name": "Mine"
+          },
+          "response": {
+            "type": "https://chorus.dev/problems/forbidden",
+            "title": "ForbiddenError",
+            "status": 403,
+            "detail": "This action requires the admin role",
+            "required": "admin",
+            "held": "member",
+            "requestId": "01M1F1SW6CES955HDE6BZV7D9P"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/workspaces/{id}/teams",
+          "as": "stranger (not a member)",
+          "status": 404,
+          "response": {
+            "type": "https://chorus.dev/problems/not_found",
+            "title": "NotFoundError",
+            "status": 404,
+            "detail": "No such workspace",
+            "workspaceId": "01M1F1SVV0YKJPBKYK1ZXVEGJ4",
+            "requestId": "01M1F1SWCFSNGVS2VJBQ5TPR0D"
+          }
+        }
+      ]
+    },
+    {
+      "title": "Everything is auditable",
+      "note": "Every mutation writes its audit row in the same transaction as the change itself, so there is no change without a record and no record without a change. Refusals are recorded too — a misconfigured permission is otherwise an unexplained 403 that nobody can tell was correct.",
+      "steps": [
+        {
+          "method": "SQL",
+          "path": "SELECT action, actor_id, target_type FROM audit_events",
+          "as": "the workspace trail",
+          "status": 200,
+          "response": [
+            {
+              "action": "workspace.create",
+              "actor": "y3OW1CNE…",
+              "target": "workspace"
+            },
+            {
+              "action": "team.update",
+              "actor": "y3OW1CNE…",
+              "target": "team"
+            },
+            {
+              "action": "policy.set",
+              "actor": "y3OW1CNE…",
+              "target": "policy"
+            },
+            {
+              "action": "policy.set",
+              "actor": "y3OW1CNE…",
+              "target": "policy"
+            },
+            {
+              "action": "invitation.create",
+              "actor": "y3OW1CNE…",
+              "target": "invitation"
+            },
+            {
+              "action": "invitation.accept",
+              "actor": "aWiEOHQH…",
+              "target": "invitation"
+            },
+            {
+              "action": "access.denied",
+              "actor": "aWiEOHQH…",
+              "target": "route"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

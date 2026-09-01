@@ -16,6 +16,8 @@
     "test:nfr": "vitest run --project nfr",
     "test:watch": "vitest",
     "verify": "pnpm typecheck && pnpm lint && pnpm test && pnpm test:acceptance && pnpm test:nfr",
+    "site": "node website/build.mjs",
+    "site:record": "vitest run --config website/capture/vitest.config.ts",
     "prepare": "git config core.hooksPath .githooks || true"
   },
   "devDependencies": {

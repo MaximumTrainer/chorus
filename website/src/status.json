@@ -1,0 +1,272 @@
+{
+  "generatedFrom": "the repository itself — see website/capture",
+  "recordedAt": "2026-09-01",
+  "recordedFromCommit": "56ac489",
+  "tests": {
+    "byLayer": [
+      {
+        "name": "core",
+        "passed": 133,
+        "total": 133
+      },
+      {
+        "name": "acceptance",
+        "passed": 69,
+        "total": 69
+      },
+      {
+        "name": "nfr",
+        "passed": 183,
+        "total": 183
+      }
+    ],
+    "total": 385
+  },
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/healthz",
+      "summary": "Liveness: is this process running?",
+      "auth": {
+        "kind": "public"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/readyz",
+      "summary": "Readiness: can this process serve requests?",
+      "auth": {
+        "kind": "public"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/__test/forbidden",
+      "summary": "Test fixture: a declared AppError.",
+      "auth": {
+        "kind": "public"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/__test/boom",
+      "summary": "Test fixture: an unexpected error.",
+      "auth": {
+        "kind": "public"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces",
+      "summary": "Create a workspace, seeded with a default team.",
+      "auth": {
+        "kind": "authenticated"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces",
+      "summary": "List the workspaces the caller belongs to.",
+      "auth": {
+        "kind": "authenticated"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/:workspaceId",
+      "summary": "Read one workspace.",
+      "auth": {
+        "kind": "workspace",
+        "role": "member"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/:workspaceId/members",
+      "summary": "List members of a workspace.",
+      "auth": {
+        "kind": "workspace",
+        "role": "member"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/:workspaceId/invitations",
+      "summary": "Invite someone by email, or create a shareable invitation link.",
+      "auth": {
+        "kind": "workspace",
+        "role": "admin"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/invitations/accept",
+      "summary": "Accept an invitation.",
+      "auth": {
+        "kind": "authenticated"
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/workspaces/:workspaceId/members/:userId",
+      "summary": "Remove a member from a workspace.",
+      "auth": {
+        "kind": "workspace",
+        "role": "admin"
+      }
+    },
+    {
+      "method": "PATCH",
+      "path": "/workspaces/:workspaceId/members/:userId",
+      "summary": "Change a member's role.",
+      "auth": {
+        "kind": "workspace",
+        "role": "admin"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/:workspaceId/teams",
+      "summary": "Create a team.",
+      "auth": {
+        "kind": "workspace",
+        "role": "admin"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/:workspaceId/teams",
+      "summary": "List the teams in a workspace.",
+      "auth": {
+        "kind": "workspace",
+        "role": "member"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/:workspaceId/teams/:teamId",
+      "summary": "Read one team, including its charter.",
+      "auth": {
+        "kind": "workspace",
+        "role": "member"
+      }
+    },
+    {
+      "method": "PATCH",
+      "path": "/workspaces/:workspaceId/teams/:teamId",
+      "summary": "Rename a team or edit its charter.",
+      "auth": {
+        "kind": "workspace",
+        "role": "admin"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/:workspaceId/teams/:teamId/members",
+      "summary": "List the members of a team.",
+      "auth": {
+        "kind": "workspace",
+        "role": "member"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/workspaces/:workspaceId/teams/:teamId/members/:userId",
+      "summary": "Add someone to a team, or set their role override in it.",
+      "auth": {
+        "kind": "workspace",
+        "role": "admin"
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/workspaces/:workspaceId/teams/:teamId/members/:userId",
+      "summary": "Remove someone from a team.",
+      "auth": {
+        "kind": "workspace",
+        "role": "admin"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/:workspaceId/teams/:teamId/policies",
+      "summary": "The checkpoint policy in force for each kind, and which tier decided it.",
+      "auth": {
+        "kind": "workspace",
+        "role": "member"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/workspaces/:workspaceId/teams/:teamId/policies",
+      "summary": "Set a team's checkpoint policy, overriding the workflow default.",
+      "auth": {
+        "kind": "workspace",
+        "role": "admin"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/workspaces/:workspaceId/policies",
+      "summary": "Set a workflow's default checkpoint policy for every team.",
+      "auth": {
+        "kind": "workspace",
+        "role": "admin"
+      }
+    }
+  ],
+  "requirements": {
+    "total": 116,
+    "must": 66,
+    "withPassingTests": 5,
+    "ids": [
+      "WS-1",
+      "WS-2",
+      "WS-3",
+      "WS-4",
+      "WS-5"
+    ],
+    "byPhase": [
+      {
+        "phase": "0",
+        "total": 7,
+        "withTests": 5
+      },
+      {
+        "phase": "0/1",
+        "total": 1,
+        "withTests": 0
+      },
+      {
+        "phase": "1",
+        "total": 35,
+        "withTests": 0
+      },
+      {
+        "phase": "2",
+        "total": 14,
+        "withTests": 0
+      },
+      {
+        "phase": "3",
+        "total": 9,
+        "withTests": 0
+      },
+      {
+        "phase": "4",
+        "total": 12,
+        "withTests": 0
+      },
+      {
+        "phase": "5",
+        "total": 25,
+        "withTests": 0
+      },
+      {
+        "phase": "Later",
+        "total": 13,
+        "withTests": 0
+      }
+    ]
+  }
+}

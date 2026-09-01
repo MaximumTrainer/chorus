@@ -1,0 +1,58 @@
+name: Website
+
+# The site is built from source on every push to main, never published from a
+# committed copy of the output: a committed build drifts from its sources the
+# first time somebody edits one and not the other.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'website/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+# Least privilege. A workflow that publishes a static page has no business
+# holding write access to the repository's contents.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time, and never cancel one midway: a half-finished
+# deploy would leave the live site in whatever state it reached.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # No dependencies, no toolchain: the builder is plain Node reading the
+      # JSON that website/capture recorded from the running system.
+      - name: Build the site
+        run: node website/build.mjs --out ./_site
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./_site
+
+  deploy:
+    name: deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

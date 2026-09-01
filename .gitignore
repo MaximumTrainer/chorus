@@ -28,3 +28,10 @@ coverage/
 Thumbs.db
 .idea/
 *.swp
+
+# The website is built from source by .github/workflows/pages.yml. A committed
+# build drifts from its sources the first time someone edits one and not the
+# other; the recorded JSON in website/src is committed because regenerating it
+# needs a database.
+website/dist/
+website/capture/raw/

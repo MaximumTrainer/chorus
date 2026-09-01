@@ -26,4 +26,16 @@ export default tseslint.config(
       'no-console': 'off',
     },
   },
+  {
+    // The website builder and its recorders are command-line tools, not library
+    // code: writing to stdout is their interface, and they run in Node rather
+    // than in a bundle, so the Node globals are genuinely present.
+    files: ['website/**/*.mjs', 'website/**/*.ts'],
+    languageOptions: {
+      globals: { process: 'readonly', console: 'readonly' },
+    },
+    rules: {
+      'no-console': 'off',
+    },
+  },
 )
