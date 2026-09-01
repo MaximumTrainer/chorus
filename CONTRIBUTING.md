@@ -15,7 +15,17 @@ pnpm verify
 ```
 <!-- /quick-start -->
 
-`pnpm install` also points git at `.githooks`, so `pnpm verify` runs automatically before every push. That safeguard exists because a commit was once pushed with a failing gate: it had been run, but its exit code was not read.
+`pnpm install` also points git at `.githooks`, which installs two gates.
+
+**`pre-push`** runs `pnpm verify`. That safeguard exists because a commit was once pushed with a failing gate: it had been run, but its exit code was not read.
+
+**`commit-msg`** refuses a commit that touches source but neither updates documentation nor says why it need not. Most source commits genuinely need no documentation, and a gate demanding a pointless edit would only teach people to make pointless edits — so the second option is a line in the commit message:
+
+```
+Docs: none — pure extraction, no recorded decision changed.
+```
+
+That is the point of it. "No documentation needed" becomes a claim recorded in history that a reviewer can read and disagree with, rather than an omission nobody can see. It is the same reasoning as the `reason` a public route carries in the route table.
 
 `pnpm verify` runs exactly what CI runs — typecheck, lint, the unit/integration/contract suites, and the non-functional suites. If it passes locally and fails in CI, that divergence is itself a bug (NFR-12 AC4).
 

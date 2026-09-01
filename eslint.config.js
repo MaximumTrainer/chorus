@@ -27,10 +27,11 @@ export default tseslint.config(
     },
   },
   {
-    // The website builder and its recorders are command-line tools, not library
-    // code: writing to stdout is their interface, and they run in Node rather
-    // than in a bundle, so the Node globals are genuinely present.
-    files: ['website/**/*.mjs', 'website/**/*.ts'],
+    // The repository's own tooling — the website builder, its recorders, and the
+    // documentation sync — are command-line programs, not library code: writing
+    // to stdout is their interface, and they run in Node rather than in a
+    // bundle, so the Node globals are genuinely present.
+    files: ['website/**/*.mjs', 'website/**/*.ts', 'scripts/**/*.mjs'],
     languageOptions: {
       globals: { process: 'readonly', console: 'readonly' },
     },

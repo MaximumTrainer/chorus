@@ -1,7 +1,7 @@
 {
   "generatedFrom": "the repository itself — see website/capture",
   "recordedAt": "2026-09-01",
-  "recordedFromCommit": "56ac489",
+  "recordedFromCommit": "875e0b8",
   "tests": {
     "byLayer": [
       {
@@ -16,11 +16,11 @@
       },
       {
         "name": "nfr",
-        "passed": 183,
-        "total": 183
+        "passed": 197,
+        "total": 197
       }
     ],
-    "total": 385
+    "total": 399
   },
   "routes": [
     {

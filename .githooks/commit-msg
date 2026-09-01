@@ -1,0 +1,91 @@
+#!/bin/sh
+# The documentation gate (CLAUDE.md §6.11).
+#
+# A change that alters a recorded decision must update `architecture.md`, or add
+# an ADR, in the same change. That rule already existed; nothing enforced it, so
+# the only thing standing between this repository and silent divergence — "the
+# one unrecoverable mistake", CLAUDE.md §7 — was whether the author remembered
+# at the moment they were least likely to.
+#
+# The gate is deliberately not "every commit must touch a .md file". Most source
+# commits genuinely need no documentation, and a gate that demands a pointless
+# edit teaches people to make pointless edits. Instead a source commit must do
+# one of two things:
+#
+#   1. change documentation alongside the code, or
+#   2. say, in the commit message, why it does not need to.
+#
+# The second is the point. "No documentation needed" becomes a claim someone
+# made, recorded in history, that a reviewer can read and disagree with —
+# rather than an omission nobody can see. It is the same reasoning as the
+# `reason` a public route carries in the route table.
+#
+#   Docs: none — pure extraction, no recorded decision changed.
+#
+# To bypass in a genuine emergency: git commit --no-verify (and say so in the PR).
+
+set -e
+
+MESSAGE_FILE="$1"
+MESSAGE=$(cat "$MESSAGE_FILE")
+
+# Merges, reverts and autosquash markers carry no documentation of their own:
+# whatever they need was written by the commit they refer to.
+case "$MESSAGE" in
+  "Merge "*|"Revert "*|"fixup!"*|"squash!"*|"amend!"*) exit 0 ;;
+esac
+
+STAGED=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -z "$STAGED" ] && exit 0
+
+# Source of record: code that implements behaviour, schema that constrains it,
+# and prompts, which are as load-bearing as code and change output when edited.
+SOURCE=$(printf '%s\n' "$STAGED" | grep -E '^(apps/[^/]+/src/|packages/[^/]+/src/|packages/db/migrations/|workflows/prompts/)' || true)
+[ -z "$SOURCE" ] && exit 0
+
+# Tests are not exempt, but a commit that is *only* tests is documenting
+# behaviour by specifying it, which is this project's whole method.
+NON_TEST=$(printf '%s\n' "$SOURCE" | grep -v -E '\.test\.ts$' || true)
+[ -z "$NON_TEST" ] && exit 0
+
+DOCS=$(printf '%s\n' "$STAGED" | grep -E '(\.md$|^docs/)' || true)
+[ -n "$DOCS" ] && exit 0
+
+# A justification, and one long enough to be one. Without a floor the gate is
+# defeated by "Docs: n/a", and a gate that is trivially defeated is worse than
+# no gate: it trains people to defeat it and reassures reviewers that it did not
+# need reading.
+REASON=$(printf '%s\n' "$MESSAGE" | sed -n 's/^[Dd]ocs:[[:space:]]*//p' | head -n 1)
+if [ ${#REASON} -ge 15 ]; then
+  exit 0
+fi
+
+cat >&2 <<EOF
+
+commit-msg: this change touches source but no documentation.
+
+Changed:
+$(printf '%s\n' "$NON_TEST" | sed 's/^/  /')
+
+CLAUDE.md §6.11: a change that alters a recorded decision updates
+architecture.md, or adds an ADR under docs/adr/, in the same change.
+Silent divergence is the one unrecoverable mistake.
+
+Do one of these:
+
+  1. Stage the documentation this change makes untrue —
+     architecture.md, docs/adr/*, README.md, CONTRIBUTING.md, CLAUDE.md.
+
+  2. Say why none is needed, as a line in the commit message:
+
+       Docs: none — pure extraction, no recorded decision changed.
+
+     At least 15 characters, because "n/a" is not a reason. This is
+     recorded in history so a reviewer can disagree with it.
+EOF
+
+if [ -n "$REASON" ]; then
+  printf '\n  (Found "Docs: %s" — too short to be a reason.)\n' "$REASON" >&2
+fi
+
+exit 1

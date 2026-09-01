@@ -136,7 +136,7 @@ Assert through public entry points and observable outcomes: API responses, datab
 8. **Sandboxes.** Any change to the sandbox contract requires the sandbox security suite to still pass: no platform credentials, egress allow-list enforced, limits applied, path allow-list respected.
 9. **Contracts.** Changing a plugin interface (connector, adapter, chat surface, workflow schema) is a semver event and requires the shared contract-test kit to pass for every existing implementation.
 10. **Accessibility.** New primary screens and extension panels pass the axe suite; strings are externalised.
-11. **Documentation.** A change that alters a decision in `architecture.md` updates it, or adds an ADR under `docs/adr/`, in the same pull request.
+11. **Documentation.** A change that alters a decision in `architecture.md` updates it, or adds an ADR under `docs/adr/`, in the same pull request. This is enforced: the `commit-msg` hook refuses a commit touching source that neither changes documentation nor carries a `Docs:` line saying why none is needed. The escape hatch is deliberate — "no documentation needed" becomes a claim recorded in history that a reviewer can disagree with, rather than an omission nobody can see.
 
 ---
 
