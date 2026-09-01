@@ -7,7 +7,20 @@ import {
   SCOPES,
   type Role,
   type Scope,
+  type PermissionDecision,
 } from './permissions.js'
+
+/**
+ * Narrows a decision to the denial branch. Asserting `.allowed` and then
+ * reading `.reason` on a later line does not narrow the union, so this keeps
+ * the tests type-safe rather than reaching past the discriminant.
+ */
+function expectDenied(
+  decision: PermissionDecision,
+): Extract<PermissionDecision, { allowed: false }> {
+  if (decision.allowed) throw new Error('expected a denial, got permission granted')
+  return decision
+}
 
 /**
  * WS-4 — roles, and the rule that a token's scope is a ceiling, never a floor.
@@ -58,22 +71,24 @@ describe('WS-5 AC2 scope is a ceiling, not a floor', () => {
 
   it('WS-5 AC2: a token cannot grant more than the user already has', () => {
     // A member holding a run:coding token still may not launch a job.
-    const decision = effectivePermission({
-      role: 'member',
-      tokenScopes: allScopes,
-      required: { role: 'senior_member', scopes: ['run:coding'] },
-    })
-    expect(decision.allowed).toBe(false)
+    const decision = expectDenied(
+      effectivePermission({
+        role: 'member',
+        tokenScopes: allScopes,
+        required: { role: 'senior_member', scopes: ['run:coding'] },
+      }),
+    )
     expect(decision.reason).toBe('role')
   })
 
   it('WS-5 AC2: a sufficient role still needs the scope', () => {
-    const decision = effectivePermission({
-      role: 'senior_member',
-      tokenScopes: ['read:artefacts'],
-      required: { role: 'senior_member', scopes: ['run:coding'] },
-    })
-    expect(decision.allowed).toBe(false)
+    const decision = expectDenied(
+      effectivePermission({
+        role: 'senior_member',
+        tokenScopes: ['read:artefacts'],
+        required: { role: 'senior_member', scopes: ['run:coding'] },
+      }),
+    )
     expect(decision.reason).toBe('scope')
     expect(decision.missingScopes).toEqual(['run:coding'])
   })
@@ -99,22 +114,24 @@ describe('WS-5 AC2 scope is a ceiling, not a floor', () => {
   })
 
   it('WS-5: every required scope must be present, not merely one of them', () => {
-    const decision = effectivePermission({
-      role: 'admin',
-      tokenScopes: ['read:artefacts'],
-      required: { role: 'member', scopes: ['read:artefacts', 'write:artefacts'] },
-    })
-    expect(decision.allowed).toBe(false)
+    const decision = expectDenied(
+      effectivePermission({
+        role: 'admin',
+        tokenScopes: ['read:artefacts'],
+        required: { role: 'member', scopes: ['read:artefacts', 'write:artefacts'] },
+      }),
+    )
     expect(decision.missingScopes).toEqual(['write:artefacts'])
   })
 
   it('WS-5: an unknown scope on a token grants nothing', () => {
-    const decision = effectivePermission({
-      role: 'admin',
-      tokenScopes: ['not:a:real:scope' as Scope],
-      required: { role: 'member', scopes: ['read:artefacts'] },
-    })
-    expect(decision.allowed).toBe(false)
+    expectDenied(
+      effectivePermission({
+        role: 'admin',
+        tokenScopes: ['not:a:real:scope' as Scope],
+        required: { role: 'member', scopes: ['read:artefacts'] },
+      }),
+    )
   })
 
   it('WS-4: a denial always names which check failed, so a misconfiguration is diagnosable', () => {
