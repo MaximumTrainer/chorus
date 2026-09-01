@@ -350,7 +350,9 @@ chorus/
     testing.md           Expanded testing guide referenced by CLAUDE.md
 ```
 
-**Dependency rule.** `packages/core` depends on nothing internal. `db`, `llm` depend only on `core`. `brain`, `agent`, `coding`, `connectors`, `indexer`, `mcp` depend on `core`, `db`, `llm` and never on each other except through `core` interfaces. Apps depend on packages, never the reverse. This is enforced in CI by a dependency-cruiser rule.
+**Dependency rule.** `packages/core` depends on nothing internal. `db`, `llm` depend only on `core`. `brain`, `agent`, `coding`, `connectors`, `indexer`, `mcp` depend on `core`, `db`, `llm` and never on each other except through `core` interfaces. Apps depend on packages, never the reverse.
+
+This is enforced in CI by a rule engine in `packages/testing`, run by the `nfr` suite. Rules are declared as data (`CHORUS_BOUNDARY_RULES`) covering both **import** boundaries — the layering above, provider SDKs confined to `packages/llm` (ADR-0005), database drivers confined to `packages/db` (ADR-0003) — and **content** boundaries, such as concrete model identifiers appearing outside `packages/llm`. A content rule is why the engine is bespoke rather than an off-the-shelf dependency linter: "no model name in feature code" is not expressible as a dependency graph, and it is the rule that actually prevents provider-agnosticism decaying one call at a time. The engine is itself unit-tested against known-bad fixtures, so a green boundary suite means the rules ran and found nothing rather than that they are inert.
 
 ---
 
