@@ -55,6 +55,50 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): DbConfig {
  */
 const appPools = new Map<string, Pool>()
 
+/**
+ * Every pool in the system is created here.
+ *
+ * Two earlier defects came from pools created elsewhere: one missed its
+ * idle-error handler and failed CI on a dropped test database, and a later pair
+ * were never closed at teardown and did the same. Patching each site invites the
+ * same fault the next time a pool is needed, so pool creation is centralised and
+ * every pool is both handled and tracked. Closing is then total by construction.
+ */
+const managedPools = new Set<Pool>()
+
+export function createManagedPool(options: {
+  host: string
+  port: number
+  database: string
+  user: string
+  password: string
+  max?: number
+  label: string
+}): Pool {
+  const pool = new Pool({
+    host: options.host,
+    port: options.port,
+    database: options.database,
+    user: options.user,
+    password: options.password,
+    max: options.max ?? 10,
+  })
+  // An idle client whose backend is terminated -- a dropped test database, a
+  // failover -- emits on its pool. Unhandled, that becomes an unhandled
+  // rejection and fails a run in which every test passed.
+  pool.on('error', (error) => {
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        message: `idle database client error (${options.label})`,
+        error: String(error),
+      }),
+    )
+  })
+  managedPools.add(pool)
+  return pool
+}
+
 function poolKey(config: DbConfig): string {
   return `${config.host}:${config.port}/${config.database}@${config.appUser}`
 }
@@ -63,21 +107,13 @@ function getAppPool(config: DbConfig = configFromEnv()): Pool {
   const key = poolKey(config)
   let pool = appPools.get(key)
   if (!pool) {
-    pool = new Pool({
+    pool = createManagedPool({
       host: config.host,
       port: config.port,
       database: config.database,
       user: config.appUser,
       password: config.appPassword,
-      max: 10,
-    })
-    // An idle client whose backend is terminated (a dropped test database, a
-    // failover) emits on the pool. Without a handler that becomes an
-    // unhandled rejection and fails an otherwise-passing run.
-    pool.on('error', (error) => {
-      console.warn(
-        JSON.stringify({ level: 'warn', message: 'idle database client error', error: String(error) }),
-      )
+      label: 'app',
     })
     appPools.set(key, pool)
   }
@@ -136,9 +172,15 @@ function wrapClient(client: PoolClient): TenantTx {
   }
 }
 
-/** Close every pool. Tests and shutdown hooks call this. */
+/**
+ * Close every managed pool. Tests and shutdown hooks call this.
+ *
+ * Total by construction: anything from createManagedPool is closed here, so a
+ * new pool cannot be forgotten at teardown.
+ */
 export async function closePool(): Promise<void> {
-  const pools = [...appPools.values()]
+  const pools = [...managedPools]
+  managedPools.clear()
   appPools.clear()
-  await Promise.all(pools.map((pool) => pool.end()))
+  await Promise.all(pools.map((pool) => pool.end().catch(() => undefined)))
 }

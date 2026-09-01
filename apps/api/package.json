@@ -3,17 +3,25 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "HTTP/SSE API, OAuth 2.1 server, MCP endpoint, webhook receivers. Enqueues everything long-running (architecture.md §6).",
-  "exports": { ".": "./src/index.ts" },
-  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json" },
+  "description": "HTTP/SSE API, OAuth 2.1 server, MCP endpoint, webhook receivers. Enqueues everything long-running (architecture.md \u00a76).",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
   "dependencies": {
     "@chorus/core": "workspace:*",
     "@chorus/db": "workspace:*",
-    "hono": "4.6.9"
+    "better-auth": "1.7.2",
+    "hono": "4.6.9",
+    "pg": "8.13.1"
   },
   "devDependencies": {
     "@chorus/config": "workspace:*",
+    "@chorus/testing": "workspace:*",
     "@types/node": "22.7.5",
+    "@types/pg": "8.11.10",
     "typescript": "5.6.3",
     "vitest": "2.1.3"
   }

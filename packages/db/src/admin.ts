@@ -1,8 +1,7 @@
-import { Pool } from 'pg'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ulid } from '@chorus/core'
-import { configFromEnv, type DbConfig, type TenantTx } from './client.js'
+import { configFromEnv, createManagedPool, type DbConfig, type TenantTx } from './client.js'
 
 /**
  * Privileged access, used only by migrations and by the tenancy suite.
@@ -11,22 +10,6 @@ import { configFromEnv, type DbConfig, type TenantTx } from './client.js'
  * very code paths it is testing: if isolation were broken *and* the seeding
  * went through the tenant accessor, the test could pass by symmetry.
  */
-
-/**
- * An idle client whose backend is terminated -- a dropped test database, a
- * failover -- emits on its pool. Without a handler that becomes an unhandled
- * rejection and fails a run in which every test passed. Every pool this
- * package creates gets one; missing it on a single pool is enough to
- * reintroduce the failure.
- */
-function swallowIdleErrors(pool: Pool, label: string): Pool {
-  pool.on('error', (error) => {
-    console.warn(
-      JSON.stringify({ level: 'warn', message: `idle database client error (${label})`, error: String(error) }),
-    )
-  })
-  return pool
-}
 
 export const MIGRATIONS_DIR = join(import.meta.dirname, '..', 'migrations')
 
@@ -43,29 +26,25 @@ export interface AdminConnection {
 }
 
 export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<AdminConnection> {
-  const owner = swallowIdleErrors(
-    new Pool({
-      host: config.host,
-      port: config.port,
-      database: config.database,
-      user: config.ownerUser,
-      password: config.ownerPassword,
-      max: 4,
-    }),
-    'owner',
-  )
+  const owner = createManagedPool({
+    host: config.host,
+    port: config.port,
+    database: config.database,
+    user: config.ownerUser,
+    password: config.ownerPassword,
+    max: 4,
+    label: 'owner',
+  })
 
-  const appRole = swallowIdleErrors(
-    new Pool({
-      host: config.host,
-      port: config.port,
-      database: config.database,
-      user: config.appUser,
-      password: config.appPassword,
-      max: 2,
-    }),
-    'app-role',
-  )
+  const appRole = createManagedPool({
+    host: config.host,
+    port: config.port,
+    database: config.database,
+    user: config.appUser,
+    password: config.appPassword,
+    max: 2,
+    label: 'app-role',
+  })
 
   // Make the application role's name available to assertions that check it has
   // neither BYPASSRLS nor superuser.
@@ -183,7 +162,13 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
     },
 
     async close() {
-      await Promise.all([owner.end(), appRole.end()])
+      // Pools are managed centrally now, so closePool() may already have ended
+      // these. Closing twice is harmless and this keeps close() safe to call
+      // from either path rather than making callers track which ran first.
+      await Promise.all([
+        owner.end().catch(() => undefined),
+        appRole.end().catch(() => undefined),
+      ])
     },
   }
 }

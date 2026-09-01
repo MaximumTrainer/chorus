@@ -1,7 +1,9 @@
 import { Hono } from 'hono'
-import { AppError, NotFoundError, ForbiddenError, ulid } from '@chorus/core'
-import { withTenant, type DbConfig } from '@chorus/db'
+import { AppError, NotFoundError, ForbiddenError, ValidationError, ulid } from '@chorus/core'
+import { withTenant, configFromEnv, type DbConfig } from '@chorus/db'
 import { route, type RouteDefinition, type AppEnv, type ReadinessResult } from './routes.js'
+import { createAuth, type Mailer } from './auth.js'
+import { createTokenLedger } from './single-use-tokens.js'
 
 /**
  * The API process (architecture.md §6).
@@ -21,6 +23,11 @@ export interface AppOptions {
   checkReadiness?: () => Promise<ReadinessResult>
   /** Injected so a test can point the app at its own isolated database. */
   dbConfig?: DbConfig
+  /** Mail transport. A recording fake in tests; SMTP in a deployment. */
+  mailer?: Mailer
+  baseUrl?: string
+  /** Failed attempts tolerated per window before throttling (WS-1 AC5). */
+  maxSignInAttempts?: number
 }
 
 /**
@@ -111,6 +118,36 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
     await next()
     c.header('x-request-id', requestId)
   })
+
+  // WS-1: authentication is mounted under /auth/*, per architecture.md §18.
+  // The library owns these routes; they are public by necessity because a
+  // caller has no credential until they have used them.
+  if (options.mailer) {
+    const auth = createAuth({
+      mailer: options.mailer,
+      ...(options.dbConfig ? { dbConfig: options.dbConfig } : {}),
+      ...(options.baseUrl ? { baseUrl: options.baseUrl } : {}),
+      ...(options.maxSignInAttempts === undefined
+        ? {}
+        : { maxSignInAttempts: options.maxSignInAttempts }),
+    })
+    // WS-1 AC2: the library's verification tokens are stateless and therefore
+    // replayable. Consumption is recorded here and a replay refused, before the
+    // request reaches the library.
+    const ledger = createTokenLedger(options.dbConfig ?? configFromEnv())
+
+    app.on(['GET', 'POST'], '/auth/*', async (c) => {
+      if (c.req.path.startsWith('/auth/verify-email')) {
+        const token = new URL(c.req.url).searchParams.get('token')
+        if (token && !(await ledger.consume(token, 'verify-email'))) {
+          throw new ValidationError('This verification link has already been used.', {
+            reason: 'token_already_used',
+          })
+        }
+      }
+      return auth.handler(c.req.raw)
+    })
+  }
 
   const isProduction = process.env.NODE_ENV === 'production'
 

@@ -1,4 +1,4 @@
-export { withTenant, closePool, configFromEnv } from './client.js'
+export { withTenant, closePool, configFromEnv, createManagedPool } from './client.js'
 export type { TenantTx, DbConfig } from './client.js'
 export { connectAdmin, applyMigrations, resetDatabase, MIGRATIONS_DIR } from './admin.js'
 export type { AdminConnection } from './admin.js'

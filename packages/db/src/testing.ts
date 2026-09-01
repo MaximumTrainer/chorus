@@ -1,4 +1,4 @@
-import { Pool } from 'pg'
+import pg from 'pg'
 import { randomBytes } from 'node:crypto'
 import { closePool, configFromEnv, type DbConfig } from './client.js'
 import { connectAdmin, applyMigrations, type AdminConnection } from './admin.js'
@@ -31,7 +31,9 @@ export async function createIsolatedDatabase(
 
   // Connect to the maintenance database to issue CREATE DATABASE, which cannot
   // run inside a transaction or against the database being created.
-  const maintenance = new Pool({
+  // Deliberately not managed: closePool() runs during drop(), and the
+  // maintenance connection must outlive it to issue DROP DATABASE.
+  const maintenance = new pg.Pool({
     host: base.host,
     port: base.port,
     database: base.database,
