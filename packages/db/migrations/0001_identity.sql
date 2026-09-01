@@ -133,7 +133,9 @@ CREATE TABLE audit_events (
   workspace_id  text NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   actor_type    text NOT NULL CHECK (actor_type IN ('user', 'run', 'integration', 'system')),
   actor_id      text,
-  action        text NOT NULL,
+  -- Bounded: an action is a dotted verb, not free text. The bound also
+  -- makes the "audit failure rolls back the change" guarantee testable.
+  action        text NOT NULL CHECK (length(action) <= 128),
   target_type   text NOT NULL,
   target_id     text,
   before        jsonb,

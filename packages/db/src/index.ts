@@ -4,3 +4,5 @@ export { connectAdmin, applyMigrations, resetDatabase, MIGRATIONS_DIR } from './
 export type { AdminConnection } from './admin.js'
 export { TENANT_TABLES } from './tables.js'
 export type { TenantTable } from './tables.js'
+export { mutate } from './audit.js'
+export type { MutationSpec, Actor, ActorType } from './audit.js'
