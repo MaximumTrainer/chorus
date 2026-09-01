@@ -1,0 +1,17 @@
+# Normalise line endings. Contributors are on Windows, macOS and Linux; CI is
+# Linux. Without this, checked-in CRLF makes shell scripts and container
+# entrypoints fail in ways that only reproduce on one platform.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.pdf binary
+*.zip binary
+
+pnpm-lock.yaml linguist-generated=true -diff

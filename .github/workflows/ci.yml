@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # NFR-12 AC5: development and CI need no external credentials. Every model,
+  # git host, tracker and chat surface is faked (packages/testing).
+  CI: "true"
+
+jobs:
+  # NFR-12 AC1: a fresh clone reaches a working system with one command.
+  # NFR-12 AC4: this runs exactly what a contributor runs locally.
+  verify:
+    name: verify (fresh clone)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify
+        run: pnpm verify
+
+  # NFR-1 AC1: the reference stack stands up on a clean host.
+  compose:
+    name: reference deployment
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate compose configuration
+        run: docker compose -f deploy/docker-compose.yml config --quiet
+
+      - name: Start the reference stack
+        run: docker compose -f deploy/docker-compose.yml up --detach --wait --wait-timeout 180
+
+      - name: Report service health
+        if: always()
+        run: docker compose -f deploy/docker-compose.yml ps
+
+      - name: Stop the stack
+        if: always()
+        run: docker compose -f deploy/docker-compose.yml down --volumes

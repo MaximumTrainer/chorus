@@ -1,2 +1,30 @@
 .copilot-specs-cache/
 design.md
+
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# tooling caches
+.turbo/
+.vitest/
+coverage/
+.eslintcache
+
+# environment
+.env
+.env.*
+!.env.example
+
+# editors and os
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
