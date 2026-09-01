@@ -1,0 +1,15 @@
+{
+  "name": "@chorus/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Domain vocabulary shared by every package: types, errors, permissions, state machines, ids. Depends on nothing internal (architecture.md §7).",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json" },
+  "devDependencies": {
+    "@chorus/config": "workspace:*",
+    "@types/node": "22.7.5",
+    "typescript": "5.6.3",
+    "vitest": "2.1.3"
+  }
+}

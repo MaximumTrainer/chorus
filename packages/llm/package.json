@@ -1,0 +1,16 @@
+{
+  "name": "@chorus/llm",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The only place a provider SDK or a model name may appear (ADR-0005). Provider router, capability matching, cost accounting, embedding cache, prompt registry.",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json" },
+  "dependencies": { "@chorus/core": "workspace:*" },
+  "devDependencies": {
+    "@chorus/config": "workspace:*",
+    "@types/node": "22.7.5",
+    "typescript": "5.6.3",
+    "vitest": "2.1.3"
+  }
+}
