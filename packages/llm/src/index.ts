@@ -1,3 +1,8 @@
 export * from './types.js'
 export { createRouter, missingCapabilities, ModelCapabilityError } from './router.js'
 export type { ModelRouter, ResolveRequest } from './router.js'
+export { parsePrompt, loadPromptDirectory, renderPrompt, PromptError } from './prompts.js'
+export type { Prompt, PromptRegistry } from './prompts.js'
+export { contentHash, cacheKey, createInMemoryEmbeddingCache } from './cache.js'
+export type { EmbeddingCache, EmbeddingCacheStats } from './cache.js'
+export { isPromptPath } from './prompts.js'

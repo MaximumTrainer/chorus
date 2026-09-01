@@ -8,6 +8,9 @@ importers:
 
   .:
     devDependencies:
+      '@chorus/llm':
+        specifier: workspace:*
+        version: link:packages/llm
       '@chorus/testing':
         specifier: workspace:*
         version: link:packages/testing
@@ -58,6 +61,9 @@ importers:
       '@chorus/core':
         specifier: workspace:*
         version: link:../core
+      yaml:
+        specifier: 2.6.0
+        version: 2.6.0
     devDependencies:
       '@chorus/config':
         specifier: workspace:*
