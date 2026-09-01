@@ -1,0 +1,6 @@
+export { withTenant, closePool, configFromEnv } from './client.js'
+export type { TenantTx, DbConfig } from './client.js'
+export { connectAdmin, applyMigrations, resetDatabase, MIGRATIONS_DIR } from './admin.js'
+export type { AdminConnection } from './admin.js'
+export { TENANT_TABLES } from './tables.js'
+export type { TenantTable } from './tables.js'

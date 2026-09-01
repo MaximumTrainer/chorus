@@ -18,6 +18,8 @@
     "verify": "pnpm typecheck && pnpm lint && pnpm test && pnpm test:nfr"
   },
   "devDependencies": {
+    "@chorus/core": "workspace:*",
+    "@chorus/db": "workspace:*",
     "@chorus/llm": "workspace:*",
     "@chorus/testing": "workspace:*",
     "@eslint/js": "9.13.0",
