@@ -26,10 +26,10 @@ describe('NFR-12 workspace bootstrap', () => {
     expect(pkg.engines?.node).toBeDefined()
   })
 
-  it('NFR-12 AC4: verify runs typecheck, lint, tests and the non-functional suites', () => {
+  it('NFR-12 AC4: verify runs typecheck, lint, every test layer and the non-functional suites', () => {
     const { scripts } = readJson('package.json')
     expect(scripts.verify).toBeDefined()
-    for (const step of ['typecheck', 'lint', 'test', 'test:nfr']) {
+    for (const step of ['typecheck', 'lint', 'test:acceptance', 'test:nfr']) {
       expect(scripts[step], `missing script: ${step}`).toBeDefined()
       expect(scripts.verify, `verify must run ${step}`).toContain(step)
     }

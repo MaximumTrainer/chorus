@@ -47,18 +47,41 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): DbConfig {
   }
 }
 
-let appPool: Pool | undefined
+/**
+ * Pools are keyed by the connection they describe. Caching a single pool and
+ * ignoring later configs would silently hand back a connection to the wrong
+ * database -- which is exactly what an isolated-database test needs not to
+ * happen.
+ */
+const appPools = new Map<string, Pool>()
+
+function poolKey(config: DbConfig): string {
+  return `${config.host}:${config.port}/${config.database}@${config.appUser}`
+}
 
 function getAppPool(config: DbConfig = configFromEnv()): Pool {
-  appPool ??= new Pool({
-    host: config.host,
-    port: config.port,
-    database: config.database,
-    user: config.appUser,
-    password: config.appPassword,
-    max: 10,
-  })
-  return appPool
+  const key = poolKey(config)
+  let pool = appPools.get(key)
+  if (!pool) {
+    pool = new Pool({
+      host: config.host,
+      port: config.port,
+      database: config.database,
+      user: config.appUser,
+      password: config.appPassword,
+      max: 10,
+    })
+    // An idle client whose backend is terminated (a dropped test database, a
+    // failover) emits on the pool. Without a handler that becomes an
+    // unhandled rejection and fails an otherwise-passing run.
+    pool.on('error', (error) => {
+      console.warn(
+        JSON.stringify({ level: 'warn', message: 'idle database client error', error: String(error) }),
+      )
+    })
+    appPools.set(key, pool)
+  }
+  return pool
 }
 
 export interface TenantTx {
@@ -113,8 +136,9 @@ function wrapClient(client: PoolClient): TenantTx {
   }
 }
 
-/** Close the shared pool. Tests and shutdown hooks call this. */
+/** Close every pool. Tests and shutdown hooks call this. */
 export async function closePool(): Promise<void> {
-  await appPool?.end()
-  appPool = undefined
+  const pools = [...appPools.values()]
+  appPools.clear()
+  await Promise.all(pools.map((pool) => pool.end()))
 }

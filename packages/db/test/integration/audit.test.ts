@@ -1,12 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { ulid } from '@chorus/core'
 import {
-  connectAdmin,
-  applyMigrations,
-  resetDatabase,
+  createIsolatedDatabase,
   withTenant,
   mutate,
   type AdminConnection,
+  type IsolatedDatabase,
 } from '../../src/index.js'
 
 /**
@@ -17,14 +16,15 @@ import {
  * the record of it. Atomicity in both directions is the whole guarantee.
  */
 describe('NFR-5 audit trail', () => {
+  let db: IsolatedDatabase
   let admin: AdminConnection
   const workspaceId = ulid()
   let userId: string
 
   beforeAll(async () => {
-    admin = await connectAdmin()
-    await resetDatabase(admin)
-    await applyMigrations(admin)
+    // A database of this file's own, so the suite is parallel-safe (CLAUDE.md §5).
+    db = await createIsolatedDatabase()
+    admin = db.admin
     await admin.seedWorkspace(workspaceId)
     const [member] = await admin.query<{ user_id: string }>(
       `SELECT user_id FROM workspace_members WHERE workspace_id = $1`,
@@ -34,7 +34,7 @@ describe('NFR-5 audit trail', () => {
   }, 120_000)
 
   afterAll(async () => {
-    await admin?.close()
+    await db?.drop()
   })
 
   const auditCount = async (): Promise<number> => {
@@ -66,7 +66,7 @@ describe('NFR-5 audit trail', () => {
             )
           },
         }),
-      { userId },
+      { userId, config: db.config },
     )
 
     expect(await auditCount()).toBe(before + 1)
@@ -108,7 +108,7 @@ describe('NFR-5 audit trail', () => {
               throw new Error('something failed after the write')
             },
           }),
-        { userId },
+        { userId, config: db.config },
       ),
     ).rejects.toThrow('something failed after the write')
 
@@ -140,7 +140,7 @@ describe('NFR-5 audit trail', () => {
               )
             },
           }),
-        { userId },
+        { userId, config: db.config },
       ),
     ).rejects.toThrow()
 
@@ -168,7 +168,7 @@ describe('NFR-5 audit trail', () => {
             )
           },
         }),
-      { userId },
+      { userId, config: db.config },
     )
 
     const [event] = await admin.query<{ actor_type: string; actor_id: string }>(
@@ -192,6 +192,7 @@ describe('NFR-5 audit trail', () => {
           targetId: ulid(),
           apply: async () => {},
         }),
+      { config: db.config },
       ),
     ).rejects.toThrow()
   })

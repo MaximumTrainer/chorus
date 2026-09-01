@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import {
-  connectAdmin,
-  applyMigrations,
+  createIsolatedDatabase,
   withTenant,
   TENANT_TABLES,
-  resetDatabase,
   type AdminConnection,
+  type IsolatedDatabase,
+  type TenantTx,
 } from '@chorus/db'
 import { ulid } from '@chorus/core'
 
@@ -22,14 +22,15 @@ import { ulid } from '@chorus/core'
  * so that is asserted explicitly.
  */
 describe('NFR-3 workspace isolation', () => {
+  let db: IsolatedDatabase
   let admin: AdminConnection
   const workspaceA = ulid()
   const workspaceB = ulid()
 
   beforeAll(async () => {
-    admin = await connectAdmin()
-    await resetDatabase(admin)
-    await applyMigrations(admin)
+    // A database of this file's own, so the suite is parallel-safe (CLAUDE.md §5).
+    db = await createIsolatedDatabase()
+    admin = db.admin
 
     // Two workspaces, each with one row in every tenant table, inserted as
     // admin so the test does not depend on the code paths it is testing.
@@ -38,8 +39,12 @@ describe('NFR-3 workspace isolation', () => {
   }, 120_000)
 
   afterAll(async () => {
-    await admin?.close()
+    await db?.drop()
   })
+
+  /** Every tenant query targets this file's own database, not the shared one. */
+  const asWorkspace = <T>(workspaceId: string, fn: (tx: TenantTx) => Promise<T>): Promise<T> =>
+    withTenant(workspaceId, fn, { config: db.config })
 
   it('NFR-3: the application role cannot bypass row-level security', async () => {
     const [{ rolbypassrls, rolsuper }] = await admin.query<{
@@ -83,7 +88,7 @@ describe('NFR-3 workspace isolation', () => {
   it.each([...TENANT_TABLES])(
     'NFR-3 AC2: %s — workspace A cannot read a row belonging to workspace B',
     async (table) => {
-      const rows = await withTenant(workspaceA, async (tx) =>
+      const rows = await asWorkspace(workspaceA, async (tx) =>
         tx.query<{ workspace_id: string }>(`SELECT workspace_id FROM ${table}`),
       )
       expect(rows.length, `${table}: expected A's own seeded row to be visible`).toBeGreaterThan(0)
@@ -96,7 +101,7 @@ describe('NFR-3 workspace isolation', () => {
   it.each([...TENANT_TABLES])(
     'NFR-3 AC2: %s — workspace A cannot update a row belonging to workspace B',
     async (table) => {
-      const affected = await withTenant(workspaceA, async (tx) =>
+      const affected = await asWorkspace(workspaceA, async (tx) =>
         tx.execute(`UPDATE ${table} SET workspace_id = workspace_id WHERE workspace_id = $1`, [
           workspaceB,
         ]),
@@ -108,13 +113,13 @@ describe('NFR-3 workspace isolation', () => {
   it.each([...TENANT_TABLES])(
     'NFR-3 AC2: %s — workspace A cannot delete a row belonging to workspace B',
     async (table) => {
-      const affected = await withTenant(workspaceA, async (tx) =>
+      const affected = await asWorkspace(workspaceA, async (tx) =>
         tx.execute(`DELETE FROM ${table} WHERE workspace_id = $1`, [workspaceB]),
       )
       expect(affected, `${table}: workspace A deleted ${affected} of B's rows`).toBe(0)
 
       // B's rows must still be there.
-      const remaining = await withTenant(workspaceB, async (tx) =>
+      const remaining = await asWorkspace(workspaceB, async (tx) =>
         tx.query(`SELECT 1 FROM ${table}`),
       )
       expect(remaining.length, `${table}: B's rows were destroyed`).toBeGreaterThan(0)
@@ -125,7 +130,7 @@ describe('NFR-3 workspace isolation', () => {
     'NFR-3 AC2: %s — a row cannot be inserted into another workspace',
     async (table) => {
       await expect(
-        withTenant(workspaceA, async (tx) => admin.insertMinimalRow(tx, table, workspaceB)),
+        asWorkspace(workspaceA, async (tx) => admin.insertMinimalRow(tx, table, workspaceB)),
       ).rejects.toThrow()
     },
   )
