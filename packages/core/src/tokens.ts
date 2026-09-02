@@ -1,4 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
+import { isUlid } from './ids.js'
 
 /**
  * Personal API tokens (WS-5 AC1).
@@ -86,4 +87,58 @@ export function constantTimeEquals(left: string, right: string): boolean {
     return false
   }
   return timingSafeEqual(a, b)
+}
+
+/**
+ * The three OAuth secret kinds (WS-5 AC3, AC4).
+ *
+ * Distinct schemes so a value cannot be honoured as something it is not: an
+ * access token relabelled as a refresh token would defeat rotation without ever
+ * touching the rotation code.
+ */
+export const OAUTH_SCHEMES = Object.freeze({
+  code: 'chorus_ac_',
+  access: 'chorus_at_',
+  refresh: 'chorus_rt_',
+})
+
+export interface ScopedSecret {
+  readonly plaintext: string
+  readonly hash: string
+}
+
+/**
+ * A secret that names the workspace it belongs to.
+ *
+ * The token endpoint has no workspace in its path, so a refresh token presented
+ * there could not otherwise be looked up inside a tenant context. The
+ * alternative is a row-level security policy widened enough to find a token
+ * without one — a hole in the boundary NFR-3 rests on, opened in order to
+ * authenticate, which is precisely the wrong trade.
+ *
+ * The workspace id is not a secret; it appears in every URL the client calls.
+ * It is inside the hashed span, so editing it yields a value matching no row.
+ */
+export function mintScopedSecret(scheme: string, workspaceId: string): ScopedSecret {
+  const plaintext = `${scheme}${workspaceId}.${randomBytes(SECRET_BYTES).toString('base64url')}`
+  return { plaintext, hash: hashApiToken(plaintext) }
+}
+
+export function parseScopedSecret(
+  scheme: string,
+  presented: string,
+): { workspaceId: string; hash: string } | undefined {
+  if (!presented.startsWith(scheme)) return undefined
+
+  const body = presented.slice(scheme.length)
+  const separator = body.indexOf('.')
+  if (separator <= 0) return undefined
+
+  const workspaceId = body.slice(0, separator)
+  const secret = body.slice(separator + 1)
+  // A malformed id is refused here rather than becoming a tenant context that
+  // matches nothing and an error nobody can read.
+  if (!isUlid(workspaceId) || secret.length === 0) return undefined
+
+  return { workspaceId, hash: hashApiToken(presented) }
 }

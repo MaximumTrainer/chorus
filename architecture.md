@@ -383,7 +383,7 @@ The application connects as a role **without** `BYPASSRLS`. Migrations run as a 
 ### 8.2 Table groups
 
 **Identity and access**
-`users`, `workspaces`, `workspace_members(role)`, `teams(slug, charter, settings)`, `team_members(role_override)`, `invitations(email, token_hash, role, expires_at)`, `api_tokens(name, token_hash, scopes, last_used_at)`, `oauth_clients`, `oauth_grants`, `oauth_tokens`, `sessions_auth`.
+`users`, `workspaces`, `workspace_members(role)`, `teams(slug, charter, settings)`, `team_members(role_override)`, `invitations(email, token_hash, role, expires_at)`, `api_tokens(name, token_hash, scopes, last_used_at)`, `oauth_clients`, `oauth_authorization_requests`, `oauth_grants`, `oauth_tokens`, `sessions_auth`.
 
 **Context sources**
 `integrations(kind, status, encrypted_credentials, config jsonb, sync_cursor, health jsonb)`, `repositories(team_id, integration_id, provider, full_name, default_branch, base_branch, settings jsonb)`, `repo_index_runs(status, commit_sha, stats jsonb)`, `code_files(repo_id, path, lang, size, commit_sha)`, `code_symbols(file_id, kind, name, line_start, line_end, signature)`, `code_chunks(file_id, text, embedding vector, tsv, line_start, line_end)`, `route_map(repo_id, route_pattern, component_file_id)`, `signals(source, external_id, kind, payload jsonb, text, author, occurred_at, url, permissions jsonb, tsv)`, `signal_chunks(signal_id, text, embedding, tsv)`.
@@ -764,6 +764,16 @@ Built on the official TypeScript MCP SDK, mounted at `/mcp` in `api` over **Stre
 
 **Authorization** follows the MCP authorization specification: the API publishes OAuth 2.1 metadata at `/.well-known/oauth-authorization-server`, supports dynamic client registration, authorization code with PKCE, and refresh; personal API tokens are accepted as bearer tokens for scripts. Scopes: `read:artefacts`, `write:artefacts`, `run:coding`, `read:brain`.
 
+`S256` is the only challenge method offered or accepted. OAuth 2.1 removes `plain`, and a server that still honours it can be talked down to it by any client — at which point the challenge carried in the authorization request *is* the verifier, and PKCE stops meaning anything.
+
+A **grant is scoped to one workspace**, chosen by the granter on the consent screen rather than implied. That is why the two consent endpoints require a session but no membership (§20): naming the workspace *is* the consent step, so requiring membership first would be circular. `approve` then re-checks membership in the chosen workspace before issuing anything — naming `workspace_id` explicitly, because migration 0004 deliberately lets a user see their own membership rows in *any* workspace, and an unqualified check would happily answer "yes, a member" about the wrong one.
+
+Every issued secret — code, access token, refresh token — **names the workspace it belongs to**, inside the span that is hashed. The token endpoint has no workspace in its path, so a refresh token presented there could not otherwise be found inside a tenant context; the alternative is widening a row-level security policy in order to authenticate, which is a hole in the boundary NFR-3 rests on opened for the worst possible reason. The workspace id is not secret — it is in every URL the client already calls — and editing it yields a value that matches no stored row.
+
+**Refresh rotation detects reuse.** A spent token is kept rather than deleted, because recognising that a *dead* token was presented again is the whole guarantee, and a deleted row is indistinguishable from one that never existed. On reuse the entire grant is revoked, not just the token: from the server the legitimate client and the thief are indistinguishable, so the only safe reading is theft. Rotation also revokes the access token it replaces, or a stolen pair keeps working for the rest of its hour. The revocation and its audit event are committed in their own transaction *before* the refusal is thrown — doing both inside one transaction rolls the revocation back with the throw, leaving an incident detected, recorded nowhere, and acted on not at all.
+
+Consent screens name scopes in plain language, because a scope string is not a user interface and nobody can meaningfully agree to `run:coding`. Client names arrive through dynamic registration, which anyone may perform, so they are escaped before rendering — the consent screen is the one page whose entire purpose is that the reader trusts it.
+
 **Tools** map one-to-one onto the API service layer, so behaviour and permissions are identical to the web UI (ADR-0007):
 
 - *read:* `search`, `get_task`, `list_tasks`, `get_document`, `list_documents`, `get_session`, `get_entity`, `get_wiki_page`, `get_repo_context`, `get_coding_job`
@@ -906,7 +916,7 @@ REST over JSON, described by generated OpenAPI, cursor pagination, ETags for opt
 POST   /auth/*                              sign-up, sign-in, verification, password reset
 GET    /.well-known/oauth-authorization-server
 POST   /oauth/register | /oauth/token       dynamic client registration, token exchange
-GET    /oauth/authorize                     authorization code + PKCE
+GET|POST   /oauth/authorize                 consent screen, then authorization code + PKCE
 
 GET|POST   /workspaces
 GET|POST|PATCH /workspaces/{id}/teams  /workspaces/{id}/teams/{teamId}
@@ -916,6 +926,8 @@ PUT        /workspaces/{id}/policies                     a workflow's default, f
 GET|POST   /workspaces/{id}/members  /integrations  /repositories
 GET|POST   /workspaces/{id}/tokens                       personal API tokens; plaintext returned once
 DELETE     /workspaces/{id}/tokens/{tokenId}             revoked with immediate effect
+GET        /workspaces/{id}/grants                       OAuth grants this person has given
+DELETE     /workspaces/{id}/grants/{grantId}             revoked with immediate effect
 POST       /sessions                        create a session
 POST       /sessions/{id}/messages          SSE stream of the agent turn
 GET        /sessions/{id}

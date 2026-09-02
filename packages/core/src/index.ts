@@ -22,8 +22,13 @@ export {
   apiTokenPrefix,
   looksLikeApiToken,
   constantTimeEquals,
+  OAUTH_SCHEMES,
+  mintScopedSecret,
+  parseScopedSecret,
 } from './tokens.js'
-export type { MintedApiToken } from './tokens.js'
+export type { MintedApiToken, ScopedSecret } from './tokens.js'
+export { CODE_CHALLENGE_METHODS, verifyCodeChallenge, describeScopes } from './pkce.js'
+export type { CodeChallengeMethod, DescribedScope } from './pkce.js'
 export { decideAccess } from './access.js'
 export type { AuthRequirement, AccessRequest, AccessDecision } from './access.js'
 export { slugify, uniqueSlug, MAX_SLUG_LENGTH } from './slugs.js'

@@ -104,6 +104,23 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
          VALUES ($1, $2, $3, 'before_external_write', 'ask')`,
         [ulid(), workspaceId, teamId],
       )
+      const clientId = ulid()
+      await owner.query(
+        `INSERT INTO oauth_clients (id, client_name, redirect_uris)
+         VALUES ($1, 'Seed Client', ARRAY['http://localhost/callback'])`,
+        [clientId],
+      )
+      const grantId = ulid()
+      await owner.query(
+        `INSERT INTO oauth_grants (id, workspace_id, client_id, user_id, scopes)
+         VALUES ($1, $2, $3, $4, ARRAY['read:artefacts'])`,
+        [grantId, workspaceId, clientId, userId],
+      )
+      await owner.query(
+        `INSERT INTO oauth_tokens (id, workspace_id, grant_id, kind, token_hash, expires_at)
+         VALUES ($1, $2, $3, 'access', $4, now() + interval '1 hour')`,
+        [ulid(), workspaceId, grantId, ulid()],
+      )
       await owner.query(
         `INSERT INTO audit_events (id, workspace_id, actor_type, actor_id, action, target_type, target_id)
          VALUES ($1, $2, 'user', $3, 'seed', 'workspace', $2)`,
@@ -155,6 +172,23 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
             `INSERT INTO policies (id, workspace_id, team_id, checkpoint_kind, mode)
              VALUES ($1, $2, $3, 'before_coding_job', 'ask')`,
             [id, workspaceId, team?.id ?? null],
+          )
+          return
+        }
+        case 'oauth_grants': {
+          const [client] = await tx.query<{ id: string }>(`SELECT id FROM oauth_clients LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO oauth_grants (id, workspace_id, client_id, user_id) VALUES ($1, $2, $3, $4)`,
+            [id, workspaceId, client?.id ?? id, userId],
+          )
+          return
+        }
+        case 'oauth_tokens': {
+          const [grant] = await tx.query<{ id: string }>(`SELECT id FROM oauth_grants LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO oauth_tokens (id, workspace_id, grant_id, kind, token_hash, expires_at)
+             VALUES ($1, $2, $3, 'access', $4, now() + interval '1 hour')`,
+            [id, workspaceId, grant?.id ?? id, id],
           )
           return
         }

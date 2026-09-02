@@ -15,6 +15,8 @@ import { createTeamService } from './teams.js'
 import { teamRoutes } from './team-routes.js'
 import { createApiTokenService } from './api-tokens.js'
 import { apiTokenRoutes } from './api-token-routes.js'
+import { createOAuthService, OAuthError } from './oauth.js'
+import { oauthRoutes } from './oauth-routes.js'
 import { authorise, type AuthorisationDeps } from './authorisation.js'
 import { createTokenLedger } from './single-use-tokens.js'
 import {
@@ -151,14 +153,19 @@ function buildRoutes(config: DbConfig): {
   const workspaces = createWorkspaceService(config)
   const teams = createTeamService(config)
   const tokens = createApiTokenService(config)
+  const oauth = createOAuthService(config)
   return {
     table: [
       ...ROUTES,
       ...workspaceRoutes(workspaces),
       ...teamRoutes(teams),
       ...apiTokenRoutes(tokens),
+      // The issuer is read from the request context rather than baked in, so
+      // the metadata document a client discovers names the host it actually
+      // reached — a mismatch there is what makes discovery fail unattended.
+      ...oauthRoutes(oauth, workspaces, (c) => c.get('baseUrl')),
     ],
-    deps: { workspaces, teams, tokens, dbConfig: config },
+    deps: { workspaces, teams, tokens, oauth, dbConfig: config },
   }
 }
 
@@ -298,6 +305,10 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
     app.use('/workspaces/*', sessionResolver(auth))
     app.use('/workspaces', sessionResolver(auth))
     app.use('/invitations/*', sessionResolver(auth))
+    // The consent endpoints need the granter's identity (WS-5 AC3). The rest of
+    // /oauth/* is unauthenticated by design, and resolving a session there is
+    // harmless — those routes declare `public` and never read it.
+    app.use('/oauth/*', sessionResolver(auth))
   }
 
   const isProduction = process.env.NODE_ENV === 'production'
@@ -326,6 +337,18 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
 
   app.onError((error, c) => {
     const requestId = c.get('requestId') ?? ''
+
+    // OAuth has its own error contract (RFC 6749 §5.2): a client library
+    // branches on `error`, and would find our problem+json unparseable.
+    if (error instanceof OAuthError) {
+      return new Response(
+        JSON.stringify({ error: error.code, error_description: error.message }),
+        {
+          status: error.status,
+          headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
+        },
+      )
+    }
 
     if (error instanceof AppError) {
       return problem(error, requestId)

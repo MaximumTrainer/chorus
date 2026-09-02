@@ -12,6 +12,7 @@ import type { AppContext, RouteDefinition } from './routes.js'
 import type { WorkspaceService } from './workspaces.js'
 import type { TeamService } from './teams.js'
 import type { ApiTokenService } from './api-tokens.js'
+import type { OAuthService } from './oauth.js'
 
 /**
  * Authorisation, driven by the route's own declaration (WS-4 AC4).
@@ -31,6 +32,7 @@ export interface AuthorisationDeps {
   readonly workspaces: WorkspaceService
   readonly teams: TeamService
   readonly tokens: ApiTokenService
+  readonly oauth: OAuthService
   readonly dbConfig: DbConfig
 }
 
@@ -167,10 +169,16 @@ export function authorise(definition: RouteDefinition, deps: AuthorisationDeps) 
     if (!user) {
       const presented = bearerToken(c)
       if (presented) {
-        const token = await deps.tokens.resolve(workspaceId, presented)
-        if (token) {
-          user = { id: token.userId, email: token.email }
-          tokenScopes = token.scopes
+        // A personal token and an OAuth access token are the same kind of
+        // caller once resolved — a user, in this workspace, narrowed by scope.
+        // They are told apart by their scheme, so neither can be honoured as
+        // the other.
+        const credential =
+          (await deps.tokens.resolve(workspaceId, presented)) ??
+          (await deps.oauth.resolveAccessToken(workspaceId, presented))
+        if (credential) {
+          user = { id: credential.userId, email: credential.email }
+          tokenScopes = credential.scopes
         }
       }
     }

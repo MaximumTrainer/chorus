@@ -64,12 +64,20 @@ describe('WS-4 AC4 route authorisation is declared, not remembered', () => {
   it('WS-4 AC4: a route requiring no membership is rare and deliberate', () => {
     // If this list grows, someone has reached for `authenticated` to dodge a
     // permission check rather than because no workspace is in scope.
+    //
+    // The two OAuth consent routes are here because choosing a workspace *is*
+    // the consent step (WS-5 AC3): requiring membership before the person has
+    // said which workspace they mean would be circular. What stops that being
+    // a hole is that `approve` re-checks membership in the chosen workspace
+    // before issuing anything, asserted in oauth-server.test.ts.
     const membershipFree = ROUTES.filter((r) => r.auth.kind === 'authenticated').map(
       (r) => `${r.method} ${r.path}`,
     )
     expect(membershipFree.sort()).toEqual([
+      'GET /oauth/authorize',
       'GET /workspaces',
       'POST /invitations/accept',
+      'POST /oauth/authorize',
       'POST /workspaces',
     ])
   })
