@@ -31,7 +31,20 @@ export type AuthRequirement =
       readonly reason: string
       readonly scopes: readonly Scope[]
     }
-  | { readonly kind: 'workspace'; readonly role: Role; readonly scopes: readonly Scope[] }
+  | {
+      readonly kind: 'workspace'
+      readonly role: Role
+      readonly scopes: readonly Scope[]
+      /**
+       * Refuses any machine credential, whatever its scope (WS-5 AC2).
+       *
+       * Reserved for operations that mint or widen a credential. A token that
+       * can issue another token has no ceiling: an admin's read-only token
+       * would simply issue itself a full one, and the scope it was created
+       * with would mean nothing.
+       */
+      readonly sessionOnly?: boolean
+    }
 
 export interface AccessRequest {
   readonly auth: AuthRequirement
@@ -74,6 +87,13 @@ export function decideAccess(request: AccessRequest): AccessDecision {
   if (request.auth.kind === 'authenticated') return { outcome: 'allow' }
 
   if (!request.role) return { outcome: 'not_found' }
+
+  // Answered as unauthenticated rather than forbidden: the credential is not
+  // one this route accepts at all, so the remedy is to present a different one
+  // — not to acquire a wider scope, which would not help.
+  if (request.auth.sessionOnly && request.tokenScopes !== undefined) {
+    return { outcome: 'unauthenticated' }
+  }
 
   const decision = effectivePermission({
     role: request.role,

@@ -13,6 +13,8 @@ import { createWorkspaceService } from './workspaces.js'
 import { workspaceRoutes } from './workspace-routes.js'
 import { createTeamService } from './teams.js'
 import { teamRoutes } from './team-routes.js'
+import { createApiTokenService } from './api-tokens.js'
+import { apiTokenRoutes } from './api-token-routes.js'
 import { authorise, type AuthorisationDeps } from './authorisation.js'
 import { createTokenLedger } from './single-use-tokens.js'
 import {
@@ -148,9 +150,15 @@ function buildRoutes(config: DbConfig): {
 } {
   const workspaces = createWorkspaceService(config)
   const teams = createTeamService(config)
+  const tokens = createApiTokenService(config)
   return {
-    table: [...ROUTES, ...workspaceRoutes(workspaces), ...teamRoutes(teams)],
-    deps: { workspaces, teams, dbConfig: config },
+    table: [
+      ...ROUTES,
+      ...workspaceRoutes(workspaces),
+      ...teamRoutes(teams),
+      ...apiTokenRoutes(tokens),
+    ],
+    deps: { workspaces, teams, tokens, dbConfig: config },
   }
 }
 

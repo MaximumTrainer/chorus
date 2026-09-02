@@ -5,11 +5,13 @@ import {
   decideAccess,
   ulid,
   type Role,
+  type Scope,
 } from '@chorus/core'
 import { withTenant, type DbConfig } from '@chorus/db'
 import type { AppContext, RouteDefinition } from './routes.js'
 import type { WorkspaceService } from './workspaces.js'
 import type { TeamService } from './teams.js'
+import type { ApiTokenService } from './api-tokens.js'
 
 /**
  * Authorisation, driven by the route's own declaration (WS-4 AC4).
@@ -28,7 +30,26 @@ import type { TeamService } from './teams.js'
 export interface AuthorisationDeps {
   readonly workspaces: WorkspaceService
   readonly teams: TeamService
+  readonly tokens: ApiTokenService
   readonly dbConfig: DbConfig
+}
+
+/**
+ * The bearer credential presented, if any.
+ *
+ * Parsed here rather than in a global middleware because a personal token is
+ * workspace-scoped (WS-5), and only a route's own declaration tells us which
+ * workspace is in scope. A middleware mounted by path pattern has no
+ * parameters, and guessing the workspace from the URL is exactly the sort of
+ * second implementation that comes to disagree with the first.
+ */
+function bearerToken(c: AppContext): string | undefined {
+  const header = c.req.header('authorization')
+  if (!header) return undefined
+  const [scheme, ...rest] = header.split(' ')
+  if (scheme?.toLowerCase() !== 'bearer') return undefined
+  const value = rest.join(' ').trim()
+  return value === '' ? undefined : value
 }
 
 /** The caller, as resolved by the middleware. Absent only if a route bypassed it. */
@@ -118,10 +139,13 @@ export function authorise(definition: RouteDefinition, deps: AuthorisationDeps) 
       return
     }
 
-    const user = c.get('user')
-    if (!user) throw new UnauthenticatedError('Sign in to continue')
+    const session = c.get('user')
 
     if (definition.auth.kind === 'authenticated') {
+      // No workspace is named, so a workspace-scoped personal token cannot be
+      // resolved here (WS-5). These are the routes a person uses to choose
+      // where to work, not the ones a script calls.
+      if (!session) throw new UnauthenticatedError('Sign in to continue')
       await next()
       return
     }
@@ -135,6 +159,24 @@ export function authorise(definition: RouteDefinition, deps: AuthorisationDeps) 
       )
     }
 
+    // A session takes precedence: a first-party caller is unrestricted by
+    // scope, and a token presented alongside one would only ever narrow them
+    // by accident.
+    let user = session
+    let tokenScopes: readonly Scope[] | undefined
+    if (!user) {
+      const presented = bearerToken(c)
+      if (presented) {
+        const token = await deps.tokens.resolve(workspaceId, presented)
+        if (token) {
+          user = { id: token.userId, email: token.email }
+          tokenScopes = token.scopes
+        }
+      }
+    }
+
+    if (!user) throw new UnauthenticatedError('Sign in to continue')
+
     const workspaceRole = await deps.workspaces.roleOf(workspaceId, user.id)
 
     const teamId = c.req.param('teamId')
@@ -143,10 +185,19 @@ export function authorise(definition: RouteDefinition, deps: AuthorisationDeps) 
         ? await deps.teams.roleIn(workspaceId, teamId, user.id, workspaceRole)
         : workspaceRole
 
-    const decision = decideAccess({ auth: definition.auth, user, role: effectiveRole })
+    const decision = decideAccess({ auth: definition.auth, user, role: effectiveRole, tokenScopes })
 
     if (decision.outcome === 'not_found') {
       throw new NotFoundError('No such workspace', { workspaceId })
+    }
+
+    // A session-only route reached with a token (WS-5 AC2). The credential is
+    // not one this route accepts, so it is answered as unauthenticated: a wider
+    // scope would not have helped, and 403 would suggest it might.
+    if (decision.outcome === 'unauthenticated') {
+      throw new UnauthenticatedError('This action requires an interactive session', {
+        reason: 'session_required',
+      })
     }
 
     if (decision.outcome === 'forbidden') {
@@ -158,12 +209,20 @@ export function authorise(definition: RouteDefinition, deps: AuthorisationDeps) 
         required: decision.required,
         held: decision.held,
       })
-      throw new ForbiddenError(`This action requires the ${decision.required} role`, {
-        required: decision.required,
-        held: decision.held,
-      })
+      throw new ForbiddenError(
+        decision.reason === 'scope'
+          ? `This token is missing the ${decision.missingScopes?.join(', ')} scope`
+          : `This action requires the ${decision.required} role`,
+        {
+          required: decision.required,
+          held: decision.held,
+          reason: decision.reason,
+          ...(decision.missingScopes ? { missingScopes: decision.missingScopes } : {}),
+        },
+      )
     }
 
+    c.set('user', user)
     c.set('workspaceRole', workspaceRole!)
     c.set('effectiveRole', effectiveRole!)
     await next()

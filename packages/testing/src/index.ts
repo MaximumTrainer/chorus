@@ -13,4 +13,11 @@ export { startStubOidcProvider } from './fakes/oidc-provider.js'
 export type { StubOidcProvider, StubOidcUser } from './fakes/oidc-provider.js'
 
 export { createTestClient } from './world.js'
-export type { TestClient, SignedInUser, AnonymousCaller, Workspace, RequestableApp } from './world.js'
+export type {
+  TestClient,
+  SignedInUser,
+  AnonymousCaller,
+  BearerCaller,
+  Workspace,
+  RequestableApp,
+} from './world.js'

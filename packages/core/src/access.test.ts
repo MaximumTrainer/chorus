@@ -111,6 +111,34 @@ describe('WS-4 access decision', () => {
     expect(outcomeOf(decision)).toBe('allow')
   })
 
+  it('WS-5 AC2: a route may refuse a token outright, so a token cannot widen itself', () => {
+    // Token management is the one operation a token must not reach: an admin's
+    // read-only token that can mint a full one is not a read-only token.
+    const auth = {
+      kind: 'workspace',
+      role: 'member',
+      scopes: ['write:artefacts'],
+      sessionOnly: true,
+    } as const
+
+    const byToken = decideAccess({
+      auth,
+      user: { id: 'u', email: 'a@b.test' },
+      role: 'owner',
+      tokenScopes: ['read:artefacts', 'write:artefacts', 'run:coding', 'read:brain'],
+    })
+    expect(byToken, 'no scope may satisfy a session-only route').toMatchObject({
+      outcome: 'unauthenticated',
+    })
+
+    const bySession = decideAccess({
+      auth,
+      user: { id: 'u', email: 'a@b.test' },
+      role: 'member',
+    })
+    expect(outcomeOf(bySession)).toBe('allow')
+  })
+
   it('WS-4: the decision is pure — the same inputs always give the same outcome', () => {
     const request = {
       auth: workspaceRoute('admin'),

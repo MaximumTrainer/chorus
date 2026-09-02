@@ -53,6 +53,20 @@ export interface AnonymousCaller {
   post(path: string, body?: unknown): Promise<Response>
 }
 
+/**
+ * A caller holding a personal API token rather than a session (WS-5).
+ *
+ * Deliberately not a variant of `SignedInUser`: a token is a *different kind*
+ * of credential, and letting one masquerade as a session in tests is how a
+ * scope ceiling comes to be asserted against the wrong caller.
+ */
+export interface BearerCaller {
+  get(path: string): Promise<Response>
+  post(path: string, body?: unknown): Promise<Response>
+  patch(path: string, body?: unknown): Promise<Response>
+  delete(path: string): Promise<Response>
+}
+
 export interface TestClient {
   /** A verified, signed-in user. Drives the real sign-up and sign-in flow. */
   signedInUser(email?: string): Promise<SignedInUser>
@@ -71,6 +85,8 @@ export interface TestClient {
     email?: string,
   ): Promise<SignedInUser>
   anonymous(): AnonymousCaller
+  /** A caller presenting `token` as an `Authorization: Bearer` credential. */
+  bearer(token: string): BearerCaller
   /**
    * The most recent *invitation* link sent to an address.
    *
@@ -183,6 +199,22 @@ export function createTestClient(app: RequestableApp, mailer: RecordingMailer): 
       return {
         get: (path) => send(path),
         post: (path, body) => send(path, json(body)),
+      }
+    },
+
+    bearer(token) {
+      const withToken = (init: RequestInit = {}): RequestInit => ({
+        ...init,
+        headers: {
+          ...(init.headers as Record<string, string>),
+          authorization: `Bearer ${token}`,
+        },
+      })
+      return {
+        get: (path) => send(path, withToken()),
+        post: (path, body) => send(path, withToken(json(body))),
+        patch: (path, body) => send(path, withToken({ ...json(body), method: 'PATCH' })),
+        delete: (path) => send(path, withToken({ method: 'DELETE' })),
       }
     },
 
