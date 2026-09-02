@@ -89,9 +89,36 @@ export class UpstreamError extends AppError {
 
 /** A configured limit was reached: spend, quota, rate. */
 export class LimitExceededError extends AppError {
-  readonly type = 'limit_exceeded'
+  readonly type: string = 'limit_exceeded'
   readonly status = 429
   override readonly retryable = true
+}
+
+/**
+ * A source asked us to slow down (INT-1 AC4).
+ *
+ * Distinct from its parent because the two demand opposite responses: a spend
+ * quota means stop and tell someone, a rate limit means wait exactly this long
+ * and carry on. A runner that cannot tell them apart either abandons a sync it
+ * should have resumed, or hammers a source it should have backed off from.
+ *
+ * `retryAfterMs` comes from the source's own headers where it offers them, so
+ * the wait is what the source asked for rather than a guess.
+ */
+export class RateLimitedError extends LimitExceededError {
+  override readonly type: string = 'rate_limited'
+
+  constructor(
+    message: string,
+    details: Record<string, unknown> & { retryAfterMs: number },
+    options?: { cause?: unknown },
+  ) {
+    super(message, details, options)
+  }
+
+  get retryAfterMs(): number {
+    return this.details.retryAfterMs as number
+  }
 }
 
 /**

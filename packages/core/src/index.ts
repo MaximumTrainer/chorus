@@ -8,6 +8,7 @@ export {
   TransitionError,
   UpstreamError,
   LimitExceededError,
+  RateLimitedError,
   ConfigurationError,
 } from './errors.js'
 export { ulid, ulidAt, isUlid, decodeUlidTime, createIdGen } from './ids.js'

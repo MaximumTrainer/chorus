@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { CONNECTOR_KINDS, parseSignal } from '@chorus/core'
+import { CONNECTOR_KINDS, RateLimitedError, parseSignal } from '@chorus/core'
 import type { Connector, ConnectorContext } from '../contract.js'
 
 /**
@@ -27,6 +27,22 @@ export interface ContractKitOptions {
    * connector under test supplies its own.
    */
   readonly context?: Partial<ConnectorContext>
+  /**
+   * Connectors rigged into a specific state — from a cassette, a scripted fake,
+   * or whatever the connector uses.
+   *
+   * Optional because the kit cannot make an arbitrary source produce a rate
+   * limit on demand, and a suite that silently required it would be one no
+   * contributor could pass. Supplying one buys the assertions below; omitting
+   * one means those guarantees are simply untested for that connector, which is
+   * a visible gap rather than a hidden pass.
+   */
+  readonly scenarios?: {
+    /** A connector whose next `pull` will be rate-limited by the source. */
+    readonly rateLimited?: () => Connector
+    /** A connector whose stored credential has expired or been revoked. */
+    readonly credentialExpired?: () => Connector
+  }
 }
 
 /** A deterministic context. Time is injected and frozen (CLAUDE.md §5). */
@@ -165,6 +181,39 @@ export function describeConnectorContract(
         expect(status.problem, 'an unhealthy connector must say what is wrong').toBeTruthy()
         expect(status.remedy, 'and what to do about it').toBeTruthy()
       }
+    })
+
+    it('INT-1 AC4/AC7: a rate limit is reported as one, with the delay the source asked for', async () => {
+      const rigged = options.scenarios?.rateLimited
+      if (!rigged) return
+
+      const connector = rigged()
+      // Reported as `RateLimitedError`, not as a generic failure: the runner
+      // resumes after a rate limit and gives up after a failure, so a connector
+      // that conflates them either abandons a sync it should have resumed or
+      // hammers a source it should have backed off from.
+      const raised = await connector
+        .pull!(null, ctx())
+        .then(() => undefined)
+        .catch((error: unknown) => error)
+
+      expect(raised, 'a rigged rate limit must actually be raised').toBeInstanceOf(RateLimitedError)
+      const retryAfterMs = (raised as RateLimitedError).retryAfterMs
+      expect(typeof retryAfterMs).toBe('number')
+      expect(retryAfterMs, 'a delay of zero is not a back-off').toBeGreaterThan(0)
+    })
+
+    it('INT-1 AC5/AC7: an expired credential is reported as unhealthy, with the remedy', async () => {
+      const rigged = options.scenarios?.credentialExpired
+      if (!rigged) return
+
+      const status = await rigged().health(ctx())
+
+      // The distinction that matters to whoever is on call: this one will not
+      // fix itself, and the remedy has to say so.
+      expect(status.state).not.toBe('ok')
+      expect(status.problem).toBeTruthy()
+      expect(status.remedy, 'an expired credential needs a human, so say what to do').toBeTruthy()
     })
 
     it('INT-1 AC7: health uses the injected clock, so it is testable', async () => {

@@ -1,4 +1,4 @@
-import type { ConnectorKind, Signal } from '@chorus/core'
+import { RateLimitedError, type ConnectorKind, type Signal } from '@chorus/core'
 import type {
   Capabilities,
   Connector,
@@ -40,6 +40,8 @@ export interface ReferenceScript {
   readonly pageSize?: number
   /** Forces health to fail, as an expired or revoked credential would. */
   readonly credentialExpired?: boolean
+  /** Makes the next pull raise a rate limit, with this delay in milliseconds. */
+  readonly rateLimitedAfterMs?: number
 }
 
 export interface ReferenceConnector extends Connector {
@@ -119,6 +121,11 @@ export function createReferenceConnector(initial: ReferenceScript = {}): Referen
 
     async pull(cursor: string | null, _ctx: ConnectorContext): Promise<PullResult> {
       cursorsSeen.push(cursor)
+      if (current.rateLimitedAfterMs !== undefined) {
+        throw new RateLimitedError('The source applied a rate limit', {
+          retryAfterMs: current.rateLimitedAfterMs,
+        })
+      }
       const { page, nextCursor } = pageAfter(
         current.items ?? [],
         cursor,

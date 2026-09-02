@@ -13,4 +13,9 @@ import { createReferenceConnector } from '../../src/reference/index.js'
  * can demand behaviours — a rate-limit response, an expired credential, a
  * forged signature — that a real source will not produce on request.
  */
-describeConnectorContract('reference', () => createReferenceConnector())
+describeConnectorContract('reference', () => createReferenceConnector(), {
+  scenarios: {
+    rateLimited: () => createReferenceConnector({ rateLimitedAfterMs: 30_000 }),
+    credentialExpired: () => createReferenceConnector({ credentialExpired: true }),
+  },
+})

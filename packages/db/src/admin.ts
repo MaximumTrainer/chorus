@@ -125,9 +125,16 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
         `INSERT INTO workspace_data_keys (id, workspace_id, wrapped_key) VALUES ($1, $2, $3)`,
         [ulid(), workspaceId, `v1.seed.${ulid()}.${ulid()}.${ulid()}`],
       )
+      const integrationId = ulid()
       await owner.query(
         `INSERT INTO integrations (id, workspace_id, kind) VALUES ($1, $2, 'reference')`,
-        [ulid(), workspaceId],
+        [integrationId, workspaceId],
+      )
+      await owner.query(
+        `INSERT INTO signals
+           (id, workspace_id, integration_id, source, external_id, kind, occurred_at, permissions)
+         VALUES ($1, $2, $3, 'reference', $1, 'message', now(), '{"visibility":"public","scopeIds":[]}'::jsonb)`,
+        [ulid(), workspaceId, integrationId],
       )
       await owner.query(
         `INSERT INTO audit_events (id, workspace_id, actor_type, actor_id, action, target_type, target_id)
@@ -212,6 +219,18 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
             [id, workspaceId],
           )
           return
+        case 'signals': {
+          const [integration] = await tx.query<{ id: string }>(
+            `SELECT id FROM integrations LIMIT 1`,
+          )
+          await tx.execute(
+            `INSERT INTO signals
+               (id, workspace_id, integration_id, source, external_id, kind, occurred_at, permissions)
+             VALUES ($1, $2, $3, 'reference', $1, 'message', now(), '{"visibility":"public","scopeIds":[]}'::jsonb)`,
+            [id, workspaceId, integration?.id ?? id],
+          )
+          return
+        }
         case 'audit_events':
           await tx.execute(
             `INSERT INTO audit_events (id, workspace_id, actor_type, action, target_type)
