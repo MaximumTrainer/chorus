@@ -1,5 +1,26 @@
+import { createHmac } from 'node:crypto'
 import { describeConnectorContract } from '../../src/testing/index.js'
 import { createReferenceConnector } from '../../src/reference/index.js'
+
+const WEBHOOK_SECRET = 'contract-kit-secret'
+
+function sampleDelivery(): { request: { headers: Record<string, string>; body: string }; secret: string } {
+  const body = JSON.stringify({
+    id: 'hook-contract-1',
+    text: 'a delivery the kit can forge',
+    at: '2026-09-01T09:00:00.000Z',
+  })
+  return {
+    secret: WEBHOOK_SECRET,
+    request: {
+      headers: {
+        'x-reference-delivery': 'contract-delivery-1',
+        'x-reference-signature': createHmac('sha256', WEBHOOK_SECRET).update(body).digest('hex'),
+      },
+      body,
+    },
+  }
+}
 
 /**
  * INT-1 AC7 — the contract kit, run against the reference connector.
@@ -18,4 +39,5 @@ describeConnectorContract('reference', () => createReferenceConnector(), {
     rateLimited: () => createReferenceConnector({ rateLimitedAfterMs: 30_000 }),
     credentialExpired: () => createReferenceConnector({ credentialExpired: true }),
   },
+  webhookSample: sampleDelivery,
 })

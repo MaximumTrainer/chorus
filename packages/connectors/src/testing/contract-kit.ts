@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { CONNECTOR_KINDS, RateLimitedError, parseSignal } from '@chorus/core'
-import type { Connector, ConnectorContext } from '../contract.js'
+import type { Connector, ConnectorContext, WebhookRequest } from '../contract.js'
 
 /**
  * The connector contract kit (INT-1 AC7).
@@ -43,6 +43,15 @@ export interface ContractKitOptions {
     /** A connector whose stored credential has expired or been revoked. */
     readonly credentialExpired?: () => Connector
   }
+  /**
+   * A genuine, correctly-signed delivery and the secret it was signed with.
+   *
+   * Supplied by the connector because only it knows its source's scheme. The
+   * kit then forges the delivery itself, which is the assertion worth having:
+   * a `verify` that returns true unconditionally passes every test written
+   * against valid input.
+   */
+  readonly webhookSample?: () => { request: WebhookRequest; secret: string }
 }
 
 /** A deterministic context. Time is injected and frozen (CLAUDE.md §5). */
@@ -214,6 +223,72 @@ export function describeConnectorContract(
       expect(status.state).not.toBe('ok')
       expect(status.problem).toBeTruthy()
       expect(status.remedy, 'an expired credential needs a human, so say what to do').toBeTruthy()
+    })
+
+    it('INT-1 AC3/AC7: a webhook connector declares both a spec and a handler, or neither', () => {
+      const connector = factory()
+      // One without the other is unusable: a spec with no handler can be
+      // verified and never acted on, and a handler with no spec would have to
+      // be trusted unverified.
+      expect(Boolean(connector.webhooks)).toBe(typeof connector.handleWebhook === 'function')
+    })
+
+    it('INT-1 AC3/AC7: a genuine delivery verifies and yields a deduplicable identifier', () => {
+      const sample = options.webhookSample
+      const connector = factory()
+      if (!sample || !connector.webhooks) return
+
+      const { request, secret } = sample()
+      expect(connector.webhooks.verify(request, secret)).toBe(true)
+      // Without an identifier the framework refuses the delivery, so a
+      // connector whose source offers none has to derive one from the payload.
+      expect(connector.webhooks.deliveryId(request)).toBeTruthy()
+    })
+
+    it('INT-1 AC3/AC7: a tampered body or a wrong secret does not verify', () => {
+      const sample = options.webhookSample
+      const connector = factory()
+      if (!sample || !connector.webhooks) return
+
+      const { request, secret } = sample()
+
+      // The assertion that catches a `verify` returning true unconditionally,
+      // which every test written against valid input would pass.
+      expect(
+        connector.webhooks.verify({ ...request, body: `${request.body} ` }, secret),
+        'a body altered by one byte must not verify',
+      ).toBe(false)
+      expect(connector.webhooks.verify(request, `${secret}-wrong`)).toBe(false)
+      expect(connector.webhooks.verify(request, '')).toBe(false)
+    })
+
+    it('INT-1 AC3/AC7: handling a delivery yields signals in the envelope', async () => {
+      const sample = options.webhookSample
+      const connector = factory()
+      if (!sample || !connector.handleWebhook) return
+
+      const signals = await connector.handleWebhook(sample().request, ctx())
+      for (const signal of signals) {
+        // The same validation the receiver applies before writing, so a
+        // connector that passes here cannot fail a delivery there.
+        expect(parseSignal(signal).source).toBe(connector.kind)
+      }
+    })
+
+    it('INT-1 AC3/AC7: handling the same delivery twice yields the same signal ids', async () => {
+      const sample = options.webhookSample
+      const connector = factory()
+      if (!sample || !connector.handleWebhook) return
+
+      const once = await connector.handleWebhook(sample().request, ctx())
+      const twice = await connector.handleWebhook(sample().request, ctx())
+
+      // Deduplication is by `(integration_id, external_id, kind)`. A connector
+      // that mints a fresh external id per call defeats it, and replay then
+      // duplicates every effect it was meant to make safe.
+      expect(twice.map((signal) => signal.externalId)).toEqual(
+        once.map((signal) => signal.externalId),
+      )
     })
 
     it('INT-1 AC7: health uses the injected clock, so it is testable', async () => {

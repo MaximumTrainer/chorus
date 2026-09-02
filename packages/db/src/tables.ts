@@ -18,6 +18,7 @@ export const TENANT_TABLES = [
   'workspace_data_keys',
   'integrations',
   'signals',
+  'webhook_deliveries',
   'audit_events',
 ] as const
 

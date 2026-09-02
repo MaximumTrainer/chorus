@@ -1,3 +1,4 @@
+import { createHmac, timingSafeEqual } from 'node:crypto'
 import { RateLimitedError, type ConnectorKind, type Signal } from '@chorus/core'
 import type {
   Capabilities,
@@ -6,6 +7,8 @@ import type {
   AuthSpec,
   HealthStatus,
   PullResult,
+  WebhookRequest,
+  WebhookSpec,
 } from '../contract.js'
 
 /**
@@ -99,6 +102,31 @@ function toSignal(item: ReferenceItem): Signal {
   }
 }
 
+/**
+ * A plausible signing scheme: HMAC-SHA256 of the raw body, hex, in a header.
+ *
+ * Modelled on what most real sources do, so the framework's ordering guarantees
+ * are exercised against something with the same shape as GitHub's or Slack's
+ * rather than against a stub that always returns true.
+ */
+const webhooks: WebhookSpec = {
+  secretKey: 'webhookSecret',
+
+  deliveryId(request: WebhookRequest) {
+    return request.headers['x-reference-delivery'] ?? null
+  },
+
+  verify(request: WebhookRequest, secret: string) {
+    const presented = request.headers['x-reference-signature'] ?? ''
+    const expected = createHmac('sha256', secret).update(request.body).digest('hex')
+    const a = Buffer.from(presented, 'utf8')
+    const b = Buffer.from(expected, 'utf8')
+    // Length is compared first because timingSafeEqual throws on a mismatch,
+    // and a presented signature's length is entirely the caller's choice.
+    return a.length === b.length && timingSafeEqual(a, b)
+  },
+}
+
 export function createReferenceConnector(initial: ReferenceScript = {}): ReferenceConnector {
   let current: ReferenceScript = { items: DEFAULT_ITEMS, pageSize: 2, ...initial }
   const cursorsSeen: (string | null)[] = []
@@ -132,6 +160,16 @@ export function createReferenceConnector(initial: ReferenceScript = {}): Referen
         current.pageSize ?? 2,
       )
       return { signals: page.map(toSignal), nextCursor }
+    },
+
+    webhooks,
+
+    async handleWebhook(
+      request: WebhookRequest,
+      _ctx: ConnectorContext,
+    ): Promise<readonly Signal[]> {
+      const item = JSON.parse(request.body) as ReferenceItem
+      return [toSignal(item)]
     },
 
     async health(ctx: ConnectorContext): Promise<HealthStatus> {

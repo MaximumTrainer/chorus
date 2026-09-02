@@ -79,11 +79,50 @@ export interface PullResult {
   readonly nextCursor: string | null
 }
 
+/**
+ * A delivery as it arrived (INT-1 AC3).
+ *
+ * `body` is the **raw** bytes as a string, never a parsed object. Re-serialising
+ * a parsed body changes its HMAC — key order and whitespace both count — which
+ * is the classic way a receiver rejects genuine deliveries in production and
+ * nowhere else.
+ */
+export interface WebhookRequest {
+  readonly headers: Readonly<Record<string, string>>
+  readonly body: string
+}
+
+/**
+ * How a connector's source signs and identifies its deliveries.
+ *
+ * Declared by the connector because every source does this differently — a
+ * different header, a different digest, a timestamp folded into the signed
+ * string. The framework owns what is uniform: storing, deduplicating, replaying
+ * and ordering the checks correctly.
+ */
+export interface WebhookSpec {
+  /**
+   * The source's delivery identifier, from a header or the body.
+   *
+   * `null` means the delivery cannot be deduplicated, and the framework refuses
+   * it — at-least-once delivery with no way to collapse repeats is worse than a
+   * refusal, because it is invisible.
+   */
+  deliveryId(request: WebhookRequest): string | null
+  /** Constant-time comparison is the connector's responsibility here. */
+  verify(request: WebhookRequest, secret: string): boolean
+  /** Which credential holds the signing secret. */
+  readonly secretKey: string
+}
+
 export interface Connector {
   readonly kind: ConnectorKind
   readonly auth: AuthSpec
   readonly capabilities: Capabilities
   /** Absent for a sink-only connector. */
   pull?(cursor: string | null, ctx: ConnectorContext): Promise<PullResult>
+  /** Present together with `handleWebhook`, or neither. */
+  readonly webhooks?: WebhookSpec
+  handleWebhook?(request: WebhookRequest, ctx: ConnectorContext): Promise<readonly Signal[]>
   health(ctx: ConnectorContext): Promise<HealthStatus>
 }

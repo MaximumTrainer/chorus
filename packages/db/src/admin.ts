@@ -137,6 +137,12 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
         [ulid(), workspaceId, integrationId],
       )
       await owner.query(
+        `INSERT INTO webhook_deliveries
+           (id, workspace_id, integration_id, delivery_id, signature_ok, payload)
+         VALUES ($1, $2, $3, $1, true, '{}')`,
+        [ulid(), workspaceId, integrationId],
+      )
+      await owner.query(
         `INSERT INTO audit_events (id, workspace_id, actor_type, actor_id, action, target_type, target_id)
          VALUES ($1, $2, 'user', $3, 'seed', 'workspace', $2)`,
         [ulid(), workspaceId, userId],
@@ -227,6 +233,18 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
             `INSERT INTO signals
                (id, workspace_id, integration_id, source, external_id, kind, occurred_at, permissions)
              VALUES ($1, $2, $3, 'reference', $1, 'message', now(), '{"visibility":"public","scopeIds":[]}'::jsonb)`,
+            [id, workspaceId, integration?.id ?? id],
+          )
+          return
+        }
+        case 'webhook_deliveries': {
+          const [integration] = await tx.query<{ id: string }>(
+            `SELECT id FROM integrations LIMIT 1`,
+          )
+          await tx.execute(
+            `INSERT INTO webhook_deliveries
+               (id, workspace_id, integration_id, delivery_id, signature_ok, payload)
+             VALUES ($1, $2, $3, $1, true, '{}')`,
             [id, workspaceId, integration?.id ?? id],
           )
           return
