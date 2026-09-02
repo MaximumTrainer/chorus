@@ -29,6 +29,19 @@ export {
 export type { MintedApiToken, ScopedSecret } from './tokens.js'
 export { CODE_CHALLENGE_METHODS, verifyCodeChallenge, describeScopes } from './pkce.js'
 export type { CodeChallengeMethod, DescribedScope } from './pkce.js'
+export {
+  parseMasterKey,
+  createKeyring,
+  generateDataKey,
+  wrapDataKey,
+  unwrapDataKey,
+  encryptWithDataKey,
+  decryptWithDataKey,
+  keyIdOf,
+} from './envelope.js'
+export type { MasterKey, Keyring } from './envelope.js'
+export { CONNECTOR_KINDS, SignalSchema, SignalPermissionsSchema, parseSignal } from './signals.js'
+export type { ConnectorKind, Signal, SignalPermissions } from './signals.js'
 export { decideAccess } from './access.js'
 export type { AuthRequirement, AccessRequest, AccessDecision } from './access.js'
 export { slugify, uniqueSlug, MAX_SLUG_LENGTH } from './slugs.js'

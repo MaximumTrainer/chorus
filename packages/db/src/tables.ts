@@ -15,6 +15,8 @@ export const TENANT_TABLES = [
   'policies',
   'oauth_grants',
   'oauth_tokens',
+  'workspace_data_keys',
+  'integrations',
   'audit_events',
 ] as const
 

@@ -122,6 +122,14 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
         [ulid(), workspaceId, grantId, ulid()],
       )
       await owner.query(
+        `INSERT INTO workspace_data_keys (id, workspace_id, wrapped_key) VALUES ($1, $2, $3)`,
+        [ulid(), workspaceId, `v1.seed.${ulid()}.${ulid()}.${ulid()}`],
+      )
+      await owner.query(
+        `INSERT INTO integrations (id, workspace_id, kind) VALUES ($1, $2, 'reference')`,
+        [ulid(), workspaceId],
+      )
+      await owner.query(
         `INSERT INTO audit_events (id, workspace_id, actor_type, actor_id, action, target_type, target_id)
          VALUES ($1, $2, 'user', $3, 'seed', 'workspace', $2)`,
         [ulid(), workspaceId, userId],
@@ -192,6 +200,18 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
           )
           return
         }
+        case 'workspace_data_keys':
+          await tx.execute(
+            `INSERT INTO workspace_data_keys (id, workspace_id, wrapped_key) VALUES ($1, $2, $3)`,
+            [id, workspaceId, `v1.x.${id}.${id}.${id}`],
+          )
+          return
+        case 'integrations':
+          await tx.execute(
+            `INSERT INTO integrations (id, workspace_id, kind) VALUES ($1, $2, 'reference')`,
+            [id, workspaceId],
+          )
+          return
         case 'audit_events':
           await tx.execute(
             `INSERT INTO audit_events (id, workspace_id, actor_type, action, target_type)
