@@ -558,7 +558,7 @@ export function createOAuthService(config: DbConfig): OAuthService {
         // Revoked after this transaction commits, not inside it: a throw here
         // would roll the revocation back along with everything else, leaving
         // the incident detected and the grant untouched.
-        if (row.consumed_at) return { replayed: row.grant_id } as const
+        if (row.consumed_at) return { kind: 'replayed', grantId: row.grant_id } as const
         if (row.revoked_at || row.expires_at.getTime() <= Date.now()) {
           throw new OAuthError('invalid_grant', 'That authorization code is not valid')
         }
@@ -578,6 +578,7 @@ export function createOAuthService(config: DbConfig): OAuthService {
         )
 
         return {
+          kind: 'issued',
           tokens: await issueTokens(t, {
             workspaceId: parsed.workspaceId,
             grantId: row.grant_id,
@@ -586,8 +587,8 @@ export function createOAuthService(config: DbConfig): OAuthService {
         } as const
       })
 
-      if ('replayed' in outcome) {
-        await tx(parsed.workspaceId, (t) => revokeWholeGrant(t, outcome.replayed))
+      if (outcome.kind === 'replayed') {
+        await tx(parsed.workspaceId, (t) => revokeWholeGrant(t, outcome.grantId))
         throw new OAuthError('invalid_grant', 'That authorization code has already been used')
       }
       return outcome.tokens
@@ -638,12 +639,11 @@ export function createOAuthService(config: DbConfig): OAuthService {
         // and acted on not at all.
         if (row.consumed_at) {
           return {
-            reused: {
-              grantId: row.grant_id,
-              tokenId: row.id,
-              userId: row.user_id,
-              consumedAt: row.consumed_at,
-            },
+            kind: 'reused',
+            grantId: row.grant_id,
+            tokenId: row.id,
+            userId: row.user_id,
+            consumedAt: row.consumed_at,
           } as const
         }
 
@@ -665,6 +665,7 @@ export function createOAuthService(config: DbConfig): OAuthService {
         )
 
         return {
+          kind: 'issued',
           tokens: await issueTokens(t, {
             workspaceId: parsed.workspaceId,
             grantId: row.grant_id,
@@ -674,8 +675,8 @@ export function createOAuthService(config: DbConfig): OAuthService {
         } as const
       })
 
-      if ('reused' in outcome) {
-        const { grantId, tokenId, userId, consumedAt } = outcome.reused
+      if (outcome.kind === 'reused') {
+        const { grantId, tokenId, userId, consumedAt } = outcome
         await tx(
           parsed.workspaceId,
           (t) =>
