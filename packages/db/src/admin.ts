@@ -214,6 +214,11 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
         [ulid(), workspaceId, runId],
       )
       await owner.query(
+        `INSERT INTO notification_digest_settings (id, workspace_id, user_id, enabled)
+         VALUES ($1, $2, $3, false)`,
+        [ulid(), workspaceId, userId],
+      )
+      await owner.query(
         `INSERT INTO checkpoint_decision_tokens
            (id, workspace_id, checkpoint_id, user_id, token_hash, expires_at)
          SELECT $1, $2, c.id, $3, $1, now() + interval '1 day'
@@ -461,6 +466,13 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
           )
           return
         }
+        case 'notification_digest_settings':
+          await tx.execute(
+            `INSERT INTO notification_digest_settings (id, workspace_id, user_id, enabled)
+             VALUES ($1, $2, $3, false)`,
+            [id, workspaceId, userId],
+          )
+          return
         case 'checkpoint_decision_tokens': {
           const [checkpoint] = await tx.query<{ id: string }>(
             `SELECT id FROM checkpoints LIMIT 1`,

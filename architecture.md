@@ -740,7 +740,11 @@ Mail is sent *outside* the database transaction that writes the notification. Ho
 
 A transport that never returns must leave the delivery *failed and visible* rather than a job retrying forever: a queue that looks busy is how an operator fails to notice that mail has been broken for a week. `GET /workspaces/:id/notification-deliveries` is that view, and it requires an admin — it spans everyone's notifications, subjects included.
 
-Still to come in WP-1.2: the live in-app badge (AC4, which needs the web app) and digest batching (AC5).
+**A digest defers; it never suppresses.** With digest mode on, a non-urgent email delivery is left `pending` — which is exactly what a deferred email is — and the scheduled digest collects by querying that state rather than keeping a second list that could disagree with the first. Marking each item `sent` as it goes out makes the job idempotent by construction: delivered twice, it finds nothing the second time, and a digest is precisely the message people notice repeating. An empty digest sends nothing, because "you have no notifications" every morning is how a digest teaches people to filter it.
+
+Urgent bypasses the digest unconditionally. `checkpoint_requested` is raised urgent, so a gate never waits for a batch — batching one would turn a five-minute pause into a run stopped until tomorrow morning, for somebody who asked for fewer emails and not for slower decisions. Digest mode is per person and off unless asked for, and its cadence is bounded at both ends: a five-second digest is not a digest, and a weekly one is where notifications go to be forgotten.
+
+Still to come in WP-1.2: the live in-app badge (AC4), whose browser half needs the web app. The read path it depends on — reading being idempotent, so two tabs cannot disagree about when — is already asserted.
 
 ## 12. Coding-agent execution
 

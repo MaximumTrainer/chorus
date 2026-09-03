@@ -73,6 +73,28 @@ export interface Notifier extends NotificationSink {
   failedDeliveries(workspaceId: string): Promise<readonly DeliveryFailure[]>
   /** Tries one failed delivery again. */
   retryDelivery(workspaceId: string, deliveryId: string): Promise<RetryOutcome>
+  /** Whether this person has asked for their email to be batched (AC5). */
+  digestSetting(workspaceId: string, userId: string): Promise<DigestSetting>
+  setDigest(input: {
+    workspaceId: string
+    userId: string
+    enabled: boolean
+    cadenceMinutes?: number
+  }): Promise<void>
+  /**
+   * Sends every waiting digest in a workspace, returning how many went out.
+   *
+   * Called on a schedule. Idempotent by construction: it collects deliveries
+   * still `pending` and marks them `sent`, so a job delivered twice finds
+   * nothing left the second time.
+   */
+  sendDigests(workspaceId: string): Promise<number>
+}
+
+export interface DigestSetting {
+  readonly enabled: boolean
+  readonly cadenceMinutes: number
+  readonly lastSentAt: string | null
 }
 
 export interface NotifierOptions {
@@ -223,6 +245,23 @@ export function createNotifier(config: DbConfig, options: NotifierOptions): Noti
             return { notificationId: id, sendEmail: false, address: null }
           }
 
+          // AC5. Urgent bypasses the digest, always: batching a gate would turn
+          // a five-minute pause into a run stopped until tomorrow morning, for
+          // somebody who asked for fewer emails and not for slower decisions.
+          if ((event.priority ?? 'normal') !== 'urgent') {
+            const [digest] = await t.query<{ enabled: boolean }>(
+              `SELECT enabled FROM notification_digest_settings WHERE user_id = $1`,
+              [userId],
+            )
+            if (digest?.enabled) {
+              // Left `pending`, which is exactly what a deferred email is. The
+              // digest then collects by querying that state rather than keeping
+              // a second list that could disagree with it.
+              await recordDelivery(t, event.workspaceId, id, 'email', 'pending')
+              return { notificationId: id, sendEmail: false, address: null }
+            }
+          }
+
           const [user] = await t.query<{ email: string }>(
             `SELECT email FROM users WHERE id = $1`,
             [userId],
@@ -297,6 +336,121 @@ export function createNotifier(config: DbConfig, options: NotifierOptions): Noti
         )
         return existing !== undefined
       })
+    },
+
+    async digestSetting(workspaceId, userId) {
+      const [row] = await tx(workspaceId, (t) =>
+        t.query<{ enabled: boolean; cadence_minutes: number; last_sent_at: Date | null }>(
+          `SELECT enabled, cadence_minutes, last_sent_at
+             FROM notification_digest_settings WHERE user_id = $1`,
+          [userId],
+        ),
+      )
+      // Absence means off. Batching somebody's mail without them choosing it
+      // changes when they hear about things.
+      return {
+        enabled: row?.enabled ?? false,
+        cadenceMinutes: row?.cadence_minutes ?? 60,
+        lastSentAt: row?.last_sent_at ? row.last_sent_at.toISOString() : null,
+      }
+    },
+
+    async setDigest({ workspaceId, userId, enabled, cadenceMinutes }) {
+      await tx(workspaceId, (t) =>
+        t.execute(
+          `INSERT INTO notification_digest_settings
+             (id, workspace_id, user_id, enabled, cadence_minutes)
+           VALUES ($1, $2, $3, $4, COALESCE($5, 60))
+           ON CONFLICT (workspace_id, user_id) DO UPDATE
+             SET enabled = EXCLUDED.enabled,
+                 cadence_minutes = COALESCE($5, notification_digest_settings.cadence_minutes),
+                 updated_at = now()`,
+          [ulid(), workspaceId, userId, enabled, cadenceMinutes ?? null],
+        ),
+      )
+    },
+
+    async sendDigests(workspaceId) {
+      // Everyone with something waiting. `pending` is exactly the state a
+      // deferred email is left in, so the digest is a query rather than a
+      // second bookkeeping system that could disagree with the first.
+      const waiting = await tx(workspaceId, (t) =>
+        t.query<{ user_id: string; email: string }>(
+          `SELECT DISTINCT n.user_id, u.email
+             FROM notification_deliveries d
+             JOIN notifications n ON n.id = d.notification_id
+             JOIN users u ON u.id = n.user_id
+            WHERE d.channel = 'email' AND d.status = 'pending'`,
+          [],
+        ),
+      )
+
+      let sent = 0
+
+      for (const person of waiting) {
+        const items = await tx(workspaceId, (t) =>
+          t.query<{ id: string; subject: string; body: string; created_at: Date }>(
+            `SELECT d.id, n.subject, n.body, n.created_at
+               FROM notification_deliveries d
+               JOIN notifications n ON n.id = d.notification_id
+              WHERE d.channel = 'email' AND d.status = 'pending' AND n.user_id = $1
+              ORDER BY n.created_at`,
+            [person.user_id],
+          ),
+        )
+
+        // "You have no notifications" every morning is how a digest teaches
+        // people to filter it.
+        if (items.length === 0) continue
+
+        // Each named, because a digest that says "you have 3 notifications"
+        // makes the recipient open the app to find out whether any matter.
+        const text = items
+          .map((item) => `- ${item.subject}${item.body ? `\n  ${item.body}` : ''}`)
+          .join('\n')
+        const subject =
+          items.length === 1
+            ? `Chorus: ${items[0]!.subject}`
+            : `Chorus: ${items.length} updates`
+
+        if (!options.mail) {
+          for (const item of items) {
+            await tx(workspaceId, (t) =>
+              bumpDelivery(t, item.id, 'failed', 'no mail transport is configured'),
+            )
+          }
+          continue
+        }
+
+        try {
+          await options.mail.send({
+            to: person.email,
+            subject,
+            text: `${text}\n\n${options.baseUrl.replace(/\/$/, '')}/notifications\n`,
+          })
+          // Marked before the next person, and each item individually, so a
+          // scheduled job delivered twice cannot send the same items again —
+          // a digest is precisely the message people notice repeating.
+          for (const item of items) {
+            await tx(workspaceId, (t) => bumpDelivery(t, item.id, 'sent', null))
+          }
+          sent += 1
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          for (const item of items) {
+            await tx(workspaceId, (t) => bumpDelivery(t, item.id, 'failed', message))
+          }
+        }
+
+        await tx(workspaceId, (t) =>
+          t.execute(
+            `UPDATE notification_digest_settings SET last_sent_at = now() WHERE user_id = $1`,
+            [person.user_id],
+          ),
+        )
+      }
+
+      return sent
     },
 
     async failedDeliveries(workspaceId) {

@@ -33,6 +33,7 @@ export const TENANT_TABLES = [
   'notification_preferences',
   'notification_deliveries',
   'checkpoint_decision_tokens',
+  'notification_digest_settings',
   'signals',
   'webhook_deliveries',
   'audit_events',

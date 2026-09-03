@@ -65,6 +65,54 @@ export function notificationRoutes(notifier: Notifier): RouteDefinition[] {
     }),
 
     route({
+      method: 'GET',
+      path: '/workspaces/:workspaceId/notification-digest',
+      summary: 'Whether the caller has asked for their email to be batched.',
+      auth: { kind: 'workspace', role: 'member', scopes: ['read:artefacts'] },
+      handler: async (c) =>
+        c.json(await notifier.digestSetting(c.req.param('workspaceId'), caller(c).userId)),
+    }),
+
+    route({
+      method: 'PUT',
+      path: '/workspaces/:workspaceId/notification-digest',
+      summary: 'Turn digest batching on or off for the caller.',
+      auth: { kind: 'workspace', role: 'member', scopes: ['write:artefacts'] },
+      handler: async (c) => {
+        const workspaceId = c.req.param('workspaceId')
+        const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
+
+        if (typeof body.enabled !== 'boolean') {
+          throw new ValidationError('enabled must be true or false', { field: 'enabled' })
+        }
+        if (
+          body.cadenceMinutes !== undefined &&
+          (typeof body.cadenceMinutes !== 'number' ||
+            !Number.isInteger(body.cadenceMinutes) ||
+            body.cadenceMinutes < 5 ||
+            body.cadenceMinutes > 1440)
+        ) {
+          // Bounded at both ends: a five-second digest is not a digest, and a
+          // weekly one is a place notifications go to be forgotten.
+          throw new ValidationError('cadenceMinutes must be between 5 and 1440', {
+            field: 'cadenceMinutes',
+          })
+        }
+
+        await notifier.setDigest({
+          workspaceId,
+          userId: caller(c).userId,
+          enabled: body.enabled,
+          ...(typeof body.cadenceMinutes === 'number'
+            ? { cadenceMinutes: body.cadenceMinutes }
+            : {}),
+        })
+
+        return c.json(await notifier.digestSetting(workspaceId, caller(c).userId))
+      },
+    }),
+
+    route({
       method: 'PUT',
       path: '/workspaces/:workspaceId/notification-preferences',
       summary: 'Set whether the caller receives one kind of notification on one channel.',
