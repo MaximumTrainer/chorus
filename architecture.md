@@ -674,6 +674,14 @@ type Tool<I, O> = {
 };
 ```
 
+The registry is where an agent's blast radius is decided, and every rule in it refuses something. One principle underneath all of them: **an agent is not a privileged actor.** It acts for a person, with exactly that person's authority, through a list of tools its workflow declared in advance — so the role checked is the *actor's*, never one the run acquired, and "ask the agent to do it" is not a privilege-escalation path that looks like a feature.
+
+Refusals happen **before execution**, because a refusal after the side effect is not a refusal. An external tool that declares no `idempotencyKey` is refused at *registration* rather than at invocation: one that cannot describe its own identity cannot be retried safely, and discovering that during an incident is discovering it too late. Idempotency is scoped to the run, since two runs legitimately doing the same thing must both do it. Input is validated because a model will eventually produce input that is wrong; output is validated too, because a tool returning a shape its schema forbids is a bug that otherwise surfaces three steps later as something inexplicable.
+
+The shipped set is a **list in one file**, not a directory scan or self-registration on import — the NFR gate enumerates exactly that list, so whether a tool is gated must be answerable by reading one file, and a tool that registered itself by being imported would be gated or not depending on import order.
+
+`fetch_url`'s allow-list is a defence against prompt injection driving exfiltration (§11.7), which is why it is compared against the *parsed host* and re-checked on every redirect. A suffix comparison matches `docs.example.com.evil.test`; a raw-string comparison is fooled by `https://docs.example.com@evil.test/` where the allowed-looking part is a username; and a redirect is controlled by the remote, so following one automatically would carry the request past a check that had already passed. An empty allow-list refuses everything — a deployment that configured no hosts has not opted into unrestricted web access.
+
 Categories: **brain** (`retrieve`, `get_entity`), **artefacts** (`create_task`, `update_document`, `link_artefacts`, …), **code** (`search_code`, `read_file`, `route_to_components`), **connectors** (`create_issue`, `post_message`, `publish_page`, …), **coding** (`start_job`), **web** (`search_web`, `fetch_url`, allow-listed hosts only), **human** (`ask_user`, which creates a checkpoint). A tool with `sideEffect: 'external'` cannot execute without passing the `before_external_write` checkpoint. Tools never receive the raw request context — only a `ToolContext` carrying tenancy, the acting identity and the run id.
 
 ### 11.5 Checkpoints (AGENT-3)

@@ -59,7 +59,14 @@ export class UnauthenticatedError extends AppError {
  * (WS-2 AC4).
  */
 export class ForbiddenError extends AppError {
-  readonly type = 'forbidden'
+  /**
+   * Widened to `string` so a subclass can carry a more specific discriminator
+   * while staying catchable as a refusal — the tool registry's
+   * `tool_refused` is the first. A consumer branching on `forbidden`
+   * generally wants every refusal, and one that wants the specific case can
+   * still read the narrower value.
+   */
+  readonly type: string = 'forbidden'
   readonly status = 403
 }
 

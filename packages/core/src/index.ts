@@ -45,6 +45,7 @@ export { CONNECTOR_KINDS, SignalSchema, SignalPermissionsSchema, parseSignal } f
 export { ENTITY_KINDS, EntityCandidateSchema, parseEntityCandidate } from './entities.js'
 export type { EntityKind, EntityCandidate } from './entities.js'
 export type { ConnectorKind, Signal, SignalPermissions } from './signals.js'
+export type { Tool, AnyTool, ToolContext, SideEffect } from './tools.js'
 export { decideAccess } from './access.js'
 export type { AuthRequirement, AccessRequest, AccessDecision } from './access.js'
 export { slugify, uniqueSlug, MAX_SLUG_LENGTH } from './slugs.js'
