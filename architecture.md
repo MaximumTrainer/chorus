@@ -957,7 +957,9 @@ GET|POST|PATCH /workspaces/{id}/teams  /workspaces/{id}/teams/{teamId}
 GET|PUT|DELETE /workspaces/{id}/teams/{teamId}/members/{userId}
 GET|PUT    /workspaces/{id}/teams/{teamId}/policies      resolved checkpoint policy, and which tier decided
 PUT        /workspaces/{id}/policies                     a workflow's default, for every team
-GET|POST   /workspaces/{id}/members  /integrations  /repositories
+GET|POST   /workspaces/{id}/members  /integrations
+GET|POST   /workspaces/{id}/teams/{teamId}/repositories     repositories are team-scoped
+DELETE     /workspaces/{id}/teams/{teamId}/repositories/{repositoryId}
 GET|POST   /workspaces/{id}/tokens                       personal API tokens; plaintext returned once
 DELETE     /workspaces/{id}/tokens/{tokenId}             revoked with immediate effect
 GET        /workspaces/{id}/grants                       OAuth grants this person has given

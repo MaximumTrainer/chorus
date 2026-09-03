@@ -17,6 +17,8 @@ import { createApiTokenService } from './api-tokens.js'
 import { apiTokenRoutes } from './api-token-routes.js'
 import { createOAuthService, OAuthError } from './oauth.js'
 import { oauthRoutes } from './oauth-routes.js'
+import { createRepositoryService } from './repositories.js'
+import { repositoryRoutes } from './repository-routes.js'
 import { authorise, type AuthorisationDeps } from './authorisation.js'
 import { createTokenLedger } from './single-use-tokens.js'
 import {
@@ -154,12 +156,14 @@ function buildRoutes(config: DbConfig): {
   const teams = createTeamService(config)
   const tokens = createApiTokenService(config)
   const oauth = createOAuthService(config)
+  const repositories = createRepositoryService(config)
   return {
     table: [
       ...ROUTES,
       ...workspaceRoutes(workspaces),
       ...teamRoutes(teams),
       ...apiTokenRoutes(tokens),
+      ...repositoryRoutes(repositories),
       // The issuer is read from the request context rather than baked in, so
       // the metadata document a client discovers names the host it actually
       // reached — a mismatch there is what makes discovery fail unattended.

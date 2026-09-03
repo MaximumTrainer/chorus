@@ -137,6 +137,11 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
         [ulid(), workspaceId, integrationId],
       )
       await owner.query(
+        `INSERT INTO repositories (id, workspace_id, team_id, integration_id, provider, full_name)
+         VALUES ($1, $2, $3, $4, 'github', $1)`,
+        [ulid(), workspaceId, teamId, integrationId],
+      )
+      await owner.query(
         `INSERT INTO webhook_deliveries
            (id, workspace_id, integration_id, delivery_id, signature_ok, payload)
          VALUES ($1, $2, $3, $1, true, '{}')`,
@@ -234,6 +239,18 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
                (id, workspace_id, integration_id, source, external_id, kind, occurred_at, permissions)
              VALUES ($1, $2, $3, 'reference', $1, 'message', now(), '{"visibility":"public","scopeIds":[]}'::jsonb)`,
             [id, workspaceId, integration?.id ?? id],
+          )
+          return
+        }
+        case 'repositories': {
+          const [team] = await tx.query<{ id: string }>(`SELECT id FROM teams LIMIT 1`)
+          const [integration] = await tx.query<{ id: string }>(
+            `SELECT id FROM integrations LIMIT 1`,
+          )
+          await tx.execute(
+            `INSERT INTO repositories (id, workspace_id, team_id, integration_id, provider, full_name)
+             VALUES ($1, $2, $3, $4, 'github', $1)`,
+            [id, workspaceId, team?.id ?? id, integration?.id ?? id],
           )
           return
         }
