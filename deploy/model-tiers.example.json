@@ -1,0 +1,36 @@
+{
+  "_comment": [
+    "Reference tier profiles (ADR-0015). REASONABLE STARTING POINTS, NOT",
+    "BENCHMARKED RECOMMENDATIONS — the evaluation set that would justify a",
+    "ranking cannot exist before CHAT-5 and TASK-3, and inventing one would",
+    "look measured while being guesswork. Issue #152 tracks replacing these",
+    "with measured profiles.",
+    "",
+    "A tier is a capability-and-cost contract, not a model. Prompts are written",
+    "against what a tier guarantees, so re-pointing one at a different model",
+    "must not require re-tuning a prompt. Every tier needs at least one entry;",
+    "extra entries are fallbacks, tried in order, and every fallback is",
+    "recorded in the run trace so a silent downgrade is impossible to miss.",
+    "",
+    "Set this as CHORUS_MODEL_TIERS, and point CHORUS_MODEL_BASE_URL at any",
+    "OpenAI-compatible endpoint — including a local one, which is what makes",
+    "NFR-1's 'no mandatory SaaS dependency' true rather than aspirational.",
+    "",
+    "Model names live here and never in source: that is what keeps the",
+    "boundary rule meaningful and makes a provider's deprecation an ops change",
+    "rather than a release."
+  ],
+
+  "fast": [
+    { "provider": "openai-compatible", "model": "REPLACE-WITH-A-SMALL-MODEL", "contextWindow": 32000 }
+  ],
+  "balanced": [
+    { "provider": "openai-compatible", "model": "REPLACE-WITH-A-MID-MODEL", "contextWindow": 128000 }
+  ],
+  "strong": [
+    { "provider": "openai-compatible", "model": "REPLACE-WITH-A-LARGE-MODEL", "contextWindow": 200000 }
+  ],
+  "embed": [
+    { "provider": "openai-compatible", "model": "REPLACE-WITH-AN-EMBEDDING-MODEL", "embedding": true }
+  ]
+}

@@ -3,8 +3,10 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "BullMQ consumers: index builds, connector syncs, agent runs (architecture.md §6). Enqueued by api, never called directly.",
-  "exports": { ".": "./src/index.ts" },
+  "description": "BullMQ consumers: index builds, connector syncs, agent runs (architecture.md \u00a76). Enqueued by api, never called directly.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "start": "node --experimental-strip-types src/main.ts"

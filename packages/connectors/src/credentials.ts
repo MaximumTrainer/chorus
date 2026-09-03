@@ -61,6 +61,15 @@ export interface CredentialStore {
   ): Promise<void>
   get(workspaceId: string, integrationId: string): Promise<IntegrationRecord>
   /**
+   * The workspace's connected integration of a kind, if there is one.
+   *
+   * Returns the oldest where several exist, deliberately: a workspace with two
+   * GitHub installations has made a choice this method cannot see, and picking
+   * the newest would silently change which one is used the moment a second is
+   * connected.
+   */
+  findByKind(workspaceId: string, kind: ConnectorKind): Promise<IntegrationRecord | undefined>
+  /**
    * Rewraps every workspace's data key under `current`.
    *
    * Idempotent by construction: a key already naming the current master is
@@ -228,6 +237,20 @@ export function createCredentialStore(
         },
         actorId,
       )
+    },
+
+    async findByKind(workspaceId, kind) {
+      const [row] = await tx(workspaceId, (t) =>
+        t.query<IntegrationRow>(
+          `SELECT id, workspace_id, kind, status, config, sync_cursor
+             FROM integrations
+            WHERE kind = $1 AND deleted_at IS NULL
+            ORDER BY created_at ASC
+            LIMIT 1`,
+          [kind],
+        ),
+      )
+      return row ? recordOf(row) : undefined
     },
 
     async get(workspaceId, integrationId) {

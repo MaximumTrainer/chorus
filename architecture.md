@@ -446,6 +446,10 @@ embed(req: EmbedRequest): Promise<EmbedResult>                      // batched, 
 countTokens(text: string, model: ModelRef): number
 ```
 
+**One provider speaks the OpenAI-compatible wire format**, over `fetch` rather than a vendor SDK — an SDK would be a dependency that reaches exactly one endpoint, which is the lock-in ADR-0005's boundary rule exists to prevent. That one format covers OpenAI, Azure, Ollama, LM Studio, vLLM and most self-hosted servers, which is what makes NFR-1's "no mandatory SaaS dependency except the chosen model endpoint" true in practice rather than in principle: a self-hoster points `CHORUS_MODEL_BASE_URL` at their own machine and the local profile works.
+
+Three details of that format are where hand-rolled clients go wrong, so each has a test. `[DONE]` is a literal terminator, not a payload, and parsing it as JSON throws at the very end of an otherwise perfect stream. A real endpoint splits frames wherever the network does, so a partial frame must be carried into the next chunk — a client assuming one chunk is one frame drops tokens under load and only under load. And embeddings carry an `index`: the endpoint is not obliged to return them in order, and trusting array position silently pairs the wrong vector with the wrong chunk, which nothing downstream can detect. A short embedding response fails rather than padding, because a zero vector matches everything weakly and returns confident nonsense instead of an absence.
+
 Every request carries `{ workspaceId, teamId, runId?, purpose }`, where `purpose` is a **task type** (`chat`, `classify`, `extract`, `draft`, `decompose`, `code`, `embed`, `summarise`). The router resolves `purpose` → tier (`fast` | `balanced` | `strong`) → concrete provider+model from workspace configuration, so no caller ever names a model (ADR-0005).
 
 ### 9.2 Providers
