@@ -1,4 +1,5 @@
 import type { DbConfig } from '@chorus/db'
+import type { Notifier } from '@chorus/notifications'
 import type { Indexer } from '@chorus/indexer'
 import type { Job, Queue } from '@chorus/queue'
 import { withRemoteContext, withSpan } from '@chorus/telemetry'
@@ -7,6 +8,10 @@ import {
   indexRepositoryConsumer,
   type RepositoryAccess,
 } from './consumers/index-repository.js'
+import {
+  DELIVER_NOTIFICATION_QUEUE,
+  deliverNotificationConsumer,
+} from './consumers/deliver-notification.js'
 
 /**
  * The worker process (architecture.md §6).
@@ -25,6 +30,14 @@ export interface WorkerDeps {
   readonly dbConfig: DbConfig
   readonly indexer: Indexer
   readonly access: RepositoryAccess
+  /**
+   * Notification delivery (SLACK-6 AC6).
+   *
+   * Optional: a deployment with no mail transport configured has nothing to
+   * retry, and registering a consumer for a queue nobody fills would be a
+   * worker that looks busier than it is.
+   */
+  readonly notifier?: Notifier
 }
 
 export interface RunningWorker {
@@ -75,8 +88,24 @@ export async function createWorker(deps: WorkerDeps): Promise<RunningWorker> {
     { attempts: 3, backoffMs: 2_000, concurrency: 2 },
   )
 
+  if (deps.notifier) {
+    const notifier = deps.notifier
+    await deps.queue.consume(
+      DELIVER_NOTIFICATION_QUEUE,
+      traced(DELIVER_NOTIFICATION_QUEUE, deliverNotificationConsumer({ notifier })),
+      // More attempts and a longer backoff than indexing, because the failure
+      // being retried is usually a transport that is briefly unavailable, and
+      // the cost of waiting is a late email rather than a stalled pipeline. The
+      // ceiling here and the notifier's own must be read together: whichever is
+      // reached first stops the retrying, and both leave the delivery visible.
+      { attempts: 5, backoffMs: 5_000, concurrency: 4 },
+    )
+  }
+
   return {
-    queues: [INDEX_REPOSITORY_QUEUE],
+    queues: deps.notifier
+      ? [INDEX_REPOSITORY_QUEUE, DELIVER_NOTIFICATION_QUEUE]
+      : [INDEX_REPOSITORY_QUEUE],
     async stop() {
       await deps.queue.close()
     },

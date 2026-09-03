@@ -250,6 +250,112 @@ describe('SLACK-6 notification dispatch', () => {
     }
   })
 
+  it('SLACK-6 AC6: a failure asks for another attempt, because transports are usually briefly down', async () => {
+    const { workspaceId, userId } = await world()
+    const asked: Array<{ deliveryId: string; attempt: number }> = []
+    const failing = createNotifier(db.config, {
+      mail: broken,
+      baseUrl: 'https://chorus.example',
+      scheduleRetry: async ({ deliveryId, attempt }) => {
+        asked.push({ deliveryId, attempt })
+      },
+    })
+
+    await failing.notify(event(workspaceId, [userId]))
+
+    expect(asked, 'the first failure must schedule a retry').toHaveLength(1)
+    expect(asked[0]!.attempt).toBe(1)
+    // Naming the delivery, not the notification: the in-app half succeeded and
+    // must not be retried.
+    const [failure] = await failing.failedDeliveries(workspaceId)
+    expect(asked[0]!.deliveryId).toBe(failure!.id)
+    expect(failure).toMatchObject({ channel: 'email', status: 'failed' })
+  })
+
+  it('SLACK-6 AC6: a retry that succeeds clears the failure', async () => {
+    const { workspaceId, userId } = await world()
+    let workingYet = false
+    const flaky = createNotifier(db.config, {
+      baseUrl: 'https://chorus.example',
+      mail: {
+        send: async (message) => {
+          // The ordinary case: a transport that was down and came back.
+          if (!workingYet) throw new Error('connect ECONNREFUSED 127.0.0.1:25')
+          await mailer.send(message)
+        },
+      },
+    })
+
+    await flaky.notify(event(workspaceId, [userId]))
+    const [failure] = await flaky.failedDeliveries(workspaceId)
+    expect(failure).toBeDefined()
+
+    workingYet = true
+    expect(await flaky.retryDelivery(workspaceId, failure!.id)).toBe('sent')
+
+    expect(await flaky.failedDeliveries(workspaceId)).toEqual([])
+    const [row] = await db.admin.query<{ status: string; attempts: number }>(
+      `SELECT status, attempts FROM notification_deliveries WHERE id = $1`,
+      [failure!.id],
+    )
+    // Two attempts recorded, not one: the count is what tells an operator
+    // whether a transport is flapping or simply gone.
+    expect(row).toMatchObject({ status: 'sent', attempts: 2 })
+  })
+
+  it('SLACK-6 AC6: retrying stops at the ceiling rather than forever', async () => {
+    const { workspaceId, userId } = await world()
+    const failing = createNotifier(db.config, {
+      mail: broken,
+      baseUrl: 'https://chorus.example',
+      maxAttempts: 3,
+    })
+
+    await failing.notify(event(workspaceId, [userId]))
+    const [failure] = await failing.failedDeliveries(workspaceId)
+
+    // One more attempt is allowed, and it fails; the next reaches the ceiling.
+    expect(await failing.retryDelivery(workspaceId, failure!.id)).toBe('retry')
+    expect(await failing.retryDelivery(workspaceId, failure!.id)).toBe('exhausted')
+    // Refused now, and still refused after: retrying forever would hide a
+    // transport that is not coming back behind a queue that looks busy.
+    expect(await failing.retryDelivery(workspaceId, failure!.id)).toBe('exhausted')
+
+    const [row] = await db.admin.query<{ attempts: number; status: string }>(
+      `SELECT attempts, status FROM notification_deliveries WHERE id = $1`,
+      [failure!.id],
+    )
+    expect(row!.attempts).toBe(3)
+    // Left failed and visible, which is what an operator needs.
+    expect(row!.status).toBe('failed')
+    expect(await failing.failedDeliveries(workspaceId)).toHaveLength(1)
+  })
+
+  it('SLACK-6 AC6: retrying a delivery that already succeeded does nothing', async () => {
+    const { workspaceId, userId } = await world()
+    await notifier.notify(event(workspaceId, [userId]))
+
+    const [delivery] = await db.admin.query<{ id: string }>(
+      `SELECT id FROM notification_deliveries WHERE workspace_id = $1 AND channel = 'email'`,
+      [workspaceId],
+    )
+
+    // At-least-once delivery makes a duplicate retry job ordinary, not exotic.
+    // Sending the mail a second time would be the failure here.
+    expect(await notifier.retryDelivery(workspaceId, delivery!.id)).toBe('settled')
+    expect(mailer.sent).toHaveLength(1)
+  })
+
+  it('SLACK-6 AC6: an unwired deployment still records the failure it cannot retry', async () => {
+    const { workspaceId, userId } = await world()
+    const unwired = createNotifier(db.config, { mail: broken, baseUrl: 'https://chorus.example' })
+
+    // No scheduleRetry. Degraded, not broken: an operator can still see it,
+    // which is the visible half of AC6 and the half that matters most.
+    await unwired.notify(event(workspaceId, [userId]))
+    expect(await unwired.failedDeliveries(workspaceId)).toHaveLength(1)
+  })
+
   it('SLACK-6: an event with no recipients is a no-op, not an error', async () => {
     const { workspaceId, userId } = await world()
 

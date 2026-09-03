@@ -150,6 +150,9 @@ importers:
       '@chorus/llm':
         specifier: workspace:*
         version: link:../../packages/llm
+      '@chorus/notifications':
+        specifier: workspace:*
+        version: link:../../packages/notifications
       '@chorus/queue':
         specifier: workspace:*
         version: link:../../packages/queue

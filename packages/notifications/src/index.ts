@@ -64,6 +64,15 @@ export interface Notifier extends NotificationSink {
     channel: NotificationChannel
     enabled: boolean
   }): Promise<void>
+  /**
+   * Deliveries that have not succeeded (AC6).
+   *
+   * An operator's view: it spans everyone in the workspace, which is why the
+   * route that exposes it requires an administrative role.
+   */
+  failedDeliveries(workspaceId: string): Promise<readonly DeliveryFailure[]>
+  /** Tries one failed delivery again. */
+  retryDelivery(workspaceId: string, deliveryId: string): Promise<RetryOutcome>
 }
 
 export interface NotifierOptions {
@@ -71,7 +80,55 @@ export interface NotifierOptions {
   /** Absolute base for links in email; a relative link in a mail client is dead. */
   readonly baseUrl: string
   readonly now?: () => Date
+  /**
+   * Asks for a failed delivery to be tried again later (AC6).
+   *
+   * A plain callback rather than a queue, so this package keeps its only
+   * dependencies as `core` and `db`. The worker wires it to the real queue,
+   * which is where backoff and attempt limits belong; a deployment that has
+   * not wired it still records the failure, which is the visible half of AC6.
+   */
+  readonly scheduleRetry?: (input: {
+    workspaceId: string
+    deliveryId: string
+    attempt: number
+  }) => Promise<void>
+  /** Attempts before a delivery is left failed for an operator. Default 5. */
+  readonly maxAttempts?: number
 }
+
+/** A failed or pending delivery, with enough context to act on it. */
+export interface DeliveryFailure {
+  readonly id: string
+  readonly notificationId: string
+  readonly channel: NotificationChannel
+  readonly status: string
+  readonly attempts: number
+  readonly lastError: string | null
+  readonly kind: NotificationKind
+  readonly subject: string
+  readonly createdAt: string
+}
+
+/**
+ * What came of a retry.
+ *
+ * Four outcomes rather than a boolean, because the caller has to tell "gave up
+ * deliberately" from "still failing, try later" — and a boolean forced the
+ * worker to ask a second question to find out, which is how two components
+ * come to disagree about whether a delivery is finished.
+ */
+export type RetryOutcome =
+  /** Delivered. */
+  | 'sent'
+  /** Failed again, and still worth another attempt. */
+  | 'retry'
+  /** Out of attempts. Left failed and visible, on purpose. */
+  | 'exhausted'
+  /** Nothing to do: already sent, suppressed, or not an email delivery. */
+  | 'settled'
+
+const DEFAULT_MAX_ATTEMPTS = 5
 
 interface NotificationRow {
   id: string
@@ -242,6 +299,109 @@ export function createNotifier(config: DbConfig, options: NotifierOptions): Noti
       })
     },
 
+    async failedDeliveries(workspaceId) {
+      return tx(workspaceId, async (t) => {
+        const rows = await t.query<{
+          id: string
+          notification_id: string
+          channel: NotificationChannel
+          status: string
+          attempts: number
+          last_error: string | null
+          kind: NotificationKind
+          subject: string
+          created_at: Date
+        }>(
+          `SELECT d.id, d.notification_id, d.channel, d.status, d.attempts, d.last_error,
+                  n.kind, n.subject, d.created_at
+             FROM notification_deliveries d
+             JOIN notifications n ON n.id = d.notification_id
+            WHERE d.status IN ('pending', 'failed')
+            ORDER BY d.created_at DESC`,
+          [],
+        )
+        return rows.map((row) => ({
+          id: row.id,
+          notificationId: row.notification_id,
+          channel: row.channel,
+          status: row.status,
+          attempts: row.attempts,
+          lastError: row.last_error,
+          kind: row.kind,
+          subject: row.subject,
+          createdAt: row.created_at.toISOString(),
+        }))
+      })
+    },
+
+    async retryDelivery(workspaceId, deliveryId) {
+      const context = await tx(workspaceId, async (t) => {
+        const [row] = await t.query<{
+          channel: NotificationChannel
+          status: string
+          attempts: number
+          user_id: string
+          subject: string
+          body: string
+        }>(
+          `SELECT d.channel, d.status, d.attempts, n.user_id, n.subject, n.body
+             FROM notification_deliveries d
+             JOIN notifications n ON n.id = d.notification_id
+            WHERE d.id = $1`,
+          [deliveryId],
+        )
+        return row
+      })
+
+      // Nothing to do is not a failure: a queue retrying a delivery that
+      // succeeded in the meantime is ordinary under at-least-once delivery.
+      if (!context || context.status !== 'failed' || context.channel !== 'email') return 'settled'
+
+      if (context.attempts >= (options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS)) {
+        // Left failed, deliberately and visibly. Retrying forever would hide a
+        // transport that is not coming back behind a queue that looks busy.
+        return 'exhausted'
+      }
+
+      const [user] = await tx(workspaceId, (t) =>
+        t.query<{ email: string }>(
+          `SELECT u.email FROM users u
+             JOIN notifications n ON n.user_id = u.id
+             JOIN notification_deliveries d ON d.notification_id = n.id
+            WHERE d.id = $1`,
+          [deliveryId],
+        ),
+      )
+
+      if (!options.mail || !user) {
+        await tx(workspaceId, (t) =>
+          bumpDelivery(t, deliveryId, 'failed', 'no mail transport or no address on file'),
+        )
+        // Not worth retrying: neither a missing transport nor a missing address
+        // is going to change between one attempt and the next.
+        return 'exhausted'
+      }
+
+      try {
+        await options.mail.send({
+          to: user.email,
+          subject: context.subject,
+          text: context.body || context.subject,
+        })
+        await tx(workspaceId, (t) => bumpDelivery(t, deliveryId, 'sent', null))
+        return 'sent'
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        await tx(workspaceId, (t) => bumpDelivery(t, deliveryId, 'failed', message))
+        // Asked for again from here, so backoff and the attempt ceiling stay in
+        // one place rather than being re-derived by every caller.
+        await requestRetry(workspaceId, deliveryId, context.attempts + 1)
+        return context.attempts + 1 >= (options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS)
+          ? 'exhausted'
+          : 'retry'
+      }
+    },
+
     async setPreference({ workspaceId, userId, kind, channel, enabled }) {
       if (!enabled && !mayDisable(kind, channel)) {
         throw new ValidationError(
@@ -264,6 +424,39 @@ export function createNotifier(config: DbConfig, options: NotifierOptions): Noti
     },
   }
 
+  /** Records another attempt against an existing delivery row. */
+  async function bumpDelivery(
+    t: TenantTx,
+    deliveryId: string,
+    status: 'sent' | 'failed',
+    error: string | null,
+  ): Promise<void> {
+    await t.execute(
+      `UPDATE notification_deliveries
+          SET status = $2, attempts = attempts + 1, last_error = $3,
+              delivered_at = CASE WHEN $2 = 'sent' THEN now() ELSE delivered_at END
+        WHERE id = $1`,
+      [deliveryId, status, error],
+    )
+  }
+
+  /**
+   * Asks for another attempt, if anyone is listening.
+   *
+   * A deployment that has wired no scheduler still records the failure, which
+   * is the visible half of AC6 — an operator can see it and act. Silently
+   * doing nothing here is therefore a degradation, not a hole.
+   */
+  async function requestRetry(
+    workspaceId: string,
+    deliveryId: string,
+    attempt: number,
+  ): Promise<void> {
+    if (!options.scheduleRetry) return
+    if (attempt >= (options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS)) return
+    await options.scheduleRetry({ workspaceId, deliveryId, attempt })
+  }
+
   async function recordDelivery(
     t: TenantTx,
     workspaceId: string,
@@ -271,9 +464,9 @@ export function createNotifier(config: DbConfig, options: NotifierOptions): Noti
     channel: NotificationChannel,
     status: 'pending' | 'sent' | 'failed' | 'suppressed',
     error?: string,
-  ): Promise<void> {
+  ): Promise<string | undefined> {
     const attempted = status === 'sent' || status === 'failed'
-    await t.execute(
+    const rows = await t.query<{ id: string }>(
       `INSERT INTO notification_deliveries
          (id, workspace_id, notification_id, channel, status, attempts, last_error, delivered_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -281,7 +474,8 @@ export function createNotifier(config: DbConfig, options: NotifierOptions): Noti
          SET status = EXCLUDED.status,
              attempts = notification_deliveries.attempts + EXCLUDED.attempts,
              last_error = EXCLUDED.last_error,
-             delivered_at = EXCLUDED.delivered_at`,
+             delivered_at = EXCLUDED.delivered_at
+       RETURNING id`,
       [
         ulid(),
         workspaceId,
@@ -293,6 +487,7 @@ export function createNotifier(config: DbConfig, options: NotifierOptions): Noti
         status === 'sent' ? now().toISOString() : null,
       ],
     )
+    return rows[0]?.id
   }
 
   async function deliverEmail(
@@ -326,9 +521,13 @@ export function createNotifier(config: DbConfig, options: NotifierOptions): Noti
       // AC6: the failure is recorded and visible, and the in-app notification
       // already exists — a broken transport must not swallow the event.
       const message = error instanceof Error ? error.message : String(error)
-      await tx(event.workspaceId, (t) =>
+      const deliveryId = await tx(event.workspaceId, (t) =>
         recordDelivery(t, event.workspaceId, notificationId, 'email', 'failed', message),
       )
+      // A transport is far more often briefly unavailable than permanently
+      // broken, so the first failure asks for another attempt rather than
+      // waiting for someone to notice.
+      if (deliveryId) await requestRetry(event.workspaceId, deliveryId, 1)
     }
   }
 }

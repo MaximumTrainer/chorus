@@ -736,7 +736,11 @@ The package knows recipients, kinds, preferences and channels, and nothing about
 
 Mail is sent *outside* the database transaction that writes the notification. Holding a transaction open across a network call is how a slow transport becomes a connection-pool outage.
 
-Still to come in WP-1.2: the single-use decision link carried in a checkpoint email (AC2, and the decision token §11.5 records as deliberately absent), the live in-app badge (AC4, which needs the web app), digest batching (AC5) and transport retry with backoff through the queue (AC6's retry half — the failure is already recorded and visible).
+**Retry belongs to the queue, and the ceiling is read in two places.** The first email attempt happens inline, where the notification is created, because a working transport should not wait on a queue. A failure records itself and asks for another attempt through an injected callback — a plain function, not a queue, so this package's only dependencies stay `core` and `db`; the worker wires it to `notification.deliver`, where BullMQ's attempts and backoff live. `retryDelivery` returns one of four outcomes (`sent`, `retry`, `exhausted`, `settled`) rather than a boolean, because the consumer has to tell "gave up deliberately" from "still failing, try later", and a boolean forced it to ask a second question — which is how two components come to disagree about whether a delivery is finished. A deployment that wires no scheduler still records the failure, so it is degraded rather than holed.
+
+A transport that never returns must leave the delivery *failed and visible* rather than a job retrying forever: a queue that looks busy is how an operator fails to notice that mail has been broken for a week. `GET /workspaces/:id/notification-deliveries` is that view, and it requires an admin — it spans everyone's notifications, subjects included.
+
+Still to come in WP-1.2: the live in-app badge (AC4, which needs the web app) and digest batching (AC5).
 
 ## 12. Coding-agent execution
 

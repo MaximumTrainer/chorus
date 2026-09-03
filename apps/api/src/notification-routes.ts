@@ -54,6 +54,17 @@ export function notificationRoutes(notifier: Notifier): RouteDefinition[] {
     }),
 
     route({
+      method: 'GET',
+      path: '/workspaces/:workspaceId/notification-deliveries',
+      summary: 'List notifications that have not been delivered, for an operator.',
+      // Administrative, not personal: this spans everyone's notifications and
+      // includes their subjects, so it takes an administrative role rather than
+      // the `member` the inbox routes take.
+      auth: { kind: 'workspace', role: 'admin', scopes: ['read:artefacts'] },
+      handler: async (c) => c.json(await notifier.failedDeliveries(c.req.param('workspaceId'))),
+    }),
+
+    route({
       method: 'PUT',
       path: '/workspaces/:workspaceId/notification-preferences',
       summary: 'Set whether the caller receives one kind of notification on one channel.',

@@ -17,6 +17,7 @@
     "@chorus/db": "workspace:*",
     "@chorus/indexer": "workspace:*",
     "@chorus/llm": "workspace:*",
+    "@chorus/notifications": "workspace:*",
     "@chorus/queue": "workspace:*",
     "@chorus/telemetry": "workspace:*"
   },
