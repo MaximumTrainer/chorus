@@ -1,4 +1,4 @@
-import type { ConnectorKind, Signal } from '@chorus/core'
+import type { ConnectorKind, EntityCandidate, Signal } from '@chorus/core'
 
 /**
  * The connector interface (architecture.md §17, INT-1).
@@ -167,5 +167,14 @@ export interface Connector {
   /** Present together with `handleWebhook`, or neither. */
   readonly webhooks?: WebhookSpec
   handleWebhook?(request: WebhookRequest, ctx: ConnectorContext): Promise<readonly Signal[]>
+  /**
+   * The deterministic extraction pass (architecture.md §10.3).
+   *
+   * What the signal *plainly says* exists — a tracker issue is a ticket, its
+   * author is a person — with nothing inferred. Absent for a connector whose
+   * source defines no entities of its own. Resolution and persistence are
+   * BRAIN-3's; this is only the reading.
+   */
+  mapExternal?(signal: Signal): readonly EntityCandidate[]
   health(ctx: ConnectorContext): Promise<HealthStatus>
 }

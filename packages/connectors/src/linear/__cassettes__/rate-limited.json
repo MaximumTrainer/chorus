@@ -1,0 +1,41 @@
+{
+  "description": "Linear refusing with a 429.",
+  "interactions": [
+    {
+      "request": {
+        "method": "POST",
+        "url": "https://api.linear.app/graphql"
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "retry-after": "60"
+        },
+        "body": {
+          "errors": [
+            {
+              "message": "Rate limit exceeded"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "url": "https://api.linear.app/graphql"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "viewer": {
+              "id": "user-501",
+              "name": "Ada Lovelace"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

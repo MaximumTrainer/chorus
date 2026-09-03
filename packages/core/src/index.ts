@@ -42,6 +42,8 @@ export {
 } from './envelope.js'
 export type { MasterKey, Keyring } from './envelope.js'
 export { CONNECTOR_KINDS, SignalSchema, SignalPermissionsSchema, parseSignal } from './signals.js'
+export { ENTITY_KINDS, EntityCandidateSchema, parseEntityCandidate } from './entities.js'
+export type { EntityKind, EntityCandidate } from './entities.js'
 export type { ConnectorKind, Signal, SignalPermissions } from './signals.js'
 export { decideAccess } from './access.js'
 export type { AuthRequirement, AccessRequest, AccessDecision } from './access.js'

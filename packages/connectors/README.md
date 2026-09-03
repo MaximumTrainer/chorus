@@ -82,6 +82,13 @@ tell them apart, and the kit asserts what each kind can actually promise. Do not
 declare `'signature'` for a scheme that is not one; the kit will catch it, but
 the point is that the weaker guarantee should be *visible* rather than assumed.
 
+**If your source defines entities, read them in `mapExternal` and infer
+nothing.** A tracker issue *is* a ticket, its creator *is* a person — that is
+the deterministic pass, and it beats a model call because there is nothing to be
+uncertain about. Give every candidate a stable external id and include the short
+code people actually say (`ACME-7`) as an alias, or every conversational mention
+becomes a new entity.
+
 **If your token expires, refresh it and hand the new credentials back** through
 `ctx.saveCredentials`. Providers that rotate the refresh token on every use —
 GitLab does — will work exactly once more if you keep the old one, then fail
@@ -156,6 +163,7 @@ unconditionally passes every test written against valid input.
 | Health | states are valid; a failure names a problem **and** a remedy; uses the injected clock |
 | Webhooks | spec and handler present together; a genuine delivery verifies and has an id; a wrong secret does not; body integrity holds exactly as strongly as `verification` declares; handled signals parse; the same delivery yields the same ids *(needs `webhookSample`)* |
 | Token refresh | an expired access token is refreshed, the interrupted call retried, and the new credentials handed back to be stored *(needs `scenarios.expiredAccessToken`)* |
+| Entities | candidates parse; evidence names a signal from the same page; mapping twice gives the same ids; one signal never yields the same entity twice *(only if you implement `mapExternal`)* |
 
 ### Not yet covered
 

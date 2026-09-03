@@ -1,0 +1,188 @@
+{
+  "description": "Linear GraphQL reads: one page each of issues, comments, projects and cycles. Every request is a POST to the same URL, so interactions are matched in order. Hand-authored from the published schema; not recorded against linear.app.",
+  "interactions": [
+    {
+      "request": {
+        "method": "POST",
+        "url": "https://api.linear.app/graphql"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "issues": {
+              "pageInfo": {
+                "hasNextPage": false,
+                "endCursor": null
+              },
+              "nodes": [
+                {
+                  "id": "lin-issue-1",
+                  "identifier": "ACME-7",
+                  "title": "The deploy step times out",
+                  "description": "It hangs after the build.",
+                  "url": "https://linear.app/acme/issue/ACME-7",
+                  "createdAt": "2026-09-01T08:00:00.000Z",
+                  "updatedAt": "2026-09-01T09:10:00.000Z",
+                  "state": {
+                    "name": "Todo",
+                    "type": "unstarted"
+                  },
+                  "team": {
+                    "id": "team-1",
+                    "key": "ACME",
+                    "name": "Acme"
+                  },
+                  "creator": {
+                    "id": "user-501",
+                    "name": "Ada Lovelace",
+                    "displayName": "ada"
+                  },
+                  "assignee": {
+                    "id": "user-502",
+                    "name": "Grace Hopper",
+                    "displayName": "grace"
+                  },
+                  "project": {
+                    "id": "proj-1",
+                    "name": "Reliability"
+                  },
+                  "cycle": {
+                    "id": "cyc-1",
+                    "number": 4,
+                    "name": "Cycle 4"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "url": "https://api.linear.app/graphql"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "comments": {
+              "pageInfo": {
+                "hasNextPage": false,
+                "endCursor": null
+              },
+              "nodes": [
+                {
+                  "id": "lin-comment-1",
+                  "body": "Reproduced on main.",
+                  "url": "https://linear.app/acme/issue/ACME-7#comment-1",
+                  "createdAt": "2026-09-01T08:30:00.000Z",
+                  "updatedAt": "2026-09-01T08:30:00.000Z",
+                  "user": {
+                    "id": "user-502",
+                    "name": "Grace Hopper",
+                    "displayName": "grace"
+                  },
+                  "issue": {
+                    "id": "lin-issue-1",
+                    "identifier": "ACME-7"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "url": "https://api.linear.app/graphql"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "projects": {
+              "pageInfo": {
+                "hasNextPage": false,
+                "endCursor": null
+              },
+              "nodes": [
+                {
+                  "id": "proj-1",
+                  "name": "Reliability",
+                  "description": "Make deploys boring.",
+                  "url": "https://linear.app/acme/project/reliability",
+                  "state": "started",
+                  "targetDate": "2026-10-01",
+                  "createdAt": "2026-08-01T10:00:00.000Z",
+                  "updatedAt": "2026-09-01T10:00:00.000Z",
+                  "lead": {
+                    "id": "user-501",
+                    "name": "Ada Lovelace",
+                    "displayName": "ada"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "url": "https://api.linear.app/graphql"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "cycles": {
+              "pageInfo": {
+                "hasNextPage": false,
+                "endCursor": null
+              },
+              "nodes": [
+                {
+                  "id": "cyc-1",
+                  "number": 4,
+                  "name": "Cycle 4",
+                  "startsAt": "2026-08-24T00:00:00.000Z",
+                  "endsAt": "2026-09-07T00:00:00.000Z",
+                  "createdAt": "2026-08-20T00:00:00.000Z",
+                  "updatedAt": "2026-08-24T00:00:00.000Z",
+                  "team": {
+                    "id": "team-1",
+                    "key": "ACME",
+                    "name": "Acme"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "url": "https://api.linear.app/graphql"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "viewer": {
+              "id": "user-501",
+              "name": "Ada Lovelace"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

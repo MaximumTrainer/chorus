@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { CONNECTOR_KINDS, RateLimitedError, parseSignal } from '@chorus/core'
+import {
+  CONNECTOR_KINDS,
+  RateLimitedError,
+  parseEntityCandidate,
+  parseSignal,
+} from '@chorus/core'
 import type { Connector, ConnectorContext, WebhookRequest } from '../contract.js'
 
 /**
@@ -351,6 +356,59 @@ export function describeConnectorContract(
 
       // And the call the expiry interrupted must have been retried, not lost.
       expect(result.signals.length).toBeGreaterThan(0)
+    })
+
+    it('INT-2 AC5/AC7: deterministic entities are well-formed and carry their evidence', async () => {
+      const connector = factory()
+      if (!connector.pull || !connector.mapExternal) return
+
+      const { signals } = await connector.pull(null, ctx())
+      const candidates = signals.flatMap((signal) => connector.mapExternal!(signal))
+      if (candidates.length === 0) return
+
+      for (const candidate of candidates) {
+        // Same reasoning as validating signals at the boundary: a malformed
+        // candidate becomes a permanent bad entity that nobody can attribute.
+        const parsed = parseEntityCandidate(candidate)
+        // Evidence is what lets an entity be re-derived when an extractor
+        // version changes, and explained to someone asking why the brain
+        // believes it.
+        expect(parsed.evidence.source).toBe(connector.kind)
+        expect(
+          signals.some((signal) => signal.externalId === parsed.evidence.signalExternalId),
+          'evidence must name a signal this page actually produced',
+        ).toBe(true)
+      }
+    })
+
+    it('INT-2 AC5/AC7: mapping the same signal twice yields the same candidates', async () => {
+      const connector = factory()
+      if (!connector.pull || !connector.mapExternal) return
+
+      const { signals } = await connector.pull(null, ctx())
+      const first = signals.flatMap((signal) => connector.mapExternal!(signal))
+      const again = signals.flatMap((signal) => connector.mapExternal!(signal))
+
+      // Resolution matches on external id. A candidate whose id varies per call
+      // grows one entity per mention instead of resolving to the one that
+      // exists — the deterministic pass has to actually be deterministic.
+      expect(again.map((c) => `${c.kind}:${c.externalId}`)).toEqual(
+        first.map((c) => `${c.kind}:${c.externalId}`),
+      )
+    })
+
+    it('INT-2 AC5/AC7: one signal never yields the same entity twice', async () => {
+      const connector = factory()
+      if (!connector.pull || !connector.mapExternal) return
+
+      const { signals } = await connector.pull(null, ctx())
+      for (const signal of signals) {
+        const keys = connector.mapExternal(signal).map((c) => `${c.kind}:${c.externalId}`)
+        // An issue whose creator is also its assignee must yield one person.
+        expect(new Set(keys).size, `${signal.externalId} yielded a duplicate entity`).toBe(
+          keys.length,
+        )
+      }
     })
 
     it('INT-1 AC7: health uses the injected clock, so it is testable', async () => {
