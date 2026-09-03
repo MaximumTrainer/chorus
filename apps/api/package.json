@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "HTTP/SSE API, OAuth 2.1 server, MCP endpoint, webhook receivers. Enqueues everything long-running (architecture.md §6).",
+  "description": "HTTP/SSE API, OAuth 2.1 server, MCP endpoint, webhook receivers. Enqueues everything long-running (architecture.md \u00a76).",
   "exports": {
     ".": "./src/index.ts"
   },
@@ -13,12 +13,14 @@
   "dependencies": {
     "@chorus/core": "workspace:*",
     "@chorus/db": "workspace:*",
+    "@chorus/llm": "workspace:*",
     "better-auth": "1.7.2",
     "hono": "4.6.9",
     "pg": "8.13.1"
   },
   "devDependencies": {
     "@chorus/config": "workspace:*",
+    "@chorus/indexer": "workspace:*",
     "@chorus/testing": "workspace:*",
     "@modelcontextprotocol/sdk": "1.30.0",
     "@types/node": "22.7.5",

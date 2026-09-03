@@ -772,6 +772,14 @@ A prototype is the same pipeline as a coding job with a different brief and a di
 
 Built on the official TypeScript MCP SDK, mounted at `/mcp` in `api` over **Streamable HTTP**, and also shipped as a stdio binary (`chorus-mcp`) that proxies to the API for clients preferring a local process.
 
+### 18.1 The walking skeleton (WP-0.6, temporary)
+
+`POST /workspaces/{id}/ask` is a **deliberately disposable** route satisfying Phase 0's exit criterion — a question about connected code, answered as a stream with citations to real files at a real commit. It is one retrieval call over code chunks, one model call and one streamed reply: no workflow engine, no checkpoints, no sessions, no artefacts. plan.md §2.5 requires it to be replaced by AGENT-1, BRAIN-4 and CHAT-2 in Phase 1, and names the failure mode — "the temptation to keep it is the failure mode" — so `test/nfr/walking-skeleton.test.ts` pins the directory's contents, its size and the fact that nothing else imports it. Throwaway code is never kept by a decision to keep it; it is kept by one reasonable addition at a time, and only a failing build stops that.
+
+Its acceptance test is **not** disposable. The same journey must keep passing against the real implementations, which is what makes deleting the skeleton safe rather than a leap.
+
+Two properties are asserted now so the skeleton cannot establish bad habits that outlive it. The context shown is byte-for-byte what was sent to the model — CHAT-3 makes that a requirement in Phase 1, and a skeleton that showed one thing and sent another would normalise the gap. And when retrieval returns nothing the model is **not called at all**: answering from a model's general knowledge when nothing was retrieved is how a grounded product quietly becomes a plausible one.
+
 **Authorization** follows the MCP authorization specification: the API publishes OAuth 2.1 metadata at `/.well-known/oauth-authorization-server`, supports dynamic client registration, authorization code with PKCE, and refresh; personal API tokens are accepted as bearer tokens for scripts. Scopes: `read:artefacts`, `write:artefacts`, `run:coding`, `read:brain`.
 
 `S256` is the only challenge method offered or accepted. OAuth 2.1 removes `plain`, and a server that still honours it can be talked down to it by any client — at which point the challenge carried in the authorization request *is* the verifier, and PKCE stops meaning anything.

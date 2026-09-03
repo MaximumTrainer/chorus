@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { AppError, NotFoundError, ForbiddenError, ValidationError, ulid } from '@chorus/core'
+import type { ModelProvider } from '@chorus/llm'
 import { withTenant, configFromEnv, type DbConfig } from '@chorus/db'
 import {
   route,
@@ -19,6 +20,8 @@ import { createOAuthService, OAuthError } from './oauth.js'
 import { oauthRoutes } from './oauth-routes.js'
 import { createRepositoryService } from './repositories.js'
 import { repositoryRoutes } from './repository-routes.js'
+// WALKING SKELETON — delete in Phase 1. See src/walking-skeleton/README.md.
+import { walkingSkeletonRoutes } from './walking-skeleton/ask.js'
 import { authorise, type AuthorisationDeps } from './authorisation.js'
 import { createTokenLedger } from './single-use-tokens.js'
 import {
@@ -53,6 +56,14 @@ export interface AppOptions {
   maxSignInAttempts?: number
   /** A generic OIDC provider, discovered from its issuer (WS-1 AC3). */
   oidc?: OidcConfig
+  /**
+   * The model provider. Injected so a test never reaches a real one
+   * (CLAUDE.md §4).
+   *
+   * WALKING SKELETON: only the throwaway ask route uses this. Phase 1's agent
+   * runtime takes its provider through the model router instead.
+   */
+  models?: ModelProvider
 }
 
 /**
@@ -144,11 +155,14 @@ export const ROUTES: readonly RouteDefinition[] = [
  * Building the table opens no connections — the services close over their
  * config — so this is safe to call from a test that has no database.
  */
-export function routeTable(dbConfig?: DbConfig): readonly RouteDefinition[] {
-  return buildRoutes(dbConfig ?? configFromEnv()).table
+export function routeTable(dbConfig?: DbConfig, models?: ModelProvider): readonly RouteDefinition[] {
+  return buildRoutes(dbConfig ?? configFromEnv(), models).table
 }
 
-function buildRoutes(config: DbConfig): {
+function buildRoutes(
+  config: DbConfig,
+  models?: ModelProvider,
+): {
   table: readonly RouteDefinition[]
   deps: AuthorisationDeps
 } {
@@ -164,6 +178,9 @@ function buildRoutes(config: DbConfig): {
       ...teamRoutes(teams),
       ...apiTokenRoutes(tokens),
       ...repositoryRoutes(repositories),
+      // WALKING SKELETON — delete in Phase 1. Mounted only when a provider is
+      // supplied, so a deployment without one simply does not have it.
+      ...(models ? walkingSkeletonRoutes({ dbConfig: config, models }) : []),
       // The issuer is read from the request context rather than baked in, so
       // the metadata document a client discovers names the host it actually
       // reached — a mismatch there is what makes discovery fail unattended.
@@ -318,7 +335,7 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
   const isProduction = process.env.NODE_ENV === 'production'
   const built =
     options.dbConfig || options.mailer
-      ? buildRoutes(options.dbConfig ?? configFromEnv())
+      ? buildRoutes(options.dbConfig ?? configFromEnv(), options.models)
       : undefined
 
   for (const definition of built?.table ?? ROUTES) {

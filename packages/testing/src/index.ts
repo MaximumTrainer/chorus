@@ -21,3 +21,9 @@ export type {
   Workspace,
   RequestableApp,
 } from './world.js'
+export { createFakeModelProvider } from './fakes/model-provider.js'
+export type {
+  FakeModelProvider,
+  FakeModelScript,
+  RecordedRequest,
+} from './fakes/model-provider.js'
