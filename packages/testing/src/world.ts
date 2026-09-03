@@ -51,6 +51,17 @@ export interface SignedInUser {
 export interface AnonymousCaller {
   get(path: string): Promise<Response>
   post(path: string, body?: unknown): Promise<Response>
+  /**
+   * The mutating methods.
+   *
+   * Present because the permission suite must exercise *every* method without a
+   * session, and these are the destructive ones — removing a member, changing a
+   * role, setting a policy. A fake that could only reach GET and POST made the
+   * suite skip exactly the routes where being unguarded matters most (#150).
+   */
+  put(path: string, body?: unknown): Promise<Response>
+  patch(path: string, body?: unknown): Promise<Response>
+  delete(path: string): Promise<Response>
 }
 
 /**
@@ -199,6 +210,9 @@ export function createTestClient(app: RequestableApp, mailer: RecordingMailer): 
       return {
         get: (path) => send(path),
         post: (path, body) => send(path, json(body)),
+        put: (path, body) => send(path, { ...json(body), method: 'PUT' }),
+        patch: (path, body) => send(path, { ...json(body), method: 'PATCH' }),
+        delete: (path) => send(path, { method: 'DELETE' }),
       }
     },
 

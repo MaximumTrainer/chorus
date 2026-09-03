@@ -135,20 +135,40 @@ describe('WS-4 permission suite', () => {
     const mailer = createRecordingMailer()
     const anonymous = createTestClient(createApp({ dbConfig: db.config, mailer }), mailer).anonymous()
 
+    // Every method, not only the readable ones. This previously skipped
+    // PUT/PATCH/DELETE because the fake could not send them — which meant the
+    // check covered everything except the destructive routes, the wrong hole
+    // to have in the assertion that no route is silently unguarded (#150).
+    let exercised = 0
+
     for (const definition of ROUTES) {
       if (definition.auth.kind === 'public') continue
-      if (definition.method !== 'GET' && definition.method !== 'POST') continue
 
       const path = pathFor(definition, workspaceId, teamId, subjectUserId)
+      const body = bodyFor(definition)
       const response =
         definition.method === 'GET'
           ? await anonymous.get(path)
-          : await anonymous.post(path, bodyFor(definition))
+          : definition.method === 'DELETE'
+            ? await anonymous.delete(path)
+            : definition.method === 'PUT'
+              ? await anonymous.put(path, body)
+              : definition.method === 'PATCH'
+                ? await anonymous.patch(path, body)
+                : await anonymous.post(path, body)
 
       expect(
         response.status,
         `${definition.method} ${definition.path} served an unauthenticated caller`,
       ).toBe(401)
+      exercised += 1
     }
+
+    // A guard against the check silently covering nothing: a `continue` added
+    // above, or a route table that failed to build, would otherwise make this
+    // test pass by asserting zero times.
+    expect(exercised, 'the unauthenticated check must exercise every guarded route').toBe(
+      ROUTES.filter((route) => route.auth.kind !== 'public').length,
+    )
   })
 })
