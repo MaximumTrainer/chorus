@@ -491,5 +491,6 @@ The specific failure modes this plan exists to prevent. Each has already happene
 | Version | Change |
 |---|---|
 | 1.0 | Baseline. Records the §2 corrections: three dependency cycles resolved into single work packages; SLACK-6 moved to Phase 1; CODE-2 moved to Phase 1; `start_coding_job` and the wiki MCP resource deferred; Phase 0's walking skeleton made explicit. |
+| 1.1 | **Phase 0 closed** (2026-09-03). Gate evidence in `docs/phase-0-gate.md`. Sequencing changes made at the gate: WS-3, WS-4, INT-2, NFR-2 and NFR-12 carry named criteria into **Phase 1**, each because it depends on something Phase 1 builds — an agent to assemble a prompt, an MCP tool registry, artefacts to scope. NFR-1, NFR-3 and NFR-5 carry theirs to **Phase 5**: Helm, SBOM, sandbox secrets, rate limits and metrics all gate a release rather than a phase, and the metric set covers subsystems that do not exist yet. The three epics left the phase milestones entirely — an epic spans phases and can never close at one, so leaving them in made the milestone uncloseable and the gate meaningless. |
 
 This plan is revised at each phase gate. Changes to sequencing are recorded here with their reason; changes to what is built go to `architecture.md`; changes to how work is done go to `CLAUDE.md`.
