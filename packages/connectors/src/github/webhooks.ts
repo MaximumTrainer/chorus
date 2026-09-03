@@ -14,6 +14,7 @@ import { STREAMS, actor, at, scopeFor, str } from './streams.js'
 
 export const githubWebhooks: WebhookSpec = {
   secretKey: 'webhookSecret',
+  verification: 'signature',
 
   deliveryId(request: WebhookRequest) {
     return request.headers['x-github-delivery'] ?? null

@@ -73,6 +73,20 @@ else.
 is on you. Compare lengths first: `timingSafeEqual` throws on a mismatch, and a
 presented signature's length is entirely the caller's choice.
 
+**Declare `verification` honestly.** `'signature'` means an HMAC over the raw
+body — possession *and* body integrity. `'shared_secret'` means the source sends
+the secret itself in a header, as GitLab does — possession only, so anyone who
+learns the secret can send any payload and replaying a captured delivery is
+trivial. Both are a `verify` returning a boolean, so nothing but this field can
+tell them apart, and the kit asserts what each kind can actually promise. Do not
+declare `'signature'` for a scheme that is not one; the kit will catch it, but
+the point is that the weaker guarantee should be *visible* rather than assumed.
+
+**If your token expires, refresh it and hand the new credentials back** through
+`ctx.saveCredentials`. Providers that rotate the refresh token on every use —
+GitLab does — will work exactly once more if you keep the old one, then fail
+with nothing in the logs to explain it.
+
 ---
 
 ## What the framework guarantees you
@@ -140,15 +154,13 @@ unconditionally passes every test written against valid input.
 | Pagination | ids unique within a page; terminates with a null cursor; resuming returns what follows |
 | Rate limits | reported as `RateLimitedError` with a positive `retryAfterMs` *(needs `scenarios.rateLimited`)* |
 | Health | states are valid; a failure names a problem **and** a remedy; uses the injected clock |
-| Webhooks | spec and handler present together; a genuine delivery verifies and has an id; a tampered body or wrong secret does not; handled signals parse; the same delivery yields the same ids *(needs `webhookSample`)* |
+| Webhooks | spec and handler present together; a genuine delivery verifies and has an id; a wrong secret does not; body integrity holds exactly as strongly as `verification` declares; handled signals parse; the same delivery yields the same ids *(needs `webhookSample`)* |
+| Token refresh | an expired access token is refreshed, the interrupted call retried, and the new credentials handed back to be stored *(needs `scenarios.expiredAccessToken`)* |
 
 ### Not yet covered
 
-**OAuth token refresh.** Still nothing performs it. The GitHub connector
-authenticates as an App installation, which is a different mechanism — the
-framework hands a connector `ctx.saveCredentials` for exactly this, and the
-guarantee joins the kit alongside the first connector that refreshes a token
-(GitLab or Linear), rather than being written now as a promise nothing enforces.
+Nothing, at present. The refresh guarantee arrived with GitLab, which is the
+first connector that needed it.
 
 ## Cassettes
 

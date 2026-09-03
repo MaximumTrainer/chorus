@@ -137,6 +137,25 @@ export interface WebhookSpec {
   verify(request: WebhookRequest, secret: string): boolean
   /** Which credential holds the signing secret. */
   readonly secretKey: string
+  /**
+   * How strong the source's webhook authentication actually is.
+   *
+   * `signature` — an HMAC over the raw body, as GitHub and Slack send. Proves
+   * both that the sender holds the secret *and* that the body is untampered.
+   *
+   * `shared_secret` — the secret itself in a header, as GitLab sends. Proves
+   * only possession. **The body is not authenticated**, so anyone who learns
+   * the secret — from a log, a proxy, a misdirected request — can send any
+   * payload they like, and replaying a captured delivery is trivial.
+   *
+   * Declared rather than inferred because the difference is invisible in the
+   * code: both are a `verify` that returns a boolean, and a framework that
+   * assumed the stronger one would silently claim a guarantee half its
+   * connectors cannot provide. The contract kit asserts what each kind can
+   * actually promise, so the weaker one is a recorded fact rather than an
+   * unexamined one.
+   */
+  readonly verification: 'signature' | 'shared_secret'
 }
 
 export interface Connector {

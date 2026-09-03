@@ -111,6 +111,7 @@ function toSignal(item: ReferenceItem): Signal {
  */
 const webhooks: WebhookSpec = {
   secretKey: 'webhookSecret',
+  verification: 'signature',
 
   deliveryId(request: WebhookRequest) {
     return request.headers['x-reference-delivery'] ?? null

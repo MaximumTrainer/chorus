@@ -1,0 +1,36 @@
+{
+  "description": "GitLab refusing with a rate limit and its own retry-after.",
+  "interactions": [
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://gitlab.com/api/v4/projects/acme%2Fwidgets/repository/commits?per_page=30&page=1"
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "retry-after": "45",
+          "ratelimit-remaining": "0",
+          "ratelimit-reset": "1790000000"
+        },
+        "body": {
+          "message": "Retry later"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://gitlab.com/api/v4/user"
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "id": 501,
+          "username": "ada"
+        }
+      }
+    }
+  ]
+}

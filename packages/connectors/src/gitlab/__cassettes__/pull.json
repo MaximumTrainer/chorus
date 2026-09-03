@@ -1,0 +1,214 @@
+{
+  "description": "GitLab read paths for one project. Hand-authored from the published response shapes; not recorded against gitlab.com.",
+  "interactions": [
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://gitlab.com/api/v4/projects/acme%2Fwidgets/repository/commits?per_page=30&page=1"
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": [
+          {
+            "id": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+            "short_id": "a1b2c3d",
+            "message": "Fix the deploy timeout",
+            "author_name": "Ada Lovelace",
+            "author_email": "ada@example.test",
+            "committed_date": "2026-09-01T09:00:00.000+00:00",
+            "web_url": "https://gitlab.com/acme/widgets/-/commit/a1b2c3d"
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://gitlab.com/api/v4/projects/acme%2Fwidgets/merge_requests?state=all&scope=all&per_page=30&page=1"
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": [
+          {
+            "id": 4001,
+            "iid": 42,
+            "title": "Fix the deploy timeout",
+            "description": "Closes #7.",
+            "state": "opened",
+            "source_branch": "fix/deploy-timeout",
+            "target_branch": "main",
+            "web_url": "https://gitlab.com/acme/widgets/-/merge_requests/42",
+            "created_at": "2026-09-01T09:05:00.000Z",
+            "updated_at": "2026-09-01T11:00:00.000Z",
+            "author": {
+              "id": 501,
+              "username": "ada",
+              "name": "ada"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://gitlab.com/api/v4/projects/acme%2Fwidgets/merge_requests/notes?per_page=30&page=1"
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": [
+          {
+            "id": 7001,
+            "body": "This retry loop needs a ceiling.",
+            "noteable_iid": 42,
+            "position": {
+              "new_path": "src/deploy.ts"
+            },
+            "created_at": "2026-09-01T11:10:00.000Z",
+            "updated_at": "2026-09-01T11:10:00.000Z",
+            "author": {
+              "id": 502,
+              "username": "grace",
+              "name": "grace"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://gitlab.com/api/v4/projects/acme%2Fwidgets/issues?state=all&scope=all&per_page=30&page=1"
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": [
+          {
+            "id": 3001,
+            "iid": 7,
+            "title": "The deploy step times out",
+            "description": "It hangs after the build.",
+            "state": "opened",
+            "labels": [
+              "bug",
+              "ci"
+            ],
+            "web_url": "https://gitlab.com/acme/widgets/-/issues/7",
+            "created_at": "2026-09-01T08:00:00.000Z",
+            "updated_at": "2026-09-01T09:10:00.000Z",
+            "author": {
+              "id": 501,
+              "username": "ada",
+              "name": "ada"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://gitlab.com/api/v4/projects/acme%2Fwidgets/issues/notes?per_page=30&page=1"
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": [
+          {
+            "id": 8001,
+            "body": "Reproduced on main.",
+            "noteable_iid": 7,
+            "created_at": "2026-09-01T08:30:00.000Z",
+            "updated_at": "2026-09-01T08:30:00.000Z",
+            "author": {
+              "id": 502,
+              "username": "grace",
+              "name": "grace"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://gitlab.com/api/v4/projects/acme%2Fwidgets/deployments?per_page=30&page=1"
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": [
+          {
+            "id": 9001,
+            "status": "success",
+            "ref": "fix/deploy-timeout",
+            "sha": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+            "environment": {
+              "name": "preview"
+            },
+            "user": {
+              "id": 501,
+              "username": "ada",
+              "name": "ada"
+            },
+            "deployable": {
+              "ref": "fix/deploy-timeout",
+              "commit": {
+                "id": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+                "web_url": "https://gitlab.com/acme/widgets/-/commit/a1b2c3d"
+              }
+            },
+            "created_at": "2026-09-01T11:20:00.000Z",
+            "updated_at": "2026-09-01T11:22:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://gitlab.com/api/v4/projects/acme%2Fwidgets/pipelines?per_page=30&page=1"
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": [
+          {
+            "id": 9501,
+            "status": "success",
+            "ref": "fix/deploy-timeout",
+            "sha": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+            "source": "merge_request_event",
+            "web_url": "https://gitlab.com/acme/widgets/-/pipelines/9501",
+            "user": {
+              "id": 501,
+              "username": "ada",
+              "name": "ada"
+            },
+            "created_at": "2026-09-01T11:05:00.000Z",
+            "updated_at": "2026-09-01T11:12:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://gitlab.com/api/v4/user"
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "id": 501,
+          "username": "ada",
+          "name": "Ada Lovelace"
+        }
+      }
+    }
+  ]
+}

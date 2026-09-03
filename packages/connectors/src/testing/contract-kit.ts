@@ -42,6 +42,11 @@ export interface ContractKitOptions {
     readonly rateLimited?: () => Connector
     /** A connector whose stored credential has expired or been revoked. */
     readonly credentialExpired?: () => Connector
+    /**
+     * A connector whose access token has expired but whose refresh token still
+     * works — so the first call is refused, refreshed, and retried.
+     */
+    readonly expiredAccessToken?: () => Connector
   }
   /**
    * A genuine, correctly-signed delivery and the secret it was signed with.
@@ -251,7 +256,7 @@ export function describeConnectorContract(
       expect(connector.webhooks.deliveryId(request)).toBeTruthy()
     })
 
-    it('INT-1 AC3/AC7: a tampered body or a wrong secret does not verify', () => {
+    it('INT-1 AC3/AC7: a wrong secret never verifies', () => {
       const sample = options.webhookSample
       const connector = factory()
       if (!sample || !connector.webhooks) return
@@ -259,13 +264,38 @@ export function describeConnectorContract(
       const { request, secret } = sample()
 
       // The assertion that catches a `verify` returning true unconditionally,
-      // which every test written against valid input would pass.
-      expect(
-        connector.webhooks.verify({ ...request, body: `${request.body} ` }, secret),
-        'a body altered by one byte must not verify',
-      ).toBe(false)
+      // which every test written against valid input would pass. True of both
+      // authentication kinds, because possession of the secret is the least
+      // any of them proves.
       expect(connector.webhooks.verify(request, `${secret}-wrong`)).toBe(false)
       expect(connector.webhooks.verify(request, '')).toBe(false)
+    })
+
+    it('INT-1 AC3/AC7: body integrity holds exactly as strongly as the spec declares', () => {
+      const sample = options.webhookSample
+      const connector = factory()
+      if (!sample || !connector.webhooks) return
+
+      const { request, secret } = sample()
+      const tampered = { ...request, body: `${request.body} ` }
+
+      if (connector.webhooks.verification === 'signature') {
+        expect(
+          connector.webhooks.verify(tampered, secret),
+          'a signature scheme must reject a body altered by one byte',
+        ).toBe(false)
+        return
+      }
+
+      // A shared-secret scheme *cannot* reject it — the body is not
+      // authenticated at all. Asserted rather than skipped, so the weakness is
+      // a recorded fact that a reader of this suite can see, instead of an
+      // absent test nobody notices. If this ever starts failing, the source has
+      // gained real signing and the declaration should be upgraded.
+      expect(
+        connector.webhooks.verify(tampered, secret),
+        'a shared-secret scheme authenticates the sender, not the body — say so in `verification`',
+      ).toBe(true)
     })
 
     it('INT-1 AC3/AC7: handling a delivery yields signals in the envelope', async () => {
@@ -295,6 +325,32 @@ export function describeConnectorContract(
       expect(twice.map((signal) => signal.externalId)).toEqual(
         once.map((signal) => signal.externalId),
       )
+    })
+
+    it('INT-2 AC6/AC7: an expired access token is refreshed, retried, and the new one saved', async () => {
+      const rigged = options.scenarios?.expiredAccessToken
+      const connector = rigged?.()
+      if (!connector?.pull) return
+
+      const saved: Array<Readonly<Record<string, string>>> = []
+      const context = contractContext({
+        ...(options.context ?? {}),
+        saveCredentials: async (next) => {
+          saved.push(next)
+        },
+      })
+
+      const result = await connector.pull(null, context)
+
+      // Refreshing without persisting is the failure worth naming: the sync
+      // works, so nothing looks wrong, and the integration dies at the next
+      // token expiry with no clue as to why.
+      expect(saved.length, 'a refreshed credential must be handed back to be stored').toBe(1)
+      expect(saved[0]!.accessToken).toBeTruthy()
+      expect(saved[0]!.accessToken).not.toBe(context.credentials.accessToken)
+
+      // And the call the expiry interrupted must have been retried, not lost.
+      expect(result.signals.length).toBeGreaterThan(0)
     })
 
     it('INT-1 AC7: health uses the injected clock, so it is testable', async () => {

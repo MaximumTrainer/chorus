@@ -27,3 +27,5 @@ export type {
 } from './webhooks.js'
 export { createGitHubConnector } from './github/index.js'
 export type { GitHubConnector, GitHubOptions, ScopedRepositoryToken } from './github/index.js'
+export { createGitLabConnector, gitlabWebhooks } from './gitlab/index.js'
+export type { GitLabOptions } from './gitlab/index.js'

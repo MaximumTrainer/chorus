@@ -1,0 +1,133 @@
+{
+  "description": "An expired access token, refreshed once and the request retried. GitLab rotates the refresh token on every use.",
+  "interactions": [
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://gitlab.com/api/v4/projects/acme%2Fwidgets/repository/commits?per_page=30&page=1"
+      },
+      "response": {
+        "status": 401,
+        "body": {
+          "message": "401 Unauthorized"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "url": "https://gitlab.com/oauth/token"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "access_token": "glpat-refreshed",
+          "refresh_token": "refresh-rotated",
+          "token_type": "Bearer",
+          "expires_in": 7200
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://gitlab.com/api/v4/projects/acme%2Fwidgets/repository/commits?per_page=30&page=1"
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": [
+          {
+            "id": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+            "short_id": "a1b2c3d",
+            "message": "Fix the deploy timeout",
+            "author_name": "Ada Lovelace",
+            "author_email": "ada@example.test",
+            "committed_date": "2026-09-01T09:00:00.000+00:00",
+            "web_url": "https://gitlab.com/acme/widgets/-/commit/a1b2c3d"
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://gitlab.com/api/v4/projects/acme%2Fwidgets/merge_requests?state=all&scope=all&per_page=30&page=1"
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": []
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://gitlab.com/api/v4/projects/acme%2Fwidgets/merge_requests/notes?per_page=30&page=1"
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": []
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://gitlab.com/api/v4/projects/acme%2Fwidgets/issues?state=all&scope=all&per_page=30&page=1"
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": []
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://gitlab.com/api/v4/projects/acme%2Fwidgets/issues/notes?per_page=30&page=1"
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": []
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://gitlab.com/api/v4/projects/acme%2Fwidgets/deployments?per_page=30&page=1"
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": []
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://gitlab.com/api/v4/projects/acme%2Fwidgets/pipelines?per_page=30&page=1"
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": []
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://gitlab.com/api/v4/user"
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "id": 501,
+          "username": "ada"
+        }
+      }
+    }
+  ]
+}
