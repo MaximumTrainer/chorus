@@ -1,0 +1,23 @@
+# Without this, `COPY . .` overwrites the image's node_modules with the host's —
+# which on a developer machine means Windows junctions and a broken image, and
+# on any machine means shipping whatever happened to be installed locally
+# instead of what the lockfile says.
+node_modules
+**/node_modules
+
+.git
+.github
+.turbo
+**/.turbo
+**/dist
+**/*.tsbuildinfo
+
+# Test-only material. It is large, it is not read at runtime, and a smaller
+# context is a faster build.
+**/__cassettes__
+packages/indexer/test/fixtures
+website/dist
+
+*.log
+.env
+.env.*

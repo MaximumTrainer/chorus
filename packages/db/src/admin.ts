@@ -395,12 +395,19 @@ export async function applyMigrations(admin: AdminConnection): Promise<string[]>
   // The application role is created after the schema exists so it can be
   // granted table privileges. It is deliberately unprivileged: no BYPASSRLS,
   // no superuser, no ownership.
+  //
+  // Created by catching the duplicate rather than by checking first. A role is
+  // cluster-wide, not per-database, so two processes migrating two *different*
+  // databases race for the same role — and `IF NOT EXISTS` then `CREATE` is a
+  // check-then-act where both see "not exists" and one gets a unique-violation
+  // on `pg_authid`. That is a flake in CI and a failed boot when two API
+  // replicas start together.
   await admin.execute(`
     DO $$
     BEGIN
-      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${config.appUser}') THEN
-        CREATE ROLE ${config.appUser} LOGIN PASSWORD '${config.appPassword}';
-      END IF;
+      CREATE ROLE ${config.appUser} LOGIN PASSWORD '${config.appPassword}';
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
     END
     $$;
   `)

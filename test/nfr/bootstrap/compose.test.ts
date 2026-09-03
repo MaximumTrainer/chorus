@@ -31,9 +31,35 @@ describe('NFR-1 reference deployment', () => {
     }
   })
 
-  it('NFR-1: every service reports health, so readiness is observable', () => {
+  it('NFR-1: every long-running service reports health, so readiness is observable', () => {
     for (const [name, service] of Object.entries(services)) {
+      // A one-shot job runs and exits, so it has no health to report. It is
+      // identified by `restart: "no"` and held to the stronger guarantee below
+      // instead.
+      if (service.restart === 'no') continue
       expect(service.healthcheck, `${name} must declare a healthcheck`).toBeDefined()
+    }
+  })
+
+  it('NFR-1: a one-shot job is waited on by everything that needs it to have run', () => {
+    const oneShot = Object.entries(services)
+      .filter(([, service]) => service.restart === 'no')
+      .map(([name]) => name)
+
+    for (const job of oneShot) {
+      const dependents = Object.entries(services).filter(
+        ([, service]) => service.depends_on?.[job],
+      )
+      // Otherwise `up --wait` reports a healthy stack while the job that had to
+      // finish first is still running — an API serving requests against a
+      // schema that does not exist yet.
+      expect(dependents.length, `nothing waits for ${job}`).toBeGreaterThan(0)
+      for (const [name, service] of dependents) {
+        expect(
+          service.depends_on[job].condition,
+          `${name} must wait for ${job} to *complete*, not merely to start`,
+        ).toBe('service_completed_successfully')
+      }
     }
   })
 

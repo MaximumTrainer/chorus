@@ -12,8 +12,12 @@
 FROM node:22.11.0-alpine AS base
 # git: the indexer checks out working copies (BRAIN-2).
 RUN apk add --no-cache git tini
-ENV PNPM_HOME=/pnpm PATH=/pnpm:$PATH
-RUN corepack enable
+# pnpm is installed directly at a pinned version rather than through corepack.
+# Corepack in this Node image ships a signing key that has since expired, so it
+# refuses to fetch a package manager at all — and even working, it resolves a
+# version at build time, which is one more thing that can change between two
+# builds of the same commit.
+RUN npm install --global pnpm@9.12.3
 
 WORKDIR /app
 
@@ -41,6 +45,9 @@ RUN pnpm install --frozen-lockfile --prod=false
 FROM base AS runtime
 ENV NODE_ENV=production
 
+# Dependencies from the deps stage — resolved from the lockfile alone, so an
+# image never ships whatever happened to be installed on the machine that built
+# it. `.dockerignore` keeps the source copy below from overwriting them.
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/packages ./packages
 COPY --from=deps /app/apps ./apps
@@ -53,4 +60,4 @@ USER chorus
 
 # tini reaps the zombies a Node process spawning `git` would otherwise leave.
 ENTRYPOINT ["/sbin/tini", "--"]
-CMD ["node", "--experimental-strip-types", "apps/api/src/main.ts"]
+CMD ["node_modules/.bin/tsx", "apps/api/src/main.ts"]

@@ -19,7 +19,8 @@
     "site": "node website/build.mjs",
     "site:record": "vitest run --config website/capture/vitest.config.ts",
     "docs:sync": "node scripts/sync-docs.mjs",
-    "prepare": "git config core.hooksPath .githooks || true"
+    "prepare": "git config core.hooksPath .githooks || true",
+    "db:migrate": "tsx packages/db/src/migrate.ts"
   },
   "devDependencies": {
     "@chorus/api": "workspace:*",
@@ -32,6 +33,7 @@
     "@eslint/js": "9.13.0",
     "@types/node": "22.7.5",
     "eslint": "9.13.0",
+    "tsx": "^4.23.13",
     "turbo": "2.2.3",
     "typescript": "5.6.3",
     "typescript-eslint": "8.11.0",

@@ -39,6 +39,19 @@ jobs:
           --health-timeout 5s
           --health-retries 20
 
+      # The queue suite (NFR-6) runs against a real broker: the redelivery and
+      # retry behaviour it asserts is Redis's, and a fake would only be testing
+      # our model of it.
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
     steps:
       - uses: actions/checkout@v4
 
@@ -68,12 +81,43 @@ jobs:
       - name: Validate compose configuration
         run: docker compose -f deploy/docker-compose.yml config --quiet
 
+      # Builds the application image and waits for every healthcheck, which is
+      # what makes this NFR-1 AC1 rather than a syntax check: `migrate` must
+      # run to completion, `api` must report ready, and `worker` must be
+      # refreshing its heartbeat.
       - name: Start the reference stack
-        run: docker compose -f deploy/docker-compose.yml up --detach --wait --wait-timeout 180
+        run: docker compose -f deploy/docker-compose.yml up --detach --wait --wait-timeout 300
+
+      # "Reaches a working system" is the criterion, and containers reporting
+      # healthy is not the same claim. These are the smallest assertions that
+      # distinguish a stack that is up from one that works.
+      - name: Smoke the running system
+        run: |
+          set -euo pipefail
+
+          echo "--- liveness"
+          curl --fail --silent --show-error http://localhost:3000/healthz | tee /dev/stderr | grep -q '"status":"ok"'
+
+          echo "--- readiness (database reachable AND schema current)"
+          curl --fail --silent --show-error http://localhost:3000/readyz | tee /dev/stderr | grep -q '"status":"ready"'
+
+          echo "--- migrations actually ran"
+          docker compose -f deploy/docker-compose.yml exec -T postgres             psql -U "${CHORUS_DB_OWNER_USER:-chorus}" -d "${CHORUS_DB_NAME:-chorus}" -tAc             "select count(*) from information_schema.tables where table_schema='public' and table_name in ('workspaces','code_chunks','oauth_grants')"             | grep -qx 3
+
+          echo "--- the app is wired, not merely listening: an unauthenticated write is refused"
+          status=$(curl --silent --output /dev/null --write-out '%{http_code}'             -X POST http://localhost:3000/workspaces             -H 'content-type: application/json' -d '{"name":"smoke"}')
+          test "$status" = "401" || { echo "expected 401, got $status"; exit 1; }
+
+          echo "--- no service exited"
+          docker compose -f deploy/docker-compose.yml ps --format '{{.Service}} {{.State}}'             | grep -Ev '^(migrate) ' | grep -q 'exited' && { echo "a service exited"; exit 1; } || true
 
       - name: Report service health
         if: always()
         run: docker compose -f deploy/docker-compose.yml ps
+
+      - name: Application logs
+        if: failure()
+        run: docker compose -f deploy/docker-compose.yml logs --no-color --tail 200 migrate api worker
 
       - name: Stop the stack
         if: always()

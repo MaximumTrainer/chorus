@@ -1,5 +1,5 @@
 import { writeFileSync } from 'node:fs'
-import { createKeyring, parseMasterKey } from '@chorus/core'
+import { ConfigurationError, createKeyring, parseMasterKey } from '@chorus/core'
 import { createCredentialStore } from '@chorus/connectors'
 import { configFromEnv } from '@chorus/db'
 import { createIndexer } from '@chorus/indexer'
@@ -48,21 +48,49 @@ async function main(): Promise<void> {
   const dbConfig = configFromEnv()
   const queue = createQueue(redisConfigFromEnv())
 
-  // Fails at boot naming the missing tier (ADR-0015), rather than at the first
-  // embedding call with a stack trace.
-  const models = routerConfigFromEnv()
-  const embedModel = models.embed[0]!.ref
+  // Two different situations, deliberately handled differently (ADR-0015).
+  //
+  // A *misconfigured* deployment — some tiers set, one missing or undersized —
+  // is a mistake, and boot is the cheapest moment to find it. A *not yet
+  // configured* deployment is not a mistake: it is `docker compose up` on a
+  // fresh host, which NFR-1 requires to reach a working system. Refusing to
+  // start there would leave an operator with a crash-looping container instead
+  // of a system they can log into and configure.
+  //
+  // So: validate eagerly when configuration exists, and defer when it does not.
+  // Work that needs a model then fails with the missing setting named, and
+  // lands on the queue's failed set where "what failed and why" is answerable.
+  const configured = Boolean(process.env.CHORUS_MODEL_TIERS?.trim())
+  const models = configured ? routerConfigFromEnv() : undefined
 
-  const provider = createOpenAiCompatibleProvider({
-    baseUrl: required('CHORUS_MODEL_BASE_URL'),
-    ...(process.env.CHORUS_MODEL_API_KEY
-      ? { apiKey: process.env.CHORUS_MODEL_API_KEY }
-      : {}),
-  })
+  if (!configured) {
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        message:
+          'no model configuration: indexing jobs will fail until CHORUS_MODEL_TIERS ' +
+          'and CHORUS_MODEL_BASE_URL are set (see deploy/model-tiers.example.json)',
+      }),
+    )
+  }
 
   const indexer = await createIndexer(dbConfig, {
-    embed: (texts) => provider.embed(texts, embedModel),
-    embeddingModel: embedModel.model,
+    embed: async (texts) => {
+      if (!models) {
+        throw new ConfigurationError(
+          'Cannot embed: CHORUS_MODEL_TIERS and CHORUS_MODEL_BASE_URL are not set. ' +
+            'See deploy/model-tiers.example.json.',
+        )
+      }
+      const embedModel = models.embed[0]!.ref
+      return createOpenAiCompatibleProvider({
+        baseUrl: required('CHORUS_MODEL_BASE_URL'),
+        ...(process.env.CHORUS_MODEL_API_KEY
+          ? { apiKey: process.env.CHORUS_MODEL_API_KEY }
+          : {}),
+      }).embed(texts, embedModel)
+    },
+    embeddingModel: models?.embed[0]!.ref.model ?? 'unconfigured',
   })
 
   const credentials = createCredentialStore(

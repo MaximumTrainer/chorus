@@ -4,9 +4,17 @@
   "private": true,
   "type": "module",
   "description": "Schema, migrations, RLS policies and the single tenanted connection accessor. The only package permitted to import a database driver (ADR-0003).",
-  "exports": { ".": "./src/index.ts" },
-  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json" },
-  "dependencies": { "@chorus/core": "workspace:*", "pg": "8.13.1" },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "db:migrate": "tsx src/migrate.ts"
+  },
+  "dependencies": {
+    "@chorus/core": "workspace:*",
+    "pg": "8.13.1"
+  },
   "devDependencies": {
     "@chorus/config": "workspace:*",
     "@types/node": "22.7.5",

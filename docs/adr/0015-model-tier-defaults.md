@@ -74,6 +74,18 @@ deprecation is an ops change rather than a release.
 regression the router's fallback recording exists to prevent, and boot is the
 cheapest moment to find it.
 
+**Absent configuration is a different case from wrong configuration**, and is
+handled differently. A half-configured deployment — some tiers set, one missing
+or undersized — is a mistake, and refusing to start is right. A deployment with
+*no* model configuration at all is not a mistake: it is `docker compose up` on a
+fresh host, which NFR-1 requires to reach a working system. A process that
+refused to start there would leave an operator with a crash-looping container
+instead of a system they can log into and configure. So a process validates
+eagerly when `CHORUS_MODEL_TIERS` is present and defers when it is absent,
+warning at boot and failing the individual unit of work with the missing setting
+named. The distinction is real: one is "you got this wrong", the other is "you
+have not done this yet".
+
 ## Consequences
 
 **What this buys.** Prompts are written against a tier's guarantees, so

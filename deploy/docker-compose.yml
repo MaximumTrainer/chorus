@@ -62,12 +62,33 @@ services:
       timeout: 5s
       retries: 20
 
+  # Forward migrations, once, before the API starts. Never by `api` itself:
+  # several replicas racing to apply the same DDL is a deadlock, and a
+  # stateless process that mutates the schema on boot is no longer stateless.
+  migrate:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command: ["node_modules/.bin/tsx", "packages/db/src/migrate.ts"]
+    restart: "no"
+    environment:
+      CHORUS_DB_HOST: postgres
+      CHORUS_DB_PORT: "5432"
+      CHORUS_DB_NAME: ${CHORUS_DB_NAME:-chorus}
+      CHORUS_DB_APP_USER: ${CHORUS_DB_APP_USER:-chorus_app}
+      CHORUS_DB_APP_PASSWORD: ${CHORUS_DB_APP_PASSWORD:-chorus-dev-secret}
+      CHORUS_DB_OWNER_USER: ${CHORUS_DB_OWNER_USER:-chorus}
+      CHORUS_DB_OWNER_PASSWORD: ${CHORUS_DB_OWNER_PASSWORD:-chorus-dev-secret}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   api:
     build:
       context: ..
       dockerfile: Dockerfile
     restart: unless-stopped
-    command: ["node", "--experimental-strip-types", "apps/api/src/main.ts"]
+    command: ["node_modules/.bin/tsx", "apps/api/src/main.ts"]
     environment:
       CHORUS_DB_HOST: postgres
       CHORUS_DB_PORT: "5432"
@@ -85,11 +106,13 @@ services:
       # deployment that does not set this gets a development key and a warning,
       # never silent plaintext.
       CHORUS_MASTER_KEY_ID: ${CHORUS_MASTER_KEY_ID:-dev}
-      CHORUS_MASTER_KEY: ${CHORUS_MASTER_KEY:-ZGV2ZWxvcG1lbnQtb25seS1rZXktMzJieXRlcy0hIQ==}
+      CHORUS_MASTER_KEY: ${CHORUS_MASTER_KEY:-Y2hvcnVzLWRldmVsb3BtZW50LW9ubHkta2V5LSEhMzI=}
       CHORUS_PORT: "3000"
     ports:
       - "${CHORUS_API_PORT:-3000}:3000"
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
@@ -109,7 +132,7 @@ services:
       context: ..
       dockerfile: Dockerfile
     restart: unless-stopped
-    command: ["node", "--experimental-strip-types", "apps/worker/src/main.ts"]
+    command: ["node_modules/.bin/tsx", "apps/worker/src/main.ts"]
     environment:
       CHORUS_DB_HOST: postgres
       CHORUS_DB_PORT: "5432"
@@ -124,8 +147,10 @@ services:
       CHORUS_S3_ACCESS_KEY: ${CHORUS_S3_ACCESS_KEY:-chorus}
       CHORUS_S3_SECRET_KEY: ${CHORUS_S3_SECRET_KEY:-chorus-dev-secret}
       CHORUS_MASTER_KEY_ID: ${CHORUS_MASTER_KEY_ID:-dev}
-      CHORUS_MASTER_KEY: ${CHORUS_MASTER_KEY:-ZGV2ZWxvcG1lbnQtb25seS1rZXktMzJieXRlcy0hIQ==}
+      CHORUS_MASTER_KEY: ${CHORUS_MASTER_KEY:-Y2hvcnVzLWRldmVsb3BtZW50LW9ubHkta2V5LSEhMzI=}
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:

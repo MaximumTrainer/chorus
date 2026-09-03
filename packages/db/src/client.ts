@@ -1,4 +1,14 @@
-import { Pool, type PoolClient } from 'pg'
+import pg from 'pg'
+import type { Pool, PoolClient } from 'pg'
+
+// `pg` is CommonJS and builds its exports dynamically, which defeats Node's
+// static named-export detection. A named *value* import works under a bundler —
+// so every test passes — and fails only when the real process starts, which is
+// the worst place to find out. Destructuring the default works in both.
+//
+// The type is still imported by name: `import type` is erased, so it never
+// reaches the runtime resolution that is the problem.
+const { Pool: PgPool } = pg
 import { ConfigurationError } from '@chorus/core'
 
 /**
@@ -95,7 +105,7 @@ export function createManagedPool(options: {
   const existing = managedByKey.get(key)
   if (existing) return existing
 
-  const pool = new Pool({
+  const pool = new PgPool({
     host: options.host,
     port: options.port,
     database: options.database,
