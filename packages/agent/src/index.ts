@@ -37,3 +37,14 @@ export {
   hashDecisionToken,
 } from './decision-links.js'
 export type { DecisionLinks, ResolvedDecisionLink } from './decision-links.js'
+export { createRouter } from './router-service.js'
+export type { Router, RouterOptions } from './router-service.js'
+export { decideRoute, routingEvent, DEFAULT_CONFIDENCE_THRESHOLD } from './router.js'
+export type {
+  Trigger,
+  TriggerKind,
+  RoutingRule,
+  RoutingDecision,
+  Candidate,
+  Classification,
+} from './router.js'

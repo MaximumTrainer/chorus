@@ -20,6 +20,7 @@ import {
 import type { ModelProvider, ModelRef } from '@chorus/llm'
 import { withSpan } from '@chorus/telemetry'
 import { issueDecisionToken } from './decision-links.js'
+import { routingEvent, type RoutingDecision } from './router.js'
 import type { ToolRegistry } from './registry.js'
 
 /**
@@ -122,6 +123,15 @@ export interface StartInput {
   readonly startedBy: string
   readonly definition: WorkflowDefinition
   readonly input: Readonly<Record<string, unknown>>
+  /**
+   * How this workflow came to be chosen (AGENT-2 AC4).
+   *
+   * Optional: a scheduled run of a named workflow had nothing to decide. When
+   * present it is written as the run's *first* event, before anything the run
+   * does — a trace that explains every step but not how the run came to be
+   * this workflow answers the wrong question.
+   */
+  readonly routing?: RoutingDecision
 }
 
 export interface Executor {
@@ -325,7 +335,7 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
     withTenant(workspaceId, fn, { config })
 
   return {
-    async start({ workspaceId, teamId, startedBy, definition, input }) {
+    async start({ workspaceId, teamId, startedBy, definition, input, routing }) {
       const id = ulid()
 
       await tx(workspaceId, async (t) => {
@@ -364,6 +374,17 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
             startedBy,
           ],
         )
+
+        if (routing) {
+          // Seq 1, inside the same transaction that created the run: a run that
+          // exists without the decision that produced it is a trace with its
+          // first question unanswerable.
+          await t.execute(
+            `INSERT INTO run_events (id, workspace_id, run_id, seq, kind, payload)
+             VALUES ($1, $2, $3, 1, 'routing', $4)`,
+            [ulid(), workspaceId, id, JSON.stringify(routingEvent(routing))],
+          )
+        }
       })
 
       return {

@@ -651,6 +651,16 @@ The hash covers the step's own definition and **only the outputs it actually ref
 
 Rules first, model second. Explicit rules key off the trigger: entry point, task tag, integration kind, slash command, capture mode, MCP tool. If no rule matches, a cheap classifier picks from the registry with a confidence score; below a threshold the agent asks the user instead of guessing. The chosen workflow, the matching rule or classifier output, and the reasoning are written as the first `run_event`.
 
+The decision is a **pure function** taking the classifier's answer as an argument rather than calling one. That is what makes "no model call on a rule match" a property of the code's shape rather than something to remember: a rule match returns before anything could have asked, and the caller classifies only when the pure function has said classification is needed. The integration suite asserts it by counting the fake provider's requests, not by reading the code.
+
+Rules are data, ordered, first-match, and precedence is the *written* order. A table whose precedence depends on specificity scoring is one nobody can predict. A rule that throws is skipped rather than fatal — rules are written by whoever adds an integration, and one will eventually read a field that is not there; falling through to the next rule is a worse answer than that rule would have given and a far better one than every trigger failing.
+
+Two refusals matter more than the threshold itself. A **near-tie asks even when the top score clears the threshold** — 0.72 against 0.71 is a coin toss that happens to land above a line, and guessing there is how somebody learns not to trust the agent with anything ambiguous. And a classifier naming a workflow that does not exist has its answer **discarded rather than repaired**: trusting an invented name starts a run against a definition nobody wrote, which then fails at the first step instead of here, where it is explicable. The threshold is 0.7 rather than a bare majority because the costs are not symmetric — routing wrongly is a run that does the wrong work and has to be explained; asking is one question.
+
+A provider outage makes a trigger *unroutable* rather than fatal. "I could not place this" is a usable answer and the caller already handles it; a stack trace is not. A trigger carries its `workspaceId` and `teamId` because classification is a model call, and a model call that cannot be attributed to a workspace cannot be billed, budgeted or capped (NFR-2).
+
+**Not yet asserted at the acceptance layer.** AGENT-2's two acceptance tests need a public trigger surface — chat (WP-1.7) or MCP (WP-1.11) — and neither exists yet. The plan sequences the router before both, so the router ships with unit and integration coverage and the acceptance tests land with the first trigger surface. This is a stated gap, not a silent one.
+
 ### 11.3 Built-in workflows
 
 | Workflow | Trigger | Key steps | Default checkpoints |
