@@ -23,6 +23,7 @@ export const TENANT_TABLES = [
   'code_symbols',
   'code_imports',
   'code_chunks',
+  'route_map',
   'signals',
   'webhook_deliveries',
   'audit_events',

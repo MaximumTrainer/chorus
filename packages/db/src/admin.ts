@@ -169,6 +169,12 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
         [ulid(), workspaceId, fileId],
       )
       await owner.query(
+        `INSERT INTO route_map
+           (id, workspace_id, repository_id, route_pattern, component_file_id, component_path)
+         VALUES ($1, $2, $3, '/', $4, 'src/seed.ts')`,
+        [ulid(), workspaceId, repositoryId, fileId],
+      )
+      await owner.query(
         `INSERT INTO webhook_deliveries
            (id, workspace_id, integration_id, delivery_id, signature_ok, payload)
          VALUES ($1, $2, $3, $1, true, '{}')`,
@@ -321,6 +327,15 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
             `INSERT INTO code_chunks (id, workspace_id, file_id, text, line_start, line_end)
              VALUES ($1, $2, $3, 'x', 1, 1)`,
             [id, workspaceId, file?.id ?? id],
+          )
+          return
+        }
+        case 'route_map': {
+          const [repository] = await tx.query<{ id: string }>(`SELECT id FROM repositories LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO route_map (id, workspace_id, repository_id, route_pattern, component_path)
+             VALUES ($1, $2, $3, $1, 'x')`,
+            [id, workspaceId, repository?.id ?? id],
           )
           return
         }

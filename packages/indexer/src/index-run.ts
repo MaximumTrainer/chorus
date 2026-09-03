@@ -1,6 +1,7 @@
 import { ulid } from '@chorus/core'
 import { withTenant, type DbConfig, type TenantTx } from '@chorus/db'
 import { chunkFile } from './chunk.js'
+import { detectRepository, type DetectedRepository } from './detect.js'
 import { createParser, languageFor, type SourceParser } from './parse.js'
 import { walkRepository, type WalkedFile } from './walk.js'
 
@@ -35,6 +36,7 @@ export interface IndexStats {
   readonly filesRemoved: number
   readonly chunksWritten: number
   readonly symbolsWritten: number
+  readonly routesMapped: number
 }
 
 export interface IndexRun {
@@ -44,6 +46,8 @@ export interface IndexRun {
   readonly stats: IndexStats
   /** Files we are blind to, and why (AC7). A list, not a count. */
   readonly failures: readonly IndexFailure[]
+  /** Framework, routes, conventions, design system, preview provider (AC3, AC4). */
+  readonly detected: DetectedRepository
 }
 
 /** Produces one vector per text. Never a real model in a test (CLAUDE.md §4). */
@@ -151,6 +155,12 @@ export async function createIndexer(config: DbConfig, deps: IndexerDeps): Promis
           )
         }
 
+        // Detection runs over the whole walk, not only the changed files: a
+        // route map derived from a diff would lose every route whose file did
+        // not happen to change, which is nearly all of them.
+        const detected = detectRepository(files)
+        await persistDetection(workspaceId, repositoryId, detected)
+
         const stats: IndexStats = {
           filesSeen: files.length,
           filesIndexed,
@@ -158,6 +168,7 @@ export async function createIndexer(config: DbConfig, deps: IndexerDeps): Promis
           filesRemoved: removed.length,
           chunksWritten,
           symbolsWritten,
+          routesMapped: detected.routes.length,
         }
 
         await tx(workspaceId, (t) =>
@@ -169,7 +180,7 @@ export async function createIndexer(config: DbConfig, deps: IndexerDeps): Promis
           ),
         )
 
-        return { id: runId, status: 'succeeded', commitSha, stats, failures }
+        return { id: runId, status: 'succeeded', commitSha, stats, failures, detected }
       } catch (error) {
         // Recorded before rethrowing, so "why is this repository not indexed"
         // has an answer rather than an absence.
@@ -188,6 +199,69 @@ export async function createIndexer(config: DbConfig, deps: IndexerDeps): Promis
           ),
         )
         throw error
+      }
+
+      /**
+       * Replaces the route map and records what the repository says about
+       * itself.
+       *
+       * Replaced wholesale rather than merged: a route deleted from the
+       * repository must disappear from the map, and a merge would leave it
+       * pointing at a file that no longer renders it — which is worse than an
+       * absent route, because it looks like an answer.
+       */
+      async function persistDetection(
+        workspaceId: string,
+        repositoryId: string,
+        detected: DetectedRepository,
+      ): Promise<void> {
+        await tx(workspaceId, async (t) => {
+          const paths = new Map(
+            (
+              await t.query<{ id: string; path: string }>(
+                `SELECT id, path FROM code_files WHERE repository_id = $1`,
+                [repositoryId],
+              )
+            ).map((row) => [row.path, row.id]),
+          )
+
+          await t.execute(`DELETE FROM route_map WHERE repository_id = $1`, [repositoryId])
+          for (const route of detected.routes) {
+            await t.execute(
+              `INSERT INTO route_map
+                 (id, workspace_id, repository_id, route_pattern, component_file_id,
+                  component_path, framework)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+              [
+                ulid(),
+                workspaceId,
+                repositoryId,
+                route.pattern,
+                paths.get(route.componentPath) ?? null,
+                route.componentPath,
+                detected.framework,
+              ],
+            )
+          }
+
+          // Conventions live on the repository rather than the run: they are a
+          // property of the repository as it stands, and the brief builder asks
+          // "what is true now", never "what was true at run 47".
+          await t.execute(
+            `UPDATE repositories
+                SET settings = COALESCE(settings, '{}'::jsonb) || $1::jsonb, updated_at = now()
+              WHERE id = $2`,
+            [
+              JSON.stringify({
+                framework: detected.framework,
+                conventions: detected.conventions,
+                designSystem: detected.designSystem,
+                previewProvider: detected.previewProvider,
+              }),
+              repositoryId,
+            ],
+          )
+        })
       }
 
       /**

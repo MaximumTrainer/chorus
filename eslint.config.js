@@ -3,7 +3,17 @@ import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
   {
-    ignores: ['**/dist/**', '**/node_modules/**', '**/.turbo/**', '**/*.d.ts'],
+    ignores: [
+      '**/dist/**',
+      '**/node_modules/**',
+      '**/.turbo/**',
+      '**/*.d.ts',
+      // Indexer fixtures are miniature *other people's* repositories, indexed
+      // as data. Linting them would hold code we do not control to our rules,
+      // and one of them is deliberately shaped like a repository that would
+      // fail them.
+      'packages/indexer/test/fixtures/**',
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

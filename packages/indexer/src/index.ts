@@ -6,3 +6,12 @@ export { createParser, languageFor } from './parse.js'
 export type { SourceParser, ParsedFile, ParsedSymbol } from './parse.js'
 export { chunkFile, MAX_CHUNK_LINES, OVERLAP_LINES } from './chunk.js'
 export type { Chunk } from './chunk.js'
+export { detectRepository } from './detect.js'
+export type {
+  DetectedRepository,
+  Framework,
+  PackageManager,
+  RouteEntry,
+  Conventions,
+  DesignSystem,
+} from './detect.js'
