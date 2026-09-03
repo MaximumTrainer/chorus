@@ -744,6 +744,13 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
           ),
         )
         outputs[step.id] = perIteration
+        // A loop is a step that ran, and AC4 admits no exceptions: a hook a
+        // workflow has to opt into is one the fourth workflow forgets, and an
+        // evaluation harness then reports on a subset and looks healthy.
+        await recordEvent(workspaceId, runId, 'tool_call', {
+          step: step.id,
+          iterations: collection.length,
+        })
         return { kind: 'done' }
       }
 
@@ -968,12 +975,21 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
             step: step.id,
             provider: model.provider,
             model: model.model,
-            prompt: step.prompt,
+            // `promptPath`, not `prompt`: the body claims that name when the
+            // redaction level retains it, and one key meaning "the template we
+            // used" in some runs and "what we actually sent" in others makes
+            // every consumer of the trace guess.
+            promptPath: step.prompt,
+            // Named for what they are. `promptHash` alone collided with the
+            // hash of the body the redaction policy contributes, and one key
+            // meaning "the template" in some runs and "what we sent" in others
+            // is a trace that cannot be queried without reading the code that
+            // wrote it.
             ...(template
               ? {
-                  promptId: step.prompt,
-                  promptVersion: template.version,
-                  promptHash: template.hash,
+                  promptTemplateId: step.prompt,
+                  promptTemplateVersion: template.version,
+                  promptTemplateHash: template.hash,
                 }
               : {}),
             tokensIn: usage.inputTokens,

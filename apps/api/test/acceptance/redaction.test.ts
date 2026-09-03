@@ -118,7 +118,7 @@ describe('NFR-11 redaction', () => {
 
     // Structure intact — which model, which template, how much it cost. This is
     // what makes a trace useful without making it a liability.
-    expect(payload).toMatchObject({ provider: 'fake', model: 'fake-1', promptVersion: 1 })
+    expect(payload).toMatchObject({ provider: 'fake', model: 'fake-1', promptTemplateVersion: 1 })
     expect(payload.tokensOut).toBe(20)
 
     // The body itself is not there. A hash of it is, so two runs can be shown

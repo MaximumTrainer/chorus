@@ -50,3 +50,5 @@ export type {
 } from './router.js'
 export { exportRunTrace } from './trace-export.js'
 export type { ExportOptions } from './trace-export.js'
+export { replayRun } from './replay.js'
+export type { Replay, ReplayableCall } from './replay.js'

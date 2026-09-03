@@ -192,9 +192,9 @@ describe('AGENT-4 run traces', () => {
     // exact template text — by hash, because the file will change and a result
     // has to be replayable against the version that produced it.
     expect(call!.payload).toMatchObject({ provider: 'fake', model: 'fake-1' })
-    expect(call!.payload.promptId).toBe('routing/classify')
-    expect(call!.payload.promptVersion).toBe(1)
-    expect(String(call!.payload.promptHash)).toMatch(/^[0-9a-f]{64}$/)
+    expect(call!.payload.promptTemplateId).toBe('routing/classify')
+    expect(call!.payload.promptTemplateVersion).toBe(1)
+    expect(String(call!.payload.promptTemplateHash)).toMatch(/^[0-9a-f]{64}$/)
   })
 
   it('AGENT-4 AC4: the displayed cost equals the sum of the ledger rows exactly', async () => {
