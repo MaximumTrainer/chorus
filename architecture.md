@@ -208,7 +208,7 @@ State machines live in `packages/core/src/state/` as explicit transition tables.
 | Realtime | SSE for chat/job/run streams; WebSocket (Hocuspocus) for CRDT; Postgres `LISTEN/NOTIFY` fanned out over Redis pub/sub | No extra realtime service in the reference deployment. |
 | Database | **PostgreSQL 16** + **pgvector**, `tsvector`/`pg_trgm`, **row-level security** keyed by workspace | One store for relational, vector and lexical needs. Graph traversal by recursive CTE over `entities`/`edges`; a dedicated graph database is deliberately deferred (ADR-0002). |
 | ORM / migrations | **Drizzle** | Typed schema in TypeScript, SQL-first migrations that can express RLS policies and index definitions without fighting the ORM. |
-| Queue / scheduler | **BullMQ** on **Redis** | Durable jobs, retries with backoff, rate limiting, repeatable (cron) jobs. Durable *workflow* state lives in Postgres (`runs`, `run_steps`) so a worker crash never loses a run. |
+| Queue / scheduler | **BullMQ** on **Redis**, behind `packages/queue` | Durable jobs, retries with backoff, rate limiting, repeatable (cron) jobs. Durable *workflow* state lives in Postgres (`runs`, `run_steps`) so a worker crash never loses a run. ADR-0004 requires the step interface not to leak BullMQ types, so the package is the only place it may be imported and a consumer's `Job` carries four fields — asserted at runtime, because a type-level promise disappears at runtime. Idempotency keys are hashed on the way in: a natural key here is `${repositoryId}:${commitSha}`, the backend rejects a colon in a job id, and making callers know that is the leak the ADR forbids. |
 | Object storage | **S3-compatible** (MinIO in compose) | Screenshots, audio, attachments, sandbox logs and diffs. |
 | Model layer | **Vercel AI SDK** provider abstraction behind an internal router; optional **LiteLLM** proxy | Provider-agnostic streaming, tool calling and structured output across Anthropic, OpenAI, Google, Azure OpenAI, OpenRouter, Ollama and vLLM. |
 | Speech-to-text | Pluggable: browser Web Speech API, self-hosted `whisper.cpp`/faster-whisper container, or a provider API | Voice capture stays self-hostable. |
@@ -261,6 +261,10 @@ The system ships as a small number of deployable processes sharing one codebase.
 | `sandbox-runner` | The only process holding container-runtime privileges. Provisions per-job containers, enforces limits and egress rules, streams logs, collects results. Has **no** database credentials. | container runtime, Redis, object store | one per host or node pool |
 | `stt` (optional) | Local speech-to-text HTTP service. | none | CPU/GPU pool |
 | Infrastructure | Postgres (+pgvector), Redis, MinIO, reverse proxy with automatic TLS | — | — |
+
+**`api` and `worker` share one image with two commands.** They scale independently, which is why they are separate processes, but they must never run *different code*: a worker on a different commit from the API that enqueued to it produces a class of bug that is very hard to see. Two Dockerfiles would mean two builds of one monorepo and two chances to drift.
+
+A worker has no HTTP surface, so it reports health by refreshing a heartbeat file rather than answering a probe. A container that is running while its consumers have quietly died is otherwise indistinguishable from a healthy one, and that is the failure that leaves a queue filling forever with nobody reading it.
 
 ```mermaid
 flowchart TB

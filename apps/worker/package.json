@@ -1,0 +1,27 @@
+{
+  "name": "@chorus/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "BullMQ consumers: index builds, connector syncs, agent runs (architecture.md §6). Enqueued by api, never called directly.",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "start": "node --experimental-strip-types src/main.ts"
+  },
+  "dependencies": {
+    "@chorus/connectors": "workspace:*",
+    "@chorus/core": "workspace:*",
+    "@chorus/db": "workspace:*",
+    "@chorus/indexer": "workspace:*",
+    "@chorus/llm": "workspace:*",
+    "@chorus/queue": "workspace:*"
+  },
+  "devDependencies": {
+    "@chorus/config": "workspace:*",
+    "@chorus/testing": "workspace:*",
+    "@types/node": "22.7.5",
+    "typescript": "5.6.3",
+    "vitest": "2.1.3"
+  }
+}

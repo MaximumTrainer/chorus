@@ -1,0 +1,24 @@
+{
+  "name": "@chorus/queue",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The only place BullMQ may be imported (ADR-0004). A queue abstraction whose step interface does not leak its backend, so Temporal remains swappable.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@chorus/core": "workspace:*",
+    "bullmq": "6.3.4",
+    "ioredis": "^6.0.0"
+  },
+  "devDependencies": {
+    "@chorus/config": "workspace:*",
+    "@types/node": "22.7.5",
+    "typescript": "5.6.3",
+    "vitest": "2.1.3"
+  }
+}

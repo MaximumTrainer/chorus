@@ -5,8 +5,9 @@
 #
 #   docker compose -f deploy/docker-compose.yml up
 #
-# Application services are added as their phases land (plan.md §4). Phase 0
-# stands up the infrastructure those services will need.
+# `api` and `worker` share one image with two commands: they scale
+# independently but must never run different code, and two builds of one
+# monorepo is exactly how that happens.
 
 name: chorus
 
@@ -60,6 +61,85 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+
+  api:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["node", "--experimental-strip-types", "apps/api/src/main.ts"]
+    environment:
+      CHORUS_DB_HOST: postgres
+      CHORUS_DB_PORT: "5432"
+      CHORUS_DB_NAME: ${CHORUS_DB_NAME:-chorus}
+      CHORUS_DB_APP_USER: ${CHORUS_DB_APP_USER:-chorus_app}
+      CHORUS_DB_APP_PASSWORD: ${CHORUS_DB_APP_PASSWORD:-chorus-dev-secret}
+      CHORUS_DB_OWNER_USER: ${CHORUS_DB_OWNER_USER:-chorus}
+      CHORUS_DB_OWNER_PASSWORD: ${CHORUS_DB_OWNER_PASSWORD:-chorus-dev-secret}
+      CHORUS_REDIS_HOST: redis
+      CHORUS_REDIS_PORT: "6379"
+      CHORUS_S3_ENDPOINT: http://minio:9000
+      CHORUS_S3_ACCESS_KEY: ${CHORUS_S3_ACCESS_KEY:-chorus}
+      CHORUS_S3_SECRET_KEY: ${CHORUS_S3_SECRET_KEY:-chorus-dev-secret}
+      # Envelope encryption for integration credentials (INT-1 AC1). A
+      # deployment that does not set this gets a development key and a warning,
+      # never silent plaintext.
+      CHORUS_MASTER_KEY_ID: ${CHORUS_MASTER_KEY_ID:-dev}
+      CHORUS_MASTER_KEY: ${CHORUS_MASTER_KEY:-ZGV2ZWxvcG1lbnQtb25seS1rZXktMzJieXRlcy0hIQ==}
+      CHORUS_PORT: "3000"
+    ports:
+      - "${CHORUS_API_PORT:-3000}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      # Readiness, not liveness: a process that is alive but cannot reach its
+      # database must not be sent traffic.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  worker:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["node", "--experimental-strip-types", "apps/worker/src/main.ts"]
+    environment:
+      CHORUS_DB_HOST: postgres
+      CHORUS_DB_PORT: "5432"
+      CHORUS_DB_NAME: ${CHORUS_DB_NAME:-chorus}
+      CHORUS_DB_APP_USER: ${CHORUS_DB_APP_USER:-chorus_app}
+      CHORUS_DB_APP_PASSWORD: ${CHORUS_DB_APP_PASSWORD:-chorus-dev-secret}
+      CHORUS_DB_OWNER_USER: ${CHORUS_DB_OWNER_USER:-chorus}
+      CHORUS_DB_OWNER_PASSWORD: ${CHORUS_DB_OWNER_PASSWORD:-chorus-dev-secret}
+      CHORUS_REDIS_HOST: redis
+      CHORUS_REDIS_PORT: "6379"
+      CHORUS_S3_ENDPOINT: http://minio:9000
+      CHORUS_S3_ACCESS_KEY: ${CHORUS_S3_ACCESS_KEY:-chorus}
+      CHORUS_S3_SECRET_KEY: ${CHORUS_S3_SECRET_KEY:-chorus-dev-secret}
+      CHORUS_MASTER_KEY_ID: ${CHORUS_MASTER_KEY_ID:-dev}
+      CHORUS_MASTER_KEY: ${CHORUS_MASTER_KEY:-ZGV2ZWxvcG1lbnQtb25seS1rZXktMzJieXRlcy0hIQ==}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # A worker has no HTTP surface, so it reports health by writing a
+      # heartbeat file its own process refreshes. A container that is running
+      # but whose consumers have died is otherwise indistinguishable from a
+      # healthy one.
+      test: ["CMD", "node", "-e", "const{statSync}=require('node:fs');process.exit(Date.now()-statSync('/tmp/chorus-worker-alive').mtimeMs<30000?0:1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
 
 volumes:
   postgres-data:

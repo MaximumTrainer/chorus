@@ -165,6 +165,9 @@ const DATABASE_DRIVERS = [/^pg$/, /^postgres$/, /^drizzle-orm/, /^@electric-sql\
  * Concrete model identifiers. A model name in feature code means the router was
  * bypassed, which is how provider-agnosticism is lost one call at a time.
  */
+/** Queue backends that may only be imported by packages/queue (ADR-0004). */
+const QUEUE_BACKENDS = [/^bullmq$/, /^ioredis$/, /^@temporalio\//] as const
+
 const MODEL_NAMES = [
   /\bclaude-[a-z0-9.-]*\d/i,
   /\bgpt-[0-9][a-z0-9.-]*/i,
@@ -220,6 +223,16 @@ export const CHORUS_BOUNDARY_RULES: readonly BoundaryRule[] = [
     appliesTo: /^packages\/(db|llm)\//,
     except: [RULE_ENGINE_FIXTURES],
     forbidImports: [/^@chorus\/(?!core$|config$)/],
+  },
+  {
+    id: 'ADR-0004: no queue backend outside packages/queue',
+    rationale:
+      'ADR-0004 keeps Temporal swappable while the step interface is still ' +
+      'cheap to re-implement (D-1). A BullMQ type reaching a caller is how ' +
+      'that option is lost one import at a time.',
+    appliesTo: /^(apps|packages)\//,
+    except: [/^packages\/queue\//, RULE_ENGINE_FIXTURES],
+    forbidImports: QUEUE_BACKENDS,
   },
   {
     id: 'architecture.md §7: packages never import from apps',
