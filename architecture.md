@@ -659,6 +659,8 @@ Two refusals matter more than the threshold itself. A **near-tie asks even when 
 
 A provider outage makes a trigger *unroutable* rather than fatal. "I could not place this" is a usable answer and the caller already handles it; a stack trace is not. A trigger carries its `workspaceId` and `teamId` because classification is a model call, and a model call that cannot be attributed to a workspace cannot be billed, budgeted or capped (NFR-2).
 
+The classifier prompt is a **versioned file** (`workflows/prompts/routing/classify.md`), not an inline string — CLAUDE.md §6.5, and the reason shows up in the trace: a routing decision has to record which template produced it, and an inline string has no version to record and no golden to review a change against. `test/nfr/prompt-goldens.test.ts` renders every prompt with recorded sample inputs and compares the result to a checked-in file, so a prompt change arrives as a diff a reviewer can read rather than as a changed hash.
+
 **Not yet asserted at the acceptance layer.** AGENT-2's two acceptance tests need a public trigger surface — chat (WP-1.7) or MCP (WP-1.11) — and neither exists yet. The plan sequences the router before both, so the router ships with unit and integration coverage and the acceptance tests land with the first trigger surface. This is a stated gap, not a silent one.
 
 ### 11.3 Built-in workflows

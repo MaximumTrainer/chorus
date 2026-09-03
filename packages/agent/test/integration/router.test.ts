@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
+import { join } from 'node:path'
 import { z } from 'zod'
 import { createIsolatedDatabase, type IsolatedDatabase } from '@chorus/db'
 import { ulid, WorkflowDefinitionSchema, type AnyTool } from '@chorus/core'
 import { createFakeModelProvider, type FakeModelProvider } from '@chorus/testing'
+import { loadPromptDirectory } from '@chorus/llm'
 import { createExecutor, type Executor } from '../../src/executor.js'
 import { createRouter, type Router, type RoutingRule } from '../../src/router-service.js'
 import { createToolRegistry } from '../../src/registry.js'
@@ -26,6 +28,10 @@ describe('AGENT-2 workflow router', () => {
   let executor: Executor
 
   const catalogue = ['shape-idea', 'implement-task', 'research', 'triage-feedback']
+
+  const prompts = loadPromptDirectory(
+    join(import.meta.dirname, '..', '..', '..', '..', 'workflows', 'prompts'),
+  )
 
   /** Routing costs money, so a trigger names the workspace it is spent against. */
   const ROUTING_WORKSPACE = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
@@ -91,6 +97,9 @@ describe('AGENT-2 workflow router', () => {
       workflows: catalogue,
       models,
       modelFor: () => ({ provider: 'fake', model: 'fake-1' }),
+      // The real file, not a fixture: a test against an invented prompt would
+      // pass while the shipped one was malformed.
+      prompts,
     })
     executor = createExecutor(db.config, {
       registry: createToolRegistry([noop('prepare')]),

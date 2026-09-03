@@ -1,0 +1,6 @@
+{
+  "routing/classify": {
+    "workflows": "- shape-idea\n- decompose-tasks\n- implement-task\n- research",
+    "trigger": "{\n  \"kind\": \"chat\",\n  \"text\": \"I have a rough idea about improving onboarding\",\n  \"entryPoint\": \"web\"\n}"
+  }
+}

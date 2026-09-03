@@ -42,6 +42,14 @@ export interface RouterOptions {
   readonly models: ModelProvider
   readonly modelFor: (tier: string) => ModelRef
   readonly threshold?: number
+  /**
+   * Where `routing/classify` is loaded from.
+   *
+   * Injected rather than read from disk here, so the package does no file I/O
+   * and a deployment loads its prompts once at startup — which is also where a
+   * malformed one must fail (AGENT-1 AC1's reasoning, applied to prompts).
+   */
+  readonly prompts: PromptSource
 }
 
 export interface Router {
@@ -49,40 +57,32 @@ export interface Router {
 }
 
 /**
- * The classifier prompt.
+ * How the classifier prompt is reached.
  *
- * Deliberately small and deliberately closed: the list of workflows, the
- * trigger, and a shape to answer in. Classification is the fallback, so it is
- * one question about one trigger — a loop here would multiply the cost of every
- * unmatched turn, which is the thing rules exist to avoid.
+ * A registry rather than a string. CLAUDE.md §6.5 puts every prompt in a
+ * versioned file with front-matter, and the reason shows up here: the trace has
+ * to record which template produced a routing decision, and an inline string
+ * has no version to record and no golden to review a change against.
  */
-function classifierPrompt(trigger: Trigger, workflows: readonly string[]): string {
-  return [
-    'Choose which workflow should handle this trigger.',
-    '',
-    'Available workflows (choose only from these):',
-    ...workflows.map((workflow) => `- ${workflow}`),
-    '',
-    'Trigger:',
-    JSON.stringify(
-      {
-        kind: trigger.kind,
-        text: trigger.text,
-        entryPoint: trigger.entryPoint,
-        taskTag: trigger.taskTag,
-        integrationKind: trigger.integrationKind,
-        captureMode: trigger.captureMode,
-      },
-      null,
-      2,
-    ),
-    '',
-    'Answer with JSON only:',
-    '{"candidates":[{"workflow":"<name>","confidence":<0..1>}],"reasoning":"<one sentence>"}',
-    '',
-    'Include every workflow you seriously considered, with its confidence — not',
-    'only the one you chose. If none of them fit, answer with an empty list.',
-  ].join('\n')
+export interface PromptSource {
+  get(id: string): { readonly body: string; readonly version: number; readonly hash: string }
+}
+
+export const CLASSIFIER_PROMPT_ID = 'routing/classify'
+
+/**
+ * Substitutes `{{name}}` values.
+ *
+ * `renderPrompt` in `packages/llm` is the canonical one and is strict in both
+ * directions; this exists because `PromptSource` is deliberately narrow — a
+ * caller may hold a registry, a fixture, or anything else that can produce a
+ * body — and depending on the full `Prompt` shape here would make that
+ * substitution the caller's problem instead.
+ */
+function render(body: string, values: Readonly<Record<string, string>>): string {
+  return body.replace(/\{\{\s*([a-z][a-z0-9_]*)\s*\}\}/g, (original, name: string) =>
+    name in values ? (values[name] as string) : original,
+  )
 }
 
 function parseClassification(text: string, workflows: readonly string[]): Classification {
@@ -141,9 +141,26 @@ export function createRouter(options: RouterOptions): Router {
 
       let text = ''
       try {
+        const template = options.prompts.get(CLASSIFIER_PROMPT_ID)
+        const content = render(template.body, {
+          workflows: options.workflows.map((workflow) => `- ${workflow}`).join('\n'),
+          trigger: JSON.stringify(
+            {
+              kind: trigger.kind,
+              text: trigger.text,
+              entryPoint: trigger.entryPoint,
+              taskTag: trigger.taskTag,
+              integrationKind: trigger.integrationKind,
+              captureMode: trigger.captureMode,
+            },
+            null,
+            2,
+          ),
+        })
+
         for await (const event of options.models.stream({
           model: options.modelFor('fast'),
-          messages: [{ role: 'user', content: classifierPrompt(trigger, options.workflows) }],
+          messages: [{ role: 'user', content }],
           context: { workspaceId: trigger.workspaceId, teamId: trigger.teamId, purpose: 'classify' },
         })) {
           if (event.type === 'token') text += event.text

@@ -1,0 +1,30 @@
+Choose which workflow should handle this trigger.
+
+Available workflows. Choose only from these — a name that is not on this list
+does not exist, and naming one would start a run against a definition nobody
+wrote:
+
+- shape-idea
+- decompose-tasks
+- implement-task
+- research
+
+Trigger:
+
+{
+  "kind": "chat",
+  "text": "I have a rough idea about improving onboarding",
+  "entryPoint": "web"
+}
+
+Answer with JSON only, in this shape:
+
+{"candidates":[{"workflow":"<name>","confidence":<0..1>}],"reasoning":"<one sentence>"}
+
+Include every workflow you seriously considered, each with its confidence — not
+only the one you chose. The losing candidates are what make a systematic
+misrouting diagnosable later, so omitting them costs more than it saves.
+
+If none of them fit, answer with an empty list rather than the closest match.
+Being told "I could not place this" is useful; being given the wrong workflow
+confidently is not.
