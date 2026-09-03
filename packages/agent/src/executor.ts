@@ -1,11 +1,14 @@
 import { createHash } from 'node:crypto'
 import {
+  DEFAULT_REDACTION_LEVEL,
   NotFoundError,
+  redactBody,
   resolveCheckpointPolicy,
   ulid,
   type CheckpointKind,
   type NotificationSink,
   type PolicyRule,
+  type RedactionLevel,
   type ResolvedPolicy,
   type WorkflowDefinition,
   type WorkflowStep,
@@ -500,6 +503,10 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
       let skipped = 0
       let seq = done.size
       const actorRole = await roleOf(workspaceId, run.started_by)
+      // Read once per run, not per call: the policy in force is the one the run
+      // started under, so a change mid-run cannot make half a trace unreadable
+      // against the other half.
+      const redaction = await redactionLevelOf(workspaceId)
 
       type StepOutcome =
         | { kind: 'ran'; output: unknown; disable?: readonly string[] }
@@ -552,6 +559,7 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
               executeStep({
                 step,
                 definition,
+                redaction,
                 scope: scope(),
                 outputs,
                 workspaceId,
@@ -792,6 +800,34 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
     },
   }
 
+  /**
+   * Keys for one redacted body, prefixed by what it is.
+   *
+   * Spread rather than assigned, so a level that keeps nothing contributes no
+   * keys at all — a key holding `undefined` would read, to anyone querying the
+   * trace, as a body that was there and empty.
+   */
+  function prefixed(
+    name: 'prompt' | 'response',
+    redacted: { body?: string; hash?: string; length?: number },
+  ): Record<string, unknown> {
+    return {
+      ...(redacted.body === undefined ? {} : { [name]: redacted.body }),
+      ...(redacted.hash === undefined ? {} : { [`${name}Hash`]: redacted.hash }),
+      ...(redacted.length === undefined ? {} : { [`${name}Length`]: redacted.length }),
+    }
+  }
+
+  async function redactionLevelOf(workspaceId: string): Promise<RedactionLevel> {
+    const [row] = await tx(workspaceId, (t) =>
+      t.query<{ redaction_level: RedactionLevel }>(
+        `SELECT redaction_level FROM workspaces WHERE id = $1`,
+        [workspaceId],
+      ),
+    )
+    return row?.redaction_level ?? DEFAULT_REDACTION_LEVEL
+  }
+
   /** The definition a run is pinned to, from the row it was stored in. */
   async function loadDefinition(
     workspaceId: string,
@@ -827,6 +863,8 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
   async function executeStep(input: {
     step: WorkflowStep
     definition: WorkflowDefinition
+    /** In force for this run, applied as each event is written. */
+    redaction: RedactionLevel
     /** Every `{{id.field}}` value visible to this step. */
     scope: Scope
     outputs: Record<string, unknown>
@@ -835,7 +873,8 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
     runId: string
     actor: { userId: string; role: 'member' | 'senior_member' | 'admin' | 'owner' }
   }): Promise<StepResult> {
-    const { step, definition, scope, outputs, workspaceId, teamId, runId, actor } = input
+    const { step, definition, redaction, scope, outputs, workspaceId, teamId, runId, actor } =
+      input
     const ctx = { workspaceId, teamId, runId, actor, now }
 
     switch (step.type) {
@@ -941,6 +980,12 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
             tokensOut: usage.outputTokens,
             costCents,
             latencyMs,
+            // Applied here, at write time. A filter over stored content is a
+            // promise that every future reader remembers to apply it; a body
+            // that was never written cannot be leaked by a query somebody
+            // writes next year, or by a backup restored somewhere else.
+            ...prefixed('prompt', redactBody(redaction, content)),
+            ...prefixed('response', redactBody(redaction, text)),
           },
           template
             ? { id: step.prompt, version: template.version, hash: template.hash }

@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import {
   ConflictError,
+  DEFAULT_REDACTION_LEVEL,
   ForbiddenError,
   NotFoundError,
   ValidationError,
@@ -8,6 +9,7 @@ import {
   slugify,
   ulid,
   type Role,
+  type RedactionLevel,
 } from '@chorus/core'
 import { mutate, withTenant, type DbConfig, type TenantTx } from '@chorus/db'
 
@@ -45,6 +47,9 @@ export interface WorkspaceService {
   acceptInvitation(token: string, userId: string, userEmail: string): Promise<WorkspaceRecord>
   removeMember(workspaceId: string, actorId: string, targetUserId: string): Promise<void>
   changeRole(workspaceId: string, actorId: string, targetUserId: string, role: Role): Promise<void>
+  /** How much of a prompt or response body this workspace retains (NFR-11). */
+  redactionLevel(workspaceId: string): Promise<RedactionLevel>
+  setRedactionLevel(workspaceId: string, actorId: string, level: RedactionLevel): Promise<void>
 }
 
 export function createWorkspaceService(config: DbConfig): WorkspaceService {
@@ -313,6 +318,47 @@ export function createWorkspaceService(config: DbConfig): WorkspaceService {
                 [targetUserId],
               )
               if (removed !== 1) throw new NotFoundError('No such member', { targetUserId })
+            },
+          }),
+        actorId,
+      )
+    },
+
+    async redactionLevel(workspaceId) {
+      const [row] = await tx(workspaceId, (t) =>
+        t.query<{ redaction_level: RedactionLevel }>(
+          `SELECT redaction_level FROM workspaces WHERE id = $1`,
+          [workspaceId],
+        ),
+      )
+      return row?.redaction_level ?? DEFAULT_REDACTION_LEVEL
+    },
+
+    async setRedactionLevel(workspaceId, actorId, level) {
+      const before = await this.redactionLevel(workspaceId)
+
+      await tx(
+        workspaceId,
+        async (t) =>
+          mutate(t, {
+            workspaceId,
+            actor: { type: 'user', id: actorId },
+            // Widening what is captured is exactly the change somebody would
+            // want to make quietly, so the record names both sides of it.
+            action: 'workspace.redaction.set',
+            targetType: 'workspace_redaction',
+            targetId: workspaceId,
+            before: { level: before },
+            after: { level },
+            apply: async () => {
+              // Forward only. Retroactive redaction would be a rewrite of
+              // history, and a trace that can be altered after the fact is not
+              // an audit record — purging old data is a separate, deliberate
+              // act (NFR-4 retention).
+              await t.execute(
+                `UPDATE workspaces SET redaction_level = $1, updated_at = now() WHERE id = $2`,
+                [level, workspaceId],
+              )
             },
           }),
         actorId,

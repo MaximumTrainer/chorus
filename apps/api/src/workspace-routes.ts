@@ -1,4 +1,10 @@
-import { ValidationError, ROLES, type Role } from '@chorus/core'
+import {
+  REDACTION_LEVELS,
+  ROLES,
+  ValidationError,
+  isRedactionLevel,
+  type Role,
+} from '@chorus/core'
 import { route, type RouteDefinition } from './routes.js'
 import { caller, signedIn } from './authorisation.js'
 import type { WorkspaceService } from './workspaces.js'
@@ -22,6 +28,42 @@ function parseRole(value: unknown): Role {
 
 export function workspaceRoutes(workspaces: WorkspaceService): RouteDefinition[] {
   return [
+    route({
+      method: 'GET',
+      path: '/workspaces/:workspaceId/redaction',
+      summary: 'Read how much of a prompt or response body this workspace retains.',
+      auth: { kind: 'workspace', role: 'member', scopes: ['read:artefacts'] },
+      handler: async (c) =>
+        c.json({ level: await workspaces.redactionLevel(c.req.param('workspaceId')) }),
+    }),
+
+    route({
+      method: 'PUT',
+      path: '/workspaces/:workspaceId/redaction',
+      summary: 'Set how much of a prompt or response body this workspace retains.',
+      // Owner, not admin: this decides what is kept about everyone's work, and
+      // widening it is the change least likely to be noticed by the people it
+      // affects.
+      auth: { kind: 'workspace', role: 'owner', scopes: ['write:artefacts'], sessionOnly: true },
+      handler: async (c) => {
+        const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
+        if (!isRedactionLevel(body.level)) {
+          // Refused rather than defaulted. Defaulting a typo to `structural`
+          // would be safe and defaulting it to `none` would not, and a caller
+          // cannot tell which happened — refusing is the only answer that is
+          // the same in both directions.
+          throw new ValidationError(
+            `level must be one of: ${REDACTION_LEVELS.join(', ')}`,
+            { field: 'level' },
+          )
+        }
+
+        const workspaceId = c.req.param('workspaceId')
+        await workspaces.setRedactionLevel(workspaceId, caller(c).userId, body.level)
+        return c.json({ level: await workspaces.redactionLevel(workspaceId) })
+      },
+    }),
+
     route({
       method: 'POST',
       path: '/workspaces',

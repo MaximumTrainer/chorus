@@ -734,6 +734,14 @@ Prompt provenance is stored as **columns** (`prompt_id`, `prompt_version`, `prom
 
 Pricing is injected rather than held in code: a hard-coded price is wrong the week after it is written. Absent, it records zero, which keeps the ledger's shape correct while a deployment has told it nothing about money. Traces are viewable in the UI, exportable as OpenTelemetry spans, and are the substrate for the evaluation harness (AGENT-9).
 
+**Redaction is applied at write time, and the level is read once per run.** A filter over stored content is a promise that every future reader remembers to apply it; a body that was never written cannot be leaked by a query somebody writes next year, by a database dump, or by a backup restored somewhere else. Reading the level once per run rather than per call means a policy changed mid-run cannot make half a trace unreadable against the other half.
+
+Three levels, named for how much *redaction* is applied — `none` keeps bodies as sent and received, `structural` replaces them with a hash and a length, `full` keeps neither body nor hash. A hash is still derived from content, so for a workspace that has decided nothing may be retained, "we only kept a fingerprint" is not an answer. The structural record — model, provider, template version, tokens, latency, timing — is complete at every level, which is what separates these from switching logging off.
+
+**Credential-shaped content is scrubbed at every level, including `none`.** A workspace may choose to keep its own prompts; nobody may choose to keep a leaked key, because the person whose key it is did not get a vote. The patterns are deliberately over-broad: a false positive costs a few characters of a trace, while a false negative is a live credential in a record that will be backed up, exported and read by people who were never meant to see it. `test/nfr/redaction.test.ts` pins both directions — a list of credential formats that must not survive, and prose and plain identifiers (ULIDs, commit shas, content hashes) that must.
+
+**Changing the policy is forward-only and audited.** Retroactive redaction would be a rewrite of history, and a trace that can be altered after the fact is not an audit record; purging old data is a separate, deliberate act under NFR-4 retention. Setting the level is an owner action, because it decides what is kept about everyone's work and widening it is the change least likely to be noticed by the people it affects. An unrecognised level is refused rather than defaulted — defaulting a typo to `structural` would be safe and defaulting it to `none` would not, and a caller cannot tell which happened.
+
 ### 11.7 Prompt-injection posture
 
 Retrieved content is always wrapped in a labelled, delimited block marked as **data, not instructions**. External-write tools always pass a checkpoint unless a team explicitly opts into `auto`. `fetch_url` is host-allow-listed. The system prompt states that code pointers must exist in the index, and the emit step validates that every pointer resolves to a real file at a real commit before an artefact is written.
@@ -1451,7 +1459,7 @@ These are deliberately unresolved. Each has an owner phase by which it must be d
 7. **Preview discovery coverage** — the enumerated bot-comment patterns per provider and the per-repository template escape hatch.
 8. **Realtime for non-document state** — confirm that optimistic updates with ETags suffice for task boards, or promote them to CRDT.
 9. **Tracker two-way depth** — whether description edits sync both ways or stay one-way from Chorus.
-10. **Retention and redaction defaults** — which classes are retained by default for self-hosters.
+10. ~~**Redaction default**~~ — **decided (NFR-11)**: prompt and response bodies default to `structural` — a hash and a length, with the structural record complete. Settled in the direction that can be undone: a workspace that wants full bodies opts in and has them from that moment, whereas a workspace that discovers it has been storing customer prompts for six months cannot un-store them. Retention *periods* per data class remain open.
 11. **Teams bot registration** — document manual Azure Bot registration or ship infrastructure-as-code, and whether Graph ingestion is opt-in for air-gapped installations.
 12. **Atlassian Data Center depth** — first-class at 1.0 or a community-maintained variant.
 13. **Board round-trip semantics** — which card movements are authoritative for task status, and how to prevent update ping-pong between a board and a tracker linked to the same task.

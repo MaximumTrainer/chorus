@@ -97,3 +97,12 @@ export type {
   NotificationSink,
   MailTransport,
 } from './notifications.js'
+export {
+  REDACTION_LEVELS,
+  DEFAULT_REDACTION_LEVEL,
+  REDACTED,
+  isRedactionLevel,
+  scrubSecrets,
+  redactBody,
+} from './redaction.js'
+export type { RedactionLevel, RedactedBody } from './redaction.js'
