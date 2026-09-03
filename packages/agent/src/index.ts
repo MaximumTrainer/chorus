@@ -48,3 +48,5 @@ export type {
   Candidate,
   Classification,
 } from './router.js'
+export { exportRunTrace } from './trace-export.js'
+export type { ExportOptions } from './trace-export.js'

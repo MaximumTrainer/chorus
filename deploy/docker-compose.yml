@@ -44,6 +44,27 @@ services:
       timeout: 3s
       retries: 20
 
+  # AGENT-4 AC5. A deployment points its traces at whatever backend it already
+  # runs; this is the stock collector, so "our export is accepted by a standard
+  # collector" is demonstrated against one rather than asserted about one.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.116.1
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/config.yaml"]
+    ports:
+      - "${CHORUS_OTLP_HTTP_PORT:-4318}:4318"
+      - "${CHORUS_OTLP_GRPC_PORT:-4317}:4317"
+      - "${CHORUS_OTLP_METRICS_PORT:-8888}:8888"
+    volumes:
+      - ./otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    healthcheck:
+      # The collector image carries no shell utilities, so health is its own
+      # metrics endpoint answering — which is also what the tests scrape.
+      test: ["CMD", "/otelcol-contrib", "components"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   minio:
     image: minio/minio:RELEASE.2024-10-13T13-34-11Z
     restart: unless-stopped

@@ -1,0 +1,44 @@
+# OpenTelemetry collector for local development and for AGENT-4 AC5.
+#
+# AC5 asks that an exported trace be "accepted by a standard collector". The
+# only way to demonstrate that is to send it to one — a hand-rolled assertion
+# about wire format checks our reading of the specification rather than the
+# specification. So this is the stock upstream collector, unmodified.
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch:
+    # Small, because a test that has to wait ten seconds for a batch to flush
+    # is a test somebody will delete.
+    timeout: 200ms
+
+exporters:
+  # Prints what it received. A deployment points this at its own backend; here
+  # it is what makes "the collector accepted it" observable.
+  debug:
+    verbosity: detailed
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]
+  telemetry:
+    metrics:
+      # `otelcol_receiver_accepted_spans` is scraped here. It is the collector's
+      # own count of what it took in, which is a far better assertion than
+      # parsing log lines: it is a number the collector maintains for itself,
+      # not a format it happens to print.
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
