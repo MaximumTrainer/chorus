@@ -639,6 +639,8 @@ steps:
 
 Step types: `retrieve`, `model`, `tool`, `branch`, `loop`, `checkpoint`, `emit`. The engine persists `run_steps` after each step with an `input_hash`, so a worker crash resumes from the last completed step and an unchanged step is never re-executed (NFR-6).
 
+The hash covers the step's own definition and **only the outputs it actually references** as `{{id.output}}` — not the whole accumulated output map. Hashing everything looks safer and is the opposite: each step would then hash differently on resume simply because earlier steps had produced more, so every step's hash would change and the engine would re-run the entire run, which is precisely the duplicate external write NFR-6 exists to prevent. `run_steps` is unique on `(run_id, step_id)`, so "has this already run" is a question the database answers rather than one the engine remembers.
+
 ### 11.2 Workflow router (AGENT-2)
 
 Rules first, model second. Explicit rules key off the trigger: entry point, task tag, integration kind, slash command, capture mode, MCP tool. If no rule matches, a cheap classifier picks from the registry with a confidence score; below a threshold the agent asks the user instead of guessing. The chosen workflow, the matching rule or classifier output, and the reasoning are written as the first `run_event`.

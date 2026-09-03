@@ -168,6 +168,28 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
          VALUES ($1, $2, $3, 'export const seed = 1', 1, 1)`,
         [ulid(), workspaceId, fileId],
       )
+      const workflowId = ulid()
+      await owner.query(
+        `INSERT INTO workflows (id, workspace_id, name, version, definition)
+         VALUES ($1, $2, 'seed-workflow', 1, '{"steps":[]}'::jsonb)`,
+        [workflowId, workspaceId],
+      )
+      const runId = ulid()
+      await owner.query(
+        `INSERT INTO runs (id, workspace_id, workflow_name, workflow_version, started_by)
+         VALUES ($1, $2, 'seed-workflow', 1, $3)`,
+        [runId, workspaceId, userId],
+      )
+      await owner.query(
+        `INSERT INTO run_steps (id, workspace_id, run_id, seq, step_id, step_type, input_hash)
+         VALUES ($1, $2, $3, 1, 'seed', 'model', 'seedhash')`,
+        [ulid(), workspaceId, runId],
+      )
+      await owner.query(
+        `INSERT INTO run_events (id, workspace_id, run_id, seq, kind)
+         VALUES ($1, $2, $3, 1, 'model_call')`,
+        [ulid(), workspaceId, runId],
+      )
       await owner.query(
         `INSERT INTO route_map
            (id, workspace_id, repository_id, route_pattern, component_file_id, component_path)
@@ -336,6 +358,38 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
             `INSERT INTO route_map (id, workspace_id, repository_id, route_pattern, component_path)
              VALUES ($1, $2, $3, $1, 'x')`,
             [id, workspaceId, repository?.id ?? id],
+          )
+          return
+        }
+        case 'workflows':
+          await tx.execute(
+            `INSERT INTO workflows (id, workspace_id, name, version, definition)
+             VALUES ($1, $2, $1, 1, '{}'::jsonb)`,
+            [id, workspaceId],
+          )
+          return
+        case 'runs':
+          await tx.execute(
+            `INSERT INTO runs (id, workspace_id, workflow_name, workflow_version, started_by)
+             VALUES ($1, $2, 'x', 1, $3)`,
+            [id, workspaceId, userId],
+          )
+          return
+        case 'run_steps': {
+          const [run] = await tx.query<{ id: string }>(`SELECT id FROM runs LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO run_steps (id, workspace_id, run_id, seq, step_id, step_type, input_hash)
+             VALUES ($1, $2, $3, 1, $1, 'model', 'h')`,
+            [id, workspaceId, run?.id ?? id],
+          )
+          return
+        }
+        case 'run_events': {
+          const [run] = await tx.query<{ id: string }>(`SELECT id FROM runs LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO run_events (id, workspace_id, run_id, seq, kind)
+             VALUES ($1, $2, $3, 1, 'error')`,
+            [id, workspaceId, run?.id ?? id],
           )
           return
         }

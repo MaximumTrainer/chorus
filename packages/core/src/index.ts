@@ -46,6 +46,20 @@ export { ENTITY_KINDS, EntityCandidateSchema, parseEntityCandidate } from './ent
 export type { EntityKind, EntityCandidate } from './entities.js'
 export type { ConnectorKind, Signal, SignalPermissions } from './signals.js'
 export type { Tool, AnyTool, ToolContext, SideEffect } from './tools.js'
+export {
+  STEP_TYPES,
+  MODEL_TIERS,
+  WorkflowStepSchema,
+  WorkflowDefinitionSchema,
+  validateDefinition,
+} from './workflows.js'
+export type {
+  StepType,
+  WorkflowStep,
+  WorkflowDefinition,
+  DefinitionProblem,
+  ValidationEnvironment,
+} from './workflows.js'
 export { decideAccess } from './access.js'
 export type { AuthRequirement, AccessRequest, AccessDecision } from './access.js'
 export { slugify, uniqueSlug, MAX_SLUG_LENGTH } from './slugs.js'
