@@ -95,7 +95,12 @@ const DEFAULT_CHECKPOINT_TTL_MS = 72 * 60 * 60 * 1000
  * not a failure.
  */
 type StepResult =
-  | { readonly kind: 'output'; readonly output: unknown }
+  | {
+      readonly kind: 'output'
+      readonly output: unknown
+      /** Step ids this step has decided against — a branch's other arm. */
+      readonly disable?: readonly string[]
+    }
   | { readonly kind: 'pause' }
   | { readonly kind: 'stop'; readonly reason: string }
 
@@ -112,31 +117,42 @@ export interface Executor {
   run(workspaceId: string, runId: string): Promise<RunOutcome>
 }
 
-/** Step ids this step references as `{{id.output}}`, anywhere in its definition. */
-function dependenciesOf(step: WorkflowStep): string[] {
+/**
+ * A reference scope: `"gather.output"`, `"each.item"`, `"each.index"`.
+ *
+ * Keyed by the whole reference rather than by step id, so a loop's per-iteration
+ * values live in the same lookup as step outputs and one substitution rule
+ * covers both.
+ */
+type Scope = Readonly<Record<string, unknown>>
+
+const REFERENCE = /\{\{\s*([a-z][a-z0-9_]*\.[a-z][a-z0-9_]*)\s*\}\}/g
+
+/** Every `{{id.field}}` this step mentions, anywhere in its definition. */
+function referencesOf(step: WorkflowStep): string[] {
   const found = new Set<string>()
-  for (const match of JSON.stringify(step).matchAll(/\{\{\s*([a-z][a-z0-9_]*)\.output\s*\}\}/g)) {
-    found.add(match[1]!)
-  }
+  for (const match of JSON.stringify(step).matchAll(REFERENCE)) found.add(match[1]!)
   return [...found].sort()
 }
 
 /**
  * What a step's work depends on.
  *
- * Its own definition, plus **only the outputs it actually reads**. Hashing the
- * whole accumulated outputs map instead is the obvious implementation and it is
- * wrong: every earlier step's output is in that map by the time a later step
+ * Its own definition, plus **only the values it actually reads**. Hashing the
+ * whole accumulated scope instead is the obvious implementation and it is
+ * wrong: every earlier step's output is in that scope by the time a later step
  * runs, so on resume the first step's hash no longer matches what was recorded
  * — and the executor re-runs everything, which is precisely the duplicate
  * external write AC2 exists to prevent.
  *
  * A step whose upstream output genuinely changed is different work and must run
- * again; one whose own inputs are identical has already been done.
+ * again; one whose own inputs are identical has already been done. Inside a
+ * loop this is also what makes each iteration distinct work: the body's
+ * definition is the same every time, but `{{each.item}}` is not.
  */
-function hashInput(step: WorkflowStep, outputs: Readonly<Record<string, unknown>>): string {
+function hashInput(step: WorkflowStep, scope: Scope): string {
   const relevant: Record<string, unknown> = {}
-  for (const id of dependenciesOf(step)) relevant[id] = outputs[id]
+  for (const reference of referencesOf(step)) relevant[reference] = scope[reference]
 
   return createHash('sha256')
     .update(JSON.stringify({ step, inputs: relevant }))
@@ -144,16 +160,77 @@ function hashInput(step: WorkflowStep, outputs: Readonly<Record<string, unknown>
 }
 
 /**
- * Substitutes `{{step.output}}` references.
+ * Substitutes `{{id.field}}` references, at any depth.
  *
  * Deliberately minimal — the walking skeleton's lesson is that a template
- * language grows teeth. A reference resolves to a previous step's output or it
- * fails; there is no expression evaluation, so a definition cannot compute.
+ * language grows teeth. A reference resolves to a value already in scope or it
+ * is left alone; there is no expression evaluation, so a definition cannot
+ * compute. It recurses into objects and arrays because a step's input is
+ * usually a shape like `{ item: '{{each.item}}' }`, and substituting only at
+ * the top level would hand the tool the literal braces.
  */
-function resolve(value: unknown, outputs: Readonly<Record<string, unknown>>): unknown {
-  if (typeof value !== 'string') return value
-  const match = /^\{\{\s*([a-z][a-z0-9_]*)\.output\s*\}\}$/.exec(value)
-  return match ? outputs[match[1]!] : value
+function resolve(value: unknown, scope: Scope): unknown {
+  if (typeof value === 'string') {
+    // A string that is *only* a reference resolves to the value itself, so a
+    // structured output does not get flattened into its own JSON text.
+    const whole = /^\{\{\s*([a-z][a-z0-9_]*\.[a-z][a-z0-9_]*)\s*\}\}$/.exec(value)
+    if (whole) return scope[whole[1]!]
+    return value.replace(REFERENCE, (original, reference: string) => {
+      const found = scope[reference]
+      if (found === undefined) return original
+      return typeof found === 'string' ? found : JSON.stringify(found)
+    })
+  }
+
+  if (Array.isArray(value)) return value.map((entry) => resolve(entry, scope))
+
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, entry]) => [
+        key,
+        resolve(entry, scope),
+      ]),
+    )
+  }
+
+  return value
+}
+
+/**
+ * Whether a branch's condition is satisfied.
+ *
+ * Spelled out rather than left to JavaScript truthiness, because the values
+ * reaching it come from tools and models: an empty list, an empty string and
+ * the string `"false"` all read as true under `!!`, and each of those is a case
+ * where a workflow author plainly meant the other arm.
+ */
+function isSatisfied(value: unknown): boolean {
+  if (value === null || value === undefined) return false
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value !== 0
+  if (typeof value === 'string') return value !== '' && value.toLowerCase() !== 'false'
+  if (Array.isArray(value)) return value.length > 0
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    // A tool answering a yes/no question conventionally returns `{ ok: … }` or
+    // `{ result: … }`; honouring those beats making every workflow unwrap them.
+    if ('ok' in record) return isSatisfied(record.ok)
+    if ('result' in record) return isSatisfied(record.result)
+    return Object.keys(record).length > 0
+  }
+  return Boolean(value)
+}
+
+/** The list a loop iterates, or undefined if the value is not one. */
+function collectionFrom(value: unknown): unknown[] | undefined {
+  if (Array.isArray(value)) return value
+  if (value !== null && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    // A tool returning a list conventionally wraps it: `{ items: [...] }`.
+    if (Array.isArray(record.items)) return record.items
+    if (Array.isArray(record.results)) return record.results
+  }
+  return undefined
 }
 
 /**
@@ -331,6 +408,35 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
         if (row.status === 'succeeded') outputs[stepId] = row.output
       }
 
+      /** Per-iteration values a loop publishes, e.g. `each.item`. */
+      const items: Record<string, unknown> = {}
+      const scope = (): Scope => ({
+        ...Object.fromEntries(Object.entries(outputs).map(([id, value]) => [`${id}.output`, value])),
+        ...items,
+      })
+
+      const stepsById = new Map(definition.steps.map((step) => [step.id, step]))
+
+      // A loop's body steps appear in `steps` like any other, because that is
+      // where their definitions live. Running them once for the loop and again
+      // in sequence is the obvious implementation and is wrong, so the main
+      // pass skips anything a loop owns.
+      const ownedByLoop = new Set<string>()
+      for (const step of definition.steps) {
+        if (step.type === 'loop') for (const body of step.body) ownedByLoop.add(body)
+      }
+
+      // Steps a branch decided against. Rebuilt from each branch's recorded
+      // output rather than re-evaluated, so a resumed run takes the arm it took
+      // the first time even if the condition would now read differently.
+      const disabled = new Set<string>()
+      for (const [stepId, row] of done) {
+        if (stepsById.get(stepId)?.type !== 'branch' || row.status !== 'succeeded') continue
+        for (const id of (row.output as { disabled?: string[] } | null)?.disabled ?? []) {
+          disabled.add(id)
+        }
+      }
+
       await tx(workspaceId, (t) =>
         t.execute(`UPDATE runs SET status = 'running' WHERE id = $1`, [runId]),
       )
@@ -338,22 +444,34 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
       let executed = 0
       let skipped = 0
       let seq = done.size
-
       const actorRole = await roleOf(workspaceId, run.started_by)
 
-      for (const step of definition.steps) {
-        const inputHash = hashInput(step, outputs)
-        const previous = done.get(step.id)
+      type StepOutcome =
+        | { kind: 'ran'; output: unknown; disable?: readonly string[] }
+        | { kind: 'cached'; output: unknown }
+        | { kind: 'pause' }
+        | { kind: 'stop'; reason: string }
+        | { kind: 'failed'; message: string }
+
+      /**
+       * Runs one step and records it, or reports that it did not need to run.
+       *
+       * `recordAs` is the identity the run remembers it by. That is the step's
+       * own id everywhere except inside a loop, where each iteration needs a
+       * distinct one — resumption matches by step id, and two iterations
+       * sharing one could not be told apart.
+       */
+      const runStep = async (step: WorkflowStep, recordAs: string): Promise<StepOutcome> => {
+        const inputHash = hashInput(step, scope())
+        const previous = done.get(recordAs)
 
         // The whole of AC2's "re-executes nothing": same step, same inputs,
         // already succeeded.
         if (previous?.status === 'succeeded' && previous.input_hash === inputHash) {
-          skipped += 1
-          continue
+          return { kind: 'cached', output: previous.output }
         }
 
         seq += 1
-        const stepRowId = ulid()
         await tx(workspaceId, (t) =>
           t.execute(
             `INSERT INTO run_steps
@@ -362,7 +480,7 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
              ON CONFLICT (run_id, step_id) DO UPDATE
                SET seq = EXCLUDED.seq, input_hash = EXCLUDED.input_hash,
                    status = 'running', error = NULL, started_at = now()`,
-            [stepRowId, workspaceId, runId, seq, step.id, step.type, inputHash],
+            [ulid(), workspaceId, runId, seq, recordAs, step.type, inputHash],
           ),
         )
 
@@ -372,13 +490,14 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
             {
               'chorus.workspace_id': workspaceId,
               'chorus.run_id': runId,
-              'chorus.step_id': step.id,
+              'chorus.step_id': recordAs,
               'chorus.workflow': `${definition.name}@${definition.version}`,
             },
             () =>
               executeStep({
                 step,
                 definition,
+                scope: scope(),
                 outputs,
                 workspaceId,
                 teamId: run.team_id ?? '',
@@ -391,57 +510,38 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
             // Waiting, not running. A paused run left as `running` is
             // indistinguishable from a stuck one, and stuck is what an operator
             // is meant to act on.
-            await tx(workspaceId, async (t) => {
-              await t.execute(
+            await tx(workspaceId, (t) =>
+              t.execute(
                 `UPDATE run_steps SET status = 'waiting' WHERE run_id = $1 AND step_id = $2`,
-                [runId, step.id],
-              )
-              await t.execute(`UPDATE runs SET status = 'waiting_human' WHERE id = $1`, [runId])
-            })
-            return {
-              runId,
-              status: 'waiting_human',
-              stepsExecuted: executed,
-              stepsSkipped: skipped,
-            }
+                [runId, recordAs],
+              ),
+            )
+            return { kind: 'pause' }
           }
 
           if (result.kind === 'stop') {
-            // Stopped, not failed. A policy of `never`, a rejection or an
-            // expiry are all the system working as asked; recording them as
-            // failures would put healthy runs in an error dashboard.
-            await tx(workspaceId, async (t) => {
-              await t.execute(
+            await tx(workspaceId, (t) =>
+              t.execute(
                 `UPDATE run_steps SET status = 'skipped', finished_at = now()
                   WHERE run_id = $1 AND step_id = $2`,
-                [runId, step.id],
-              )
-              await t.execute(
-                `UPDATE runs SET status = 'stopped', error = $1, finished_at = now()
-                  WHERE id = $2`,
-                [result.reason, runId],
-              )
-            })
-            return {
-              runId,
-              status: 'stopped',
-              stepsExecuted: executed,
-              stepsSkipped: skipped,
-              error: result.reason,
-            }
+                [runId, recordAs],
+              ),
+            )
+            return { kind: 'stop', reason: result.reason }
           }
-
-          const output = result.output
-          outputs[step.id] = output
-          executed += 1
 
           await tx(workspaceId, (t) =>
             t.execute(
               `UPDATE run_steps SET status = 'succeeded', output = $1, finished_at = now()
                 WHERE run_id = $2 AND step_id = $3`,
-              [JSON.stringify(output ?? null), runId, step.id],
+              [JSON.stringify(result.output ?? null), runId, recordAs],
             ),
           )
+          return {
+            kind: 'ran',
+            output: result.output,
+            ...(result.disable ? { disable: result.disable } : {}),
+          }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
 
@@ -449,30 +549,189 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
             await t.execute(
               `UPDATE run_steps SET status = 'failed', error = $1, finished_at = now()
                 WHERE run_id = $2 AND step_id = $3`,
-              [message, runId, step.id],
-            )
-            await t.execute(
-              `UPDATE runs SET status = 'failed', error = $1, finished_at = now() WHERE id = $2`,
-              [message, runId],
+              [message, runId, recordAs],
             )
             await t.execute(
               `INSERT INTO run_events (id, workspace_id, run_id, seq, kind, payload)
                VALUES ($1, $2, $3, $4, 'error', $5)`,
-              [ulid(), workspaceId, runId, seq, JSON.stringify({ step: step.id, message })],
+              [ulid(), workspaceId, runId, seq, JSON.stringify({ step: recordAs, message })],
             )
           })
-
-          // Both recorded: the run says it failed, the step says which one and
-          // why, so a failure is diagnosable without reading the logs.
-          return { runId, status: 'failed', stepsExecuted: executed, stepsSkipped: skipped, error: message }
+          return { kind: 'failed', message }
         }
       }
 
+      const endRun = async (status: 'failed' | 'stopped', reason: string): Promise<RunOutcome> => {
+        await tx(workspaceId, (t) =>
+          t.execute(`UPDATE runs SET status = $1, error = $2, finished_at = now() WHERE id = $3`, [
+            status,
+            reason,
+            runId,
+          ]),
+        )
+        // Both recorded: the run says why it ended, the step says which one and
+        // how, so an ending is diagnosable without reading the logs.
+        return { runId, status, stepsExecuted: executed, stepsSkipped: skipped, error: reason }
+      }
+
+      const pauseRun = async (): Promise<RunOutcome> => {
+        await tx(workspaceId, (t) =>
+          t.execute(`UPDATE runs SET status = 'waiting_human' WHERE id = $1`, [runId]),
+        )
+        return { runId, status: 'waiting_human', stepsExecuted: executed, stepsSkipped: skipped }
+      }
+
+      /** Records a step the run reached but deliberately did not execute. */
+      const markSkipped = async (stepId: string, stepType: string): Promise<void> => {
+        seq += 1
+        await tx(workspaceId, (t) =>
+          t.execute(
+            `INSERT INTO run_steps
+               (id, workspace_id, run_id, seq, step_id, step_type, input_hash, status, finished_at)
+             VALUES ($1, $2, $3, $4, $5, $6, 'not-run', 'skipped', now())
+             ON CONFLICT (run_id, step_id) DO UPDATE
+               SET status = 'skipped', finished_at = now()`,
+            [ulid(), workspaceId, runId, seq, stepId, stepType],
+          ),
+        )
+      }
+
+      /**
+       * A loop over a collection an earlier step produced.
+       *
+       * The bound is not defensive tidiness: the collection usually came from a
+       * model, and a model asked for "the tasks" can return a thousand. Silently
+       * processing the first twenty would be a wrong answer presented as a right
+       * one, so exceeding the bound fails the run instead.
+       */
+      const runLoop = async (
+        step: Extract<WorkflowStep, { type: 'loop' }>,
+      ): Promise<
+        { kind: 'done' } | { kind: 'pause' } | { kind: 'stop'; reason: string } | { kind: 'failed'; message: string }
+      > => {
+        const collection = collectionFrom(resolve(step.over, scope()))
+
+        if (collection === undefined) {
+          return {
+            kind: 'failed',
+            message:
+              `Step "${step.id}" loops over ${step.over}, which did not resolve to a list. ` +
+              `Guessing at one would iterate over something arbitrary.`,
+          }
+        }
+
+        if (collection.length > step.maxIterations) {
+          return {
+            kind: 'failed',
+            message:
+              `Step "${step.id}" would run ${collection.length} iterations, over its ` +
+              `maxIterations of ${step.maxIterations}. Truncating would silently drop work.`,
+          }
+        }
+
+        const perIteration: unknown[] = []
+
+        for (const [index, item] of collection.entries()) {
+          items[`${step.id}.item`] = item
+          items[`${step.id}.index`] = index
+
+          for (const bodyId of step.body) {
+            const body = stepsById.get(bodyId)
+            // Load-time validation catches this. The check is here because a
+            // definition stored before that validation existed would otherwise
+            // fail on an undefined, which says nothing useful.
+            if (!body) return { kind: 'failed', message: `Step "${bodyId}" is not a step` }
+
+            const outcome = await runStep(body, `${bodyId}#${index}`)
+            if (outcome.kind === 'failed' || outcome.kind === 'stop' || outcome.kind === 'pause') {
+              return outcome
+            }
+            if (outcome.kind === 'ran') executed += 1
+            else skipped += 1
+            outputs[bodyId] = outcome.output
+            perIteration.push(outcome.output)
+          }
+        }
+
+        delete items[`${step.id}.item`]
+        delete items[`${step.id}.index`]
+
+        // The loop is itself a step and records what it did. Written directly
+        // rather than through runStep, because a loop has no work of its own to
+        // execute — its work is the iterations, which have already happened.
+        seq += 1
+        await tx(workspaceId, (t) =>
+          t.execute(
+            `INSERT INTO run_steps
+               (id, workspace_id, run_id, seq, step_id, step_type, input_hash, status, output,
+                finished_at)
+             VALUES ($1, $2, $3, $4, $5, 'loop', $6, 'succeeded', $7, now())
+             ON CONFLICT (run_id, step_id) DO UPDATE
+               SET seq = EXCLUDED.seq, input_hash = EXCLUDED.input_hash, status = 'succeeded',
+                   output = EXCLUDED.output, error = NULL, finished_at = now()`,
+            [
+              ulid(),
+              workspaceId,
+              runId,
+              seq,
+              step.id,
+              hashInput(step, scope()),
+              JSON.stringify(perIteration),
+            ],
+          ),
+        )
+        outputs[step.id] = perIteration
+        return { kind: 'done' }
+      }
+
+      for (const step of definition.steps) {
+        if (ownedByLoop.has(step.id)) continue
+
+        if (disabled.has(step.id)) {
+          // Recorded, not merely absent: a trace unable to distinguish "the
+          // branch went the other way" from "this step was never in the
+          // definition" gives the worse of the two answers to someone reading
+          // the run months later.
+          await markSkipped(step.id, step.type)
+          skipped += 1
+          continue
+        }
+
+        if (step.type === 'loop') {
+          const outcome = await runLoop(step)
+          if (outcome.kind === 'failed') return endRun('failed', outcome.message)
+          if (outcome.kind === 'stop') return endRun('stopped', outcome.reason)
+          if (outcome.kind === 'pause') return pauseRun()
+          continue
+        }
+
+        const outcome = await runStep(step, step.id)
+
+        if (outcome.kind === 'pause') return pauseRun()
+        // Stopped, not failed. A policy of `never`, a rejection or an expiry
+        // are all the system working as asked; recording them as failures would
+        // put healthy runs in an error dashboard.
+        if (outcome.kind === 'stop') return endRun('stopped', outcome.reason)
+        if (outcome.kind === 'failed') return endRun('failed', outcome.message)
+
+        outputs[step.id] = outcome.output
+        if (outcome.kind === 'cached') skipped += 1
+        else executed += 1
+
+        // A branch decides for steps it does not itself contain, so its verdict
+        // has to outlive it — taken from the recorded output on a resume, and
+        // from the fresh one here.
+        const verdict =
+          outcome.kind === 'cached'
+            ? ((outcome.output as { disabled?: string[] } | null)?.disabled ?? [])
+            : (outcome.disable ?? [])
+        for (const id of verdict) disabled.add(id)
+      }
+
       await tx(workspaceId, (t) =>
-        t.execute(
-          `UPDATE runs SET status = 'succeeded', finished_at = now() WHERE id = $1`,
-          [runId],
-        ),
+        t.execute(`UPDATE runs SET status = 'succeeded', finished_at = now() WHERE id = $1`, [
+          runId,
+        ]),
       )
       return { runId, status: 'succeeded', stepsExecuted: executed, stepsSkipped: skipped }
     },
@@ -513,20 +772,22 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
   async function executeStep(input: {
     step: WorkflowStep
     definition: WorkflowDefinition
+    /** Every `{{id.field}}` value visible to this step. */
+    scope: Scope
     outputs: Record<string, unknown>
     workspaceId: string
     teamId: string
     runId: string
     actor: { userId: string; role: 'member' | 'senior_member' | 'admin' | 'owner' }
   }): Promise<StepResult> {
-    const { step, definition, outputs, workspaceId, teamId, runId, actor } = input
+    const { step, definition, scope, outputs, workspaceId, teamId, runId, actor } = input
     const ctx = { workspaceId, teamId, runId, actor, now }
 
     switch (step.type) {
       case 'tool': {
         const result = await deps.registry.invoke(
           step.tool,
-          resolve(step.input, outputs) ?? {},
+          resolve(step.input, scope) ?? {},
           ctx,
           { allowed: definition.tools },
         )
@@ -558,12 +819,32 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
         return { kind: 'output', output: text }
       }
 
+      case 'branch': {
+        // The verdict is recorded as the step's output, not held in memory, so
+        // a resumed run takes the arm it took the first time rather than
+        // re-deciding against a world that has since moved on.
+        const satisfied = isSatisfied(resolve(step.when, scope))
+        const disable = satisfied ? step.otherwise : step.then
+
+        await recordEvent(workspaceId, runId, 'routing', {
+          step: step.id,
+          taken: satisfied ? 'then' : 'otherwise',
+          disabled: disable,
+        })
+
+        return {
+          kind: 'output',
+          output: { taken: satisfied ? 'then' : 'otherwise', disabled: [...disable] },
+          disable,
+        }
+      }
+
       case 'checkpoint':
         return gate({ step: step.id, kind: step.kind, definition, outputs, workspaceId, teamId, runId })
 
-      // The remaining step types arrive with the slices that need them:
-      // `checkpoint` with AGENT-3, `retrieve` with BRAIN-4, `emit` with the
-      // artefact models. Refusing loudly beats a silent no-op that makes a
+      // `loop` never reaches here: it is control flow over other steps, so
+      // the run loop owns it. `retrieve` arrives with BRAIN-4 and `emit` with
+      // the artefact models. Refusing loudly beats a silent no-op that makes a
       // workflow look like it ran.
       default:
         throw new NotFoundError(`Step type "${step.type}" is not implemented yet`, {

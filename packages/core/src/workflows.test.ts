@@ -109,6 +109,60 @@ describe('AGENT-1 AC1 workflow definitions', () => {
     )
   })
 
+  it('AGENT-1 AC1: a branch pointing backwards is caught at load', () => {
+    // The arm would already have run by the time the branch decided against it.
+    // At run time this is invisible — the run succeeds, having done work it was
+    // told not to do — which is exactly the class of bug AC1 exists to move to
+    // startup.
+    const broken = definition({
+      steps: [
+        { id: 'early', type: 'tool', tool: 'find_duplicates' },
+        { id: 'pick', type: 'branch', when: '{{early.output}}', then: ['early'], otherwise: [] },
+      ],
+    })
+
+    expect(
+      validateDefinition(broken, environment).some((p) => p.message.includes('before')),
+    ).toBe(true)
+  })
+
+  it('AGENT-1 AC1: a loop body that appears before its loop is caught at load', () => {
+    const broken = definition({
+      steps: [
+        { id: 'body', type: 'tool', tool: 'find_duplicates' },
+        { id: 'each', type: 'loop', over: '{{body.output}}', body: ['body'], maxIterations: 5 },
+      ],
+    })
+
+    expect(
+      validateDefinition(broken, environment).some((p) => p.message.includes('before')),
+    ).toBe(true)
+  })
+
+  it('AGENT-1 AC1: a step owned by two loops is caught at load', () => {
+    // Both loops would run it, and both would record iteration rows under the
+    // same `body#0` identity — so a resumed run would treat one loop's second
+    // iteration as the other's first.
+    const broken = definition({
+      steps: [
+        { id: 'source', type: 'tool', tool: 'find_duplicates' },
+        { id: 'first', type: 'loop', over: '{{source.output}}', body: ['shared'], maxIterations: 5 },
+        {
+          id: 'second',
+          type: 'loop',
+          over: '{{source.output}}',
+          body: ['shared'],
+          maxIterations: 5,
+        },
+        { id: 'shared', type: 'tool', tool: 'find_duplicates' },
+      ],
+    })
+
+    expect(
+      validateDefinition(broken, environment).some((p) => p.message.includes('more than one loop')),
+    ).toBe(true)
+  })
+
   it('AGENT-1 AC1: duplicate step ids are caught', () => {
     // Two steps with one id make `{{id.output}}` ambiguous, and make resumption
     // match the wrong step — which is the more dangerous of the two.

@@ -244,5 +244,46 @@ export function validateDefinition(
     }
   }
 
+  // Position matters for control flow, and only for control flow: a branch or
+  // a loop acts on steps that come *after* it. A target that comes before has
+  // already run by the time the decision is made, and nothing at run time
+  // reveals that — the run succeeds, having done work it was told not to do.
+  const positionOf = new Map(definition.steps.map((step, index) => [step.id, index]))
+  const loopOwners = new Map<string, string[]>()
+
+  for (const [index, step] of definition.steps.entries()) {
+    const targets =
+      step.type === 'branch'
+        ? [...step.then, ...step.otherwise]
+        : step.type === 'loop'
+          ? step.body
+          : []
+
+    for (const target of targets) {
+      const at = positionOf.get(target)
+      if (at !== undefined && at < index) {
+        say(
+          `step "${step.id}" refers to "${target}", which comes before it — ` +
+            `a ${step.type} can only act on steps that follow it`,
+        )
+      }
+    }
+
+    if (step.type === 'loop') {
+      for (const body of step.body) {
+        loopOwners.set(body, [...(loopOwners.get(body) ?? []), step.id])
+      }
+    }
+  }
+
+  for (const [body, owners] of loopOwners) {
+    if (owners.length > 1) {
+      // Both loops would run it, and both would record their iterations under
+      // the same identity — so a resumed run would take one loop's second
+      // iteration for the other's first.
+      say(`step "${body}" is the body of more than one loop (${owners.join(', ')})`)
+    }
+  }
+
   return problems
 }
