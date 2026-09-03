@@ -95,6 +95,28 @@ export interface ExecutorDeps {
    * and the notification is what makes it answerable.
    */
   readonly notify?: NotificationSink['notify']
+  /**
+   * Where a step's prompt is loaded from (AGENT-4 AC2).
+   *
+   * Optional only until every workflow has its prompts on disk; a model call
+   * whose template cannot be named is one whose result cannot be reproduced,
+   * and the trace says so rather than pretending otherwise.
+   */
+  readonly prompts?: PromptSource
+  /**
+   * What a call cost, in whole cents.
+   *
+   * Injected because pricing is deployment configuration, not a fact about the
+   * code — and because a hard-coded price is wrong the week after it is
+   * written. Absent means zero, which keeps the ledger's *shape* correct while
+   * a deployment has told it nothing about money.
+   */
+  readonly priceFor?: (model: ModelRef, usage: { inputTokens: number; outputTokens: number }) => number
+}
+
+/** The narrow slice of a prompt registry the executor needs. */
+export interface PromptSource {
+  get(id: string): { readonly body: string; readonly version: number; readonly hash: string }
 }
 
 const DEFAULT_CHECKPOINT_TTL_MS = 72 * 60 * 60 * 1000
@@ -834,21 +856,96 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
       case 'model': {
         // The definition named a tier; configuration decides the model.
         const model = deps.modelFor(definition.model)
+
+        // AC2: the exact template, by version and hash. The file will change,
+        // and a result has to be replayable against the text that produced it
+        // rather than against whatever the file says today.
+        const template = deps.prompts?.get(step.prompt)
+        const content = template
+          ? renderTemplate(template.body, outputs)
+          : renderPrompt(step.prompt, outputs)
+
+        const startedAt = Date.now()
         let text = ''
+        let usage = { inputTokens: 0, outputTokens: 0 }
+
         for await (const event of deps.models.stream({
           model,
-          messages: [{ role: 'user', content: renderPrompt(step.prompt, outputs) }],
+          messages: [{ role: 'user', content }],
           context: { workspaceId, teamId, runId, purpose: 'chat' },
         })) {
           if (event.type === 'token') text += event.text
+          // Usage arrives with `done` precisely so a stream cannot end without
+          // reporting what it cost — a gap here is unreconstructable later.
+          if (event.type === 'done') usage = event.usage
           if (event.type === 'error') throw new Error(event.message)
         }
 
-        await recordEvent(workspaceId, runId, 'model_call', {
-          step: step.id,
-          model: model.model,
-          prompt: step.prompt,
+        const latencyMs = Date.now() - startedAt
+        const costCents = deps.priceFor
+          ? deps.priceFor(model, usage)
+          : 0
+
+        // Written as the call happens, not at run completion: a crashed run's
+        // spend is still spend, and buffering loses exactly the case where
+        // somebody wants to know where the money went.
+        await tx(workspaceId, async (t) => {
+          await t.execute(
+            `INSERT INTO spend_ledger
+               (id, workspace_id, team_id, run_id, provider, model, purpose,
+                tokens_in, tokens_out, cost_cents, latency_ms)
+             VALUES ($1, $2, $3, $4, $5, $6, 'chat', $7, $8, $9, $10)`,
+            [
+              ulid(),
+              workspaceId,
+              teamId || null,
+              runId,
+              model.provider,
+              model.model,
+              usage.inputTokens,
+              usage.outputTokens,
+              costCents,
+              latencyMs,
+            ],
+          )
+          // `runs` carries a cache of the sum, kept in the same transaction as
+          // the row it sums — a cache that can disagree with its source is a
+          // number nobody can defend.
+          await t.execute(
+            `UPDATE runs
+                SET cost_cents = cost_cents + $2,
+                    tokens_in = tokens_in + $3,
+                    tokens_out = tokens_out + $4
+              WHERE id = $1`,
+            [runId, costCents, usage.inputTokens, usage.outputTokens],
+          )
         })
+
+        await recordEvent(
+          workspaceId,
+          runId,
+          'model_call',
+          {
+            step: step.id,
+            provider: model.provider,
+            model: model.model,
+            prompt: step.prompt,
+            ...(template
+              ? {
+                  promptId: step.prompt,
+                  promptVersion: template.version,
+                  promptHash: template.hash,
+                }
+              : {}),
+            tokensIn: usage.inputTokens,
+            tokensOut: usage.outputTokens,
+            costCents,
+            latencyMs,
+          },
+          template
+            ? { id: step.prompt, version: template.version, hash: template.hash }
+            : undefined,
+        )
         return { kind: 'output', output: text }
       }
 
@@ -1202,6 +1299,12 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
     runId: string,
     kind: string,
     payload: Record<string, unknown>,
+    /**
+     * Which template produced this, as columns rather than only inside the
+     * payload — "every run using prompt X at version N" is a question the
+     * evaluation harness will ask, and JSON containment is a poor index.
+     */
+    prompt?: { id: string; version: number; hash: string },
   ): Promise<void> {
     await tx(workspaceId, async (t) => {
       const [last] = await t.query<{ next: number }>(
@@ -1209,10 +1312,37 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
         [runId],
       )
       await t.execute(
-        `INSERT INTO run_events (id, workspace_id, run_id, seq, kind, payload)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [ulid(), workspaceId, runId, last?.next ?? 1, kind, JSON.stringify(payload)],
+        `INSERT INTO run_events
+           (id, workspace_id, run_id, seq, kind, payload, prompt_id, prompt_version, prompt_hash)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [
+          ulid(),
+          workspaceId,
+          runId,
+          last?.next ?? 1,
+          kind,
+          JSON.stringify(payload),
+          prompt?.id ?? null,
+          prompt?.version ?? null,
+          prompt?.hash ?? null,
+        ],
       )
+    })
+  }
+
+  /**
+   * Substitutes `{{name}}` values into a prompt body.
+   *
+   * `renderPrompt` in `packages/llm` is the canonical, strict one; this is
+   * lenient because a workflow's outputs are not known to match a template's
+   * placeholders until the workflows themselves land, and failing a run over a
+   * placeholder mismatch would be a worse answer than leaving it visible.
+   */
+  function renderTemplate(body: string, outputs: Readonly<Record<string, unknown>>): string {
+    return body.replace(/\{\{\s*([a-z][a-z0-9_]*)\s*\}\}/g, (original, name: string) => {
+      const value = outputs[name]
+      if (value === undefined) return original
+      return typeof value === 'string' ? value : JSON.stringify(value)
     })
   }
 }

@@ -726,7 +726,13 @@ These two routes are declared `kind: 'capability'` rather than `public` — a ro
 
 ### 11.6 Traces (AGENT-4)
 
-`run_events` records `model_call` (model, template hash, tokens, latency, redacted prompt/response per policy), `tool_call` (name, input hash, output summary, side effect), `checkpoint`, `artefact`, `error`. Traces are viewable in the UI, exportable as OpenTelemetry spans, and are the substrate for the evaluation harness (AGENT-9).
+`run_events` records `model_call` (model, template hash, tokens, latency, redacted prompt/response per policy), `tool_call` (name, input hash, output summary, side effect), `checkpoint`, `artefact`, `error`.
+
+Prompt provenance is stored as **columns** (`prompt_id`, `prompt_version`, `prompt_hash`) as well as inside the payload. "Every run using prompt X at version N" is a question the evaluation harness will ask constantly, and JSON containment is a poor index for it.
+
+**`spend_ledger` is the record; `runs.cost_cents` is a cache of the sum.** That is the right way round — a displayed cost that cannot be reconciled against the calls behind it is a number nobody can defend when it is questioned — and the cache is updated in the same transaction as the row it sums, so the two cannot drift. Rows are written as calls happen rather than at run completion: a crashed run's spend is still spend, and buffering would lose exactly the case where somebody wants to know where the money went. Cost is integer cents, because floating-point money accumulates error precisely when there are many small amounts, which is the shape of model spend. A ledger row may have no `run_id` — an embedding for indexing, or a routing classification, belongs to no run, and attributing those to one would make a run's cost wrong in the other direction.
+
+Pricing is injected rather than held in code: a hard-coded price is wrong the week after it is written. Absent, it records zero, which keeps the ledger's shape correct while a deployment has told it nothing about money. Traces are viewable in the UI, exportable as OpenTelemetry spans, and are the substrate for the evaluation harness (AGENT-9).
 
 ### 11.7 Prompt-injection posture
 

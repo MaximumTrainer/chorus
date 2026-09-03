@@ -96,6 +96,100 @@ export function runRoutes(config: DbConfig, resumeRun?: RunResumer): RouteDefini
       { config },
     )
 
+  /**
+   * The trace (AGENT-4).
+   *
+   * Three things together, because they are only useful together: what the run
+   * did, what it spent, and what it says about itself. A cost shown without the
+   * calls behind it is a number nobody can defend when it is questioned, so the
+   * ledger rows travel with the total they sum to.
+   */
+  const readTrace = async (workspaceId: string, runId: string) =>
+    withTenant(
+      workspaceId,
+      async (tx) => {
+        const [run] = await tx.query<
+          RunRow & { cost_cents: number; tokens_in: number; tokens_out: number }
+        >(
+          `SELECT id, workflow_name, workflow_version, status, error, started_by,
+                  started_at, finished_at, cost_cents, tokens_in, tokens_out
+             FROM runs WHERE id = $1`,
+          [runId],
+        )
+        if (!run) throw new NotFoundError('No such run', { runId })
+
+        const events = await tx.query<{
+          seq: number
+          kind: string
+          payload: Record<string, unknown>
+          at: Date
+          prompt_id: string | null
+          prompt_version: number | null
+          prompt_hash: string | null
+        }>(
+          `SELECT seq, kind, payload, at, prompt_id, prompt_version, prompt_hash
+             FROM run_events WHERE run_id = $1 ORDER BY seq`,
+          [runId],
+        )
+
+        const spend = await tx.query<{
+          provider: string
+          model: string
+          purpose: string
+          tokens_in: number
+          tokens_out: number
+          cost_cents: number
+          latency_ms: number | null
+          at: Date
+        }>(
+          `SELECT provider, model, purpose, tokens_in, tokens_out, cost_cents, latency_ms, at
+             FROM spend_ledger WHERE run_id = $1 ORDER BY at`,
+          [runId],
+        )
+
+        return {
+          run: {
+            id: run.id,
+            workflow: `${run.workflow_name}@${run.workflow_version}`,
+            status: run.status,
+            error: run.error,
+            startedBy: run.started_by,
+            startedAt: run.started_at.toISOString(),
+            finishedAt: run.finished_at ? run.finished_at.toISOString() : null,
+            costCents: run.cost_cents,
+            tokensIn: run.tokens_in,
+            tokensOut: run.tokens_out,
+          },
+          events: events.map((event) => ({
+            seq: event.seq,
+            kind: event.kind,
+            at: event.at.toISOString(),
+            payload: event.payload,
+            ...(event.prompt_id
+              ? {
+                  prompt: {
+                    id: event.prompt_id,
+                    version: event.prompt_version,
+                    hash: event.prompt_hash,
+                  },
+                }
+              : {}),
+          })),
+          spend: spend.map((row) => ({
+            provider: row.provider,
+            model: row.model,
+            purpose: row.purpose,
+            tokensIn: row.tokens_in,
+            tokensOut: row.tokens_out,
+            costCents: row.cost_cents,
+            latencyMs: row.latency_ms,
+            at: row.at.toISOString(),
+          })),
+        }
+      },
+      { config },
+    )
+
   const readCheckpointIn = async (
     workspaceId: string,
     checkpointId: string,
@@ -121,6 +215,18 @@ export function runRoutes(config: DbConfig, resumeRun?: RunResumer): RouteDefini
       auth: { kind: 'workspace', role: 'member', scopes: ['read:artefacts'] },
       handler: async (c) =>
         c.json(await readRun(c.req.param('workspaceId'), c.req.param('runId'))),
+    }),
+
+    route({
+      method: 'GET',
+      path: '/workspaces/:workspaceId/runs/:runId/trace',
+      summary: 'Read a run’s full trace: its events, its spend and its totals.',
+      // A trace carries prompts, tool inputs and costs. It is a member-level
+      // read because it is the record of work a member did, and it is scoped
+      // by the workspace the route names — a run in another one is not found.
+      auth: { kind: 'workspace', role: 'member', scopes: ['read:artefacts'] },
+      handler: async (c) =>
+        c.json(await readTrace(c.req.param('workspaceId'), c.req.param('runId'))),
     }),
 
     route({

@@ -214,6 +214,11 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
         [ulid(), workspaceId, runId],
       )
       await owner.query(
+        `INSERT INTO spend_ledger (id, workspace_id, team_id, run_id, provider, model, purpose)
+         VALUES ($1, $2, $3, $4, 'fake', 'fake-1', 'chat')`,
+        [ulid(), workspaceId, teamId, runId],
+      )
+      await owner.query(
         `INSERT INTO notification_digest_settings (id, workspace_id, user_id, enabled)
          VALUES ($1, $2, $3, false)`,
         [ulid(), workspaceId, userId],
@@ -466,6 +471,13 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
           )
           return
         }
+        case 'spend_ledger':
+          await tx.execute(
+            `INSERT INTO spend_ledger (id, workspace_id, provider, model, purpose)
+             VALUES ($1, $2, 'fake', 'fake-1', 'chat')`,
+            [id, workspaceId],
+          )
+          return
         case 'notification_digest_settings':
           await tx.execute(
             `INSERT INTO notification_digest_settings (id, workspace_id, user_id, enabled)
