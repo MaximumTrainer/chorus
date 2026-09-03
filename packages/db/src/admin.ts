@@ -136,10 +136,37 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
          VALUES ($1, $2, $3, 'reference', $1, 'message', now(), '{"visibility":"public","scopeIds":[]}'::jsonb)`,
         [ulid(), workspaceId, integrationId],
       )
+      const repositoryId = ulid()
+      const fileId = ulid()
       await owner.query(
         `INSERT INTO repositories (id, workspace_id, team_id, integration_id, provider, full_name)
          VALUES ($1, $2, $3, $4, 'github', $1)`,
-        [ulid(), workspaceId, teamId, integrationId],
+        [repositoryId, workspaceId, teamId, integrationId],
+      )
+      await owner.query(
+        `INSERT INTO repo_index_runs (id, workspace_id, repository_id, status, commit_sha)
+         VALUES ($1, $2, $3, 'succeeded', 'seedcommit')`,
+        [ulid(), workspaceId, repositoryId],
+      )
+      await owner.query(
+        `INSERT INTO code_files (id, workspace_id, repository_id, path, lang, content_hash)
+         VALUES ($1, $2, $3, 'src/seed.ts', 'typescript', $1)`,
+        [fileId, workspaceId, repositoryId],
+      )
+      await owner.query(
+        `INSERT INTO code_symbols (id, workspace_id, file_id, kind, name, line_start, line_end)
+         VALUES ($1, $2, $3, 'function', 'seed', 1, 2)`,
+        [ulid(), workspaceId, fileId],
+      )
+      await owner.query(
+        `INSERT INTO code_imports (id, workspace_id, file_id, specifier)
+         VALUES ($1, $2, $3, 'node:fs')`,
+        [ulid(), workspaceId, fileId],
+      )
+      await owner.query(
+        `INSERT INTO code_chunks (id, workspace_id, file_id, text, line_start, line_end)
+         VALUES ($1, $2, $3, 'export const seed = 1', 1, 1)`,
+        [ulid(), workspaceId, fileId],
       )
       await owner.query(
         `INSERT INTO webhook_deliveries
@@ -251,6 +278,49 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
             `INSERT INTO repositories (id, workspace_id, team_id, integration_id, provider, full_name)
              VALUES ($1, $2, $3, $4, 'github', $1)`,
             [id, workspaceId, team?.id ?? id, integration?.id ?? id],
+          )
+          return
+        }
+        case 'repo_index_runs': {
+          const [repository] = await tx.query<{ id: string }>(`SELECT id FROM repositories LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO repo_index_runs (id, workspace_id, repository_id) VALUES ($1, $2, $3)`,
+            [id, workspaceId, repository?.id ?? id],
+          )
+          return
+        }
+        case 'code_files': {
+          const [repository] = await tx.query<{ id: string }>(`SELECT id FROM repositories LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO code_files (id, workspace_id, repository_id, path, content_hash)
+             VALUES ($1, $2, $3, $1, $1)`,
+            [id, workspaceId, repository?.id ?? id],
+          )
+          return
+        }
+        case 'code_symbols': {
+          const [file] = await tx.query<{ id: string }>(`SELECT id FROM code_files LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO code_symbols (id, workspace_id, file_id, kind, name, line_start, line_end)
+             VALUES ($1, $2, $3, 'function', 'x', 1, 1)`,
+            [id, workspaceId, file?.id ?? id],
+          )
+          return
+        }
+        case 'code_imports': {
+          const [file] = await tx.query<{ id: string }>(`SELECT id FROM code_files LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO code_imports (id, workspace_id, file_id, specifier) VALUES ($1, $2, $3, 'x')`,
+            [id, workspaceId, file?.id ?? id],
+          )
+          return
+        }
+        case 'code_chunks': {
+          const [file] = await tx.query<{ id: string }>(`SELECT id FROM code_files LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO code_chunks (id, workspace_id, file_id, text, line_start, line_end)
+             VALUES ($1, $2, $3, 'x', 1, 1)`,
+            [id, workspaceId, file?.id ?? id],
           )
           return
         }

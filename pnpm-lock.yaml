@@ -7,10 +7,6 @@ settings:
 importers:
 
   .:
-    dependencies:
-      '@vscode/tree-sitter-wasm':
-        specifier: 0.3.1
-        version: 0.3.1
     devDependencies:
       '@chorus/api':
         specifier: workspace:*
@@ -24,6 +20,9 @@ importers:
       '@chorus/db':
         specifier: workspace:*
         version: link:packages/db
+      '@chorus/indexer':
+        specifier: workspace:*
+        version: link:packages/indexer
       '@chorus/llm':
         specifier: workspace:*
         version: link:packages/llm
@@ -156,6 +155,37 @@ importers:
       '@types/pg':
         specifier: 8.11.10
         version: 8.11.10
+      typescript:
+        specifier: 5.6.3
+        version: 5.6.3
+      vitest:
+        specifier: 2.1.3
+        version: 2.1.3(@types/node@22.7.5)
+
+  packages/indexer:
+    dependencies:
+      '@chorus/core':
+        specifier: workspace:*
+        version: link:../core
+      '@chorus/db':
+        specifier: workspace:*
+        version: link:../db
+      '@chorus/llm':
+        specifier: workspace:*
+        version: link:../llm
+      '@vscode/tree-sitter-wasm':
+        specifier: 0.3.1
+        version: 0.3.1
+      ignore:
+        specifier: 7.0.8
+        version: 7.0.8
+    devDependencies:
+      '@chorus/config':
+        specifier: workspace:*
+        version: link:../config
+      '@types/node':
+        specifier: 22.7.5
+        version: 22.7.5
       typescript:
         specifier: 5.6.3
         version: 5.6.3
@@ -1203,6 +1233,10 @@ packages:
 
   ignore@5.3.2:
     resolution: {integrity: sha512-hsBTNUqQTDwkWtcdYI2i06Y/nUBEsNEDJKjWdigLvegy8kDuJAS8uRlpkkcQpyEXL0Z/pjDy5HBmMjRCJ2gq+g==}
+    engines: {node: '>= 4'}
+
+  ignore@7.0.8:
+    resolution: {integrity: sha512-YYNsSlXBjMk92SKnkwvB5LOVSa6OznlFUGcsvrFgNJbJCd0M1XKeFVRc8ZByeCqz32FivYNHJVooLmdqrmvp/Q==}
     engines: {node: '>= 4'}
 
   import-fresh@3.3.1:
@@ -2732,6 +2766,8 @@ snapshots:
       safer-buffer: 2.1.2
 
   ignore@5.3.2: {}
+
+  ignore@7.0.8: {}
 
   import-fresh@3.3.1:
     dependencies:

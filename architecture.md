@@ -515,7 +515,11 @@ On connect, on schedule and on push webhooks: shallow clone or fetch → walk re
 - **design system**: local component library path, or a design-system package in dependencies
 - **preview provider**: `vercel.json`, `netlify.toml`, Cloudflare Pages config, GitHub Actions deploy jobs
 
-Indexing is incremental by commit: only changed files are re-parsed, re-chunked and re-embedded.
+Indexing is incremental by commit: only changed files are re-parsed, re-chunked and re-embedded. The decision is a **content hash per file**, not a diff from the provider — a hash is true whatever route the change arrived by, so a scheduled sync, a push webhook and a first index all take the same path. A file whose hash is unchanged still has its `commit_sha` moved forward, so the row says which commit it was last confirmed at rather than which commit last altered it. Deleted files are removed rather than left behind: a chunk that survives its file is a citation pointing at code that no longer exists. Re-indexing a file *replaces* its symbols, imports and chunks rather than appending, or a renamed function stays findable under both names forever.
+
+**Parsing is contained** (BRAIN-2 AC7). tree-sitter is error-tolerant and returns a tree with ERROR nodes rather than throwing, so a tree containing errors is treated as a failure and the salvaged fragments are discarded: half-parsed symbols in the index mean citations pointing at things that are not there. The file is still indexed and chunked by a fallback window, so it stays retrievable as text with no structure claimed for it. A parse *failure* and an *unsupported language* are deliberately different states — the first is recorded against the file and reported by the run, the second is expected, and conflating them would fill the failure log with every `.txt` in the repository.
+
+**Chunking** is symbol-aligned where the parse succeeded and windowed otherwise, capped at 80 lines with a 10-line overlap. Nested symbols are dropped in favour of their outermost enclosing one: a class and its methods both parse, and chunking both stores every method body twice, letting one well-structured file dominate retrieval. Gaps between symbols — imports, constants, top-level statements — are chunked too, because that is where a repository's conventions live and dropping them makes the most useful lines the unfindable ones.
 
 ### 10.3 Extraction (BRAIN-3)
 

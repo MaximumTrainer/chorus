@@ -26,6 +26,7 @@
     "@chorus/connectors": "workspace:*",
     "@chorus/core": "workspace:*",
     "@chorus/db": "workspace:*",
+    "@chorus/indexer": "workspace:*",
     "@chorus/llm": "workspace:*",
     "@chorus/testing": "workspace:*",
     "@eslint/js": "9.13.0",
@@ -36,8 +37,5 @@
     "typescript-eslint": "8.11.0",
     "vitest": "2.1.3",
     "yaml": "2.6.0"
-  },
-  "dependencies": {
-    "@vscode/tree-sitter-wasm": "0.3.1"
   }
 }
