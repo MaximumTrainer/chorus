@@ -23,7 +23,9 @@ import { createRepositoryService } from './repositories.js'
 import { repositoryRoutes } from './repository-routes.js'
 import { runRoutes, type RunResumer } from './run-routes.js'
 import { notificationRoutes } from './notification-routes.js'
+import { decisionLinkRoutes } from './decision-link-routes.js'
 import { createNotifier } from '@chorus/notifications'
+import { createDecisionLinks } from '@chorus/agent'
 // WALKING SKELETON — delete in Phase 1. See src/walking-skeleton/README.md.
 import { walkingSkeletonRoutes } from './walking-skeleton/ask.js'
 import { authorise, type AuthorisationDeps } from './authorisation.js'
@@ -195,6 +197,7 @@ function buildRoutes(
       ...repositoryRoutes(repositories),
       ...runRoutes(config, resumeRun),
       ...notificationRoutes(createNotifier(config, { baseUrl, ...(mailer ? { mail: mailer } : {}) })),
+      ...decisionLinkRoutes(config, createDecisionLinks(config), resumeRun),
       // WALKING SKELETON — delete in Phase 1. Mounted only when a provider is
       // supplied, so a deployment without one simply does not have it.
       ...(models ? walkingSkeletonRoutes({ dbConfig: config, models }) : []),

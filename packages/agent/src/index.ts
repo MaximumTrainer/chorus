@@ -30,3 +30,10 @@ export type {
   DecisionInput,
   DecisionOutcome,
 } from './checkpoints.js'
+export {
+  createDecisionLinks,
+  issueDecisionToken,
+  issueDecisionTokenFor,
+  hashDecisionToken,
+} from './decision-links.js'
+export type { DecisionLinks, ResolvedDecisionLink } from './decision-links.js'

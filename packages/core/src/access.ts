@@ -22,6 +22,27 @@ export type AuthRequirement =
   /** Deliberately unauthenticated. `reason` makes that a decision, not an omission. */
   | { readonly kind: 'public'; readonly reason: string }
   /**
+   * Authenticated by something that is not a session: a single-use token in an
+   * email, and later a signed action from a chat surface.
+   *
+   * Deliberately its own kind rather than `public`. A route reached with a
+   * capability token is not unauthenticated, and filing it under `public`
+   * would put it in the same bucket as `/healthz` — where the enumeration gate
+   * would stop being able to tell the two apart, which is precisely the
+   * distinction that gate exists to police. `credential` names what is
+   * presented, so the route table can be read as a list of every non-session
+   * way into the system.
+   *
+   * The requirement is only that a credential exists and is named here; the
+   * route itself verifies it, because only the route knows what the token is
+   * bound to.
+   */
+  | {
+      readonly kind: 'capability'
+      readonly credential: string
+      readonly reason: string
+    }
+  /**
    * A session is required but membership is not, because there is no workspace
    * in scope yet — creating your first workspace cannot require belonging to
    * one. `reason` is required for the same purpose it serves on `public`.
@@ -81,6 +102,10 @@ export type AccessDecision =
 
 export function decideAccess(request: AccessRequest): AccessDecision {
   if (request.auth.kind === 'public') return { outcome: 'allow' }
+
+  // The route verifies the capability itself, since only it knows what the
+  // token is bound to. What this decides is that no *session* is required.
+  if (request.auth.kind === 'capability') return { outcome: 'allow' }
 
   if (!request.user) return { outcome: 'unauthenticated' }
 

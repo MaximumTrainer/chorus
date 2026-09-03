@@ -23,6 +23,20 @@ function outcomeOf(decision: AccessDecision): string {
 }
 
 describe('WS-4 access decision', () => {
+  it('WS-4 AC4: a capability route is allowed without a session, and says what its credential is', () => {
+    // Not `public`. A route reached with a single-use emailed token is not
+    // unauthenticated — it is authenticated by something that is not a session,
+    // and calling it public would put it in the same bucket as /healthz. The
+    // enumeration gate depends on that distinction being in the declaration.
+    const auth: AuthRequirement = {
+      kind: 'capability',
+      credential: 'checkpoint_decision_token',
+      reason: 'Single-use token bound to one checkpoint and one recipient.',
+    }
+
+    expect(decideAccess({ auth })).toEqual({ outcome: 'allow' })
+  })
+
   it('WS-4 AC4: a public route admits everyone, signed in or not', () => {
     const auth: AuthRequirement = { kind: 'public', reason: 'Health is polled without credentials.' }
     expect(outcomeOf(decideAccess({ auth }))).toBe('allow')

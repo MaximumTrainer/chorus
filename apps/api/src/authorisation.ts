@@ -141,6 +141,15 @@ export function authorise(definition: RouteDefinition, deps: AuthorisationDeps) 
       return
     }
 
+    if (definition.auth.kind === 'capability') {
+      // No session is required, and none is consulted. The route verifies its
+      // own credential, because only it knows what the token is bound to — a
+      // check here could only ask "is this string a token", which is the least
+      // useful half of the question.
+      await next()
+      return
+    }
+
     const session = c.get('user')
 
     if (definition.auth.kind === 'authenticated') {

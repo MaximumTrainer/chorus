@@ -19,6 +19,7 @@ import {
 } from './checkpoints.js'
 import type { ModelProvider, ModelRef } from '@chorus/llm'
 import { withSpan } from '@chorus/telemetry'
+import { issueDecisionToken } from './decision-links.js'
 import type { ToolRegistry } from './registry.js'
 
 /**
@@ -973,6 +974,21 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
     const created = await readGate(workspaceId, runId, step)
 
     if (created?.status === 'pending' && deps.notify) {
+      // Minted here, where the recipient and the gate are both known, so the
+      // dispatcher stays generic (plan.md §2.1: checkpoint-specific rendering
+      // sits on top of the primitive, not inside it). The raw token is never
+      // stored — it exists in the email and nowhere else.
+      const token = await tx(workspaceId, (t) =>
+        issueDecisionToken(t, {
+          workspaceId,
+          checkpointId: created.id,
+          userId: startedBy,
+          // The gate's own deadline. A token outliving its checkpoint is a
+          // credential for something that can no longer happen.
+          expiresAt: new Date(created.expiresAt),
+        }),
+      )
+
       // Raised only for a gate that is genuinely waiting. An `auto` checkpoint
       // asks nobody, and telling someone about a decision already made trains
       // them to ignore the ones that are not.
@@ -994,7 +1010,11 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
         // Urgent by nature: a run is stopped until this is answered, so it must
         // not be swept into a digest (AC5).
         priority: 'urgent',
-        path: `/workspaces/${workspaceId}/checkpoints/${created.id}`,
+        // The actionable link when one was minted; the in-app path otherwise,
+        // which a recipient who is signed in can still follow.
+        path: token
+          ? `/checkpoint-decisions/${token}`
+          : `/workspaces/${workspaceId}/checkpoints/${created.id}`,
         payload: { runId, step, kind, workflow: `${definition.name}@${definition.version}` },
       })
     }

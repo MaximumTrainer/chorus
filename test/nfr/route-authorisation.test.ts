@@ -39,6 +39,12 @@ describe('WS-4 AC4 route authorisation is declared, not remembered', () => {
         expect(route.auth.reason, 'a membership-free route must justify itself').toBeTruthy()
         expect(route.auth.reason.length).toBeGreaterThan(10)
         expect(Array.isArray(route.auth.scopes)).toBe(true)
+      } else if (route.auth.kind === 'capability') {
+        // Reached without a session, so it justifies itself like the two above
+        // — and additionally names what it accepts, because "authenticated
+        // somehow" is not a declaration anyone can review.
+        expect(route.auth.credential, 'a capability route must name its credential').toBeTruthy()
+        expect(route.auth.reason.length).toBeGreaterThan(10)
       } else {
         expect(['member', 'senior_member', 'admin', 'owner']).toContain(route.auth.role)
         expect(Array.isArray(route.auth.scopes)).toBe(true)
@@ -85,6 +91,30 @@ describe('WS-4 AC4 route authorisation is declared, not remembered', () => {
   it('WS-4 AC4: no two routes share a method and path', () => {
     const keys = ROUTES.map((r) => `${r.method} ${r.path}`)
     expect(new Set(keys).size).toBe(keys.length)
+  })
+
+  it('WS-4 AC4: every non-session way into the system is enumerated here', () => {
+    // A capability route is reached without a session, so it is exactly the
+    // kind of route that must not be able to appear unnoticed. Pinned by name:
+    // adding one is then a deliberate edit to this list with a reviewer on it,
+    // which is the whole point of declaring authorisation as data.
+    const capabilities = ROUTES.filter((r) => r.auth.kind === 'capability').map(
+      (r) => `${r.method} ${r.path}`,
+    )
+    expect(capabilities.sort()).toEqual([
+      'GET /checkpoint-decisions/:token',
+      'POST /checkpoint-decisions/:token',
+    ])
+  })
+
+  it('WS-4 AC4: a capability route names the credential it accepts', () => {
+    for (const route of ROUTES) {
+      if (route.auth.kind !== 'capability') continue
+      // "Authenticated somehow" is not a declaration. Naming the credential is
+      // what lets a reader of the table see what each one actually opens.
+      expect(route.auth.credential, `${route.path} must name its credential`).toMatch(/\S/)
+      expect(route.auth.reason.length, `${route.path} must justify itself`).toBeGreaterThan(20)
+    }
   })
 
   it('WS-4 AC4: only health and well-known endpoints are fully public', () => {

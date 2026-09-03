@@ -157,10 +157,23 @@ describe('WS-4 permission suite', () => {
                 ? await anonymous.patch(path, body)
                 : await anonymous.post(path, body)
 
-      expect(
-        response.status,
-        `${definition.method} ${definition.path} served an unauthenticated caller`,
-      ).toBe(401)
+      if (definition.auth.kind === 'capability') {
+        // A capability route is *meant* to serve a caller with no session — the
+        // token is the credential. What must still be true is that a caller
+        // presenting no valid one gets nothing, and it answers 404 rather than
+        // 401 because there is no sign-in that would help. Asserted as "refused
+        // and not served" rather than as a specific code, so this stays a real
+        // check without pretending the route has a session to be missing.
+        expect(
+          response.status,
+          `${definition.method} ${definition.path} served a caller with no credential`,
+        ).toBeGreaterThanOrEqual(400)
+      } else {
+        expect(
+          response.status,
+          `${definition.method} ${definition.path} served an unauthenticated caller`,
+        ).toBe(401)
+      }
       exercised += 1
     }
 
