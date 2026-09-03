@@ -21,6 +21,7 @@ import { createOAuthService, OAuthError } from './oauth.js'
 import { oauthRoutes } from './oauth-routes.js'
 import { createRepositoryService } from './repositories.js'
 import { repositoryRoutes } from './repository-routes.js'
+import { runRoutes, type RunResumer } from './run-routes.js'
 // WALKING SKELETON — delete in Phase 1. See src/walking-skeleton/README.md.
 import { walkingSkeletonRoutes } from './walking-skeleton/ask.js'
 import { authorise, type AuthorisationDeps } from './authorisation.js'
@@ -57,6 +58,14 @@ export interface AppOptions {
   maxSignInAttempts?: number
   /** A generic OIDC provider, discovered from its issuer (WS-1 AC3). */
   oidc?: OidcConfig
+  /**
+   * How a run is continued once a checkpoint is decided (AGENT-3).
+   *
+   * Injected because the API settles decisions and does not execute runs: in a
+   * deployment this enqueues, and a route that ran the workflow inline would
+   * tie a browser to however long the rest of it takes.
+   */
+  resumeRun?: RunResumer
   /**
    * The model provider. Injected so a test never reaches a real one
    * (CLAUDE.md §4).
@@ -163,6 +172,7 @@ export function routeTable(dbConfig?: DbConfig, models?: ModelProvider): readonl
 function buildRoutes(
   config: DbConfig,
   models?: ModelProvider,
+  resumeRun?: RunResumer,
 ): {
   table: readonly RouteDefinition[]
   deps: AuthorisationDeps
@@ -179,6 +189,7 @@ function buildRoutes(
       ...teamRoutes(teams),
       ...apiTokenRoutes(tokens),
       ...repositoryRoutes(repositories),
+      ...runRoutes(config, resumeRun),
       // WALKING SKELETON — delete in Phase 1. Mounted only when a provider is
       // supplied, so a deployment without one simply does not have it.
       ...(models ? walkingSkeletonRoutes({ dbConfig: config, models }) : []),
@@ -355,7 +366,7 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
   const isProduction = process.env.NODE_ENV === 'production'
   const built =
     options.dbConfig || options.mailer
-      ? buildRoutes(options.dbConfig ?? configFromEnv(), options.models)
+      ? buildRoutes(options.dbConfig ?? configFromEnv(), options.models, options.resumeRun)
       : undefined
 
   for (const definition of built?.table ?? ROUTES) {

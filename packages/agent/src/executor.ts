@@ -1,11 +1,21 @@
 import { createHash } from 'node:crypto'
 import {
   NotFoundError,
+  resolveCheckpointPolicy,
   ulid,
+  type CheckpointKind,
+  type PolicyRule,
+  type ResolvedPolicy,
   type WorkflowDefinition,
   type WorkflowStep,
 } from '@chorus/core'
 import { withTenant, type DbConfig, type TenantTx } from '@chorus/db'
+import {
+  CHECKPOINT_COLUMNS,
+  toCheckpointRecord,
+  type CheckpointRecord,
+  type CheckpointRow,
+} from './checkpoints.js'
 import type { ModelProvider, ModelRef } from '@chorus/llm'
 import { withSpan } from '@chorus/telemetry'
 import type { ToolRegistry } from './registry.js'
@@ -64,7 +74,30 @@ export interface ExecutorDeps {
    */
   readonly modelFor: (tier: string) => ModelRef
   readonly now?: () => Date
+  /**
+   * How long an `ask` checkpoint waits before it expires (AGENT-3 AC6).
+   *
+   * Three days by default: long enough to survive a weekend, short enough that
+   * a forgotten gate does not sit open indefinitely. A paused run holds no
+   * resources, so the cost of the window is staleness, not capacity.
+   */
+  readonly checkpointTtlMs?: number
 }
+
+const DEFAULT_CHECKPOINT_TTL_MS = 72 * 60 * 60 * 1000
+
+/**
+ * What a step did, rather than what it returned.
+ *
+ * A checkpoint does not produce a value — it decides whether the run continues
+ * at all — so the executor needs three answers, not one. Signalling a pause by
+ * throwing would record the step as failed, and a run waiting for a person is
+ * not a failure.
+ */
+type StepResult =
+  | { readonly kind: 'output'; readonly output: unknown }
+  | { readonly kind: 'pause' }
+  | { readonly kind: 'stop'; readonly reason: string }
 
 export interface StartInput {
   readonly workspaceId: string
@@ -121,6 +154,79 @@ function resolve(value: unknown, outputs: Readonly<Record<string, unknown>>): un
   if (typeof value !== 'string') return value
   const match = /^\{\{\s*([a-z][a-z0-9_]*)\.output\s*\}\}$/.exec(value)
   return match ? outputs[match[1]!] : value
+}
+
+/**
+ * Expiring unanswered checkpoints (AGENT-3 AC6).
+ *
+ * A gate nobody answers must end its run rather than hold it open forever. The
+ * deadline is a column, not a timer in a process's memory, so expiry survives
+ * every restart and is a query any worker can run.
+ *
+ * The direction matters: expiry **ends** the run and does not perform the
+ * gated action. The safe default when a human never answered is that nothing
+ * happened, so a forgotten approval can never become an implicit one.
+ *
+ * Returns how many it swept, which is what makes "nothing expired" a fact a
+ * test can assert rather than an absence it has to infer.
+ */
+export async function expireCheckpoints(
+  config: DbConfig,
+  options: { workspaceId: string; now?: () => Date },
+): Promise<number> {
+  const at = (options.now ?? (() => new Date()))()
+
+  return withTenant(
+    options.workspaceId,
+    async (t) => {
+      const expired = await t.query<{ id: string; run_id: string; kind: string }>(
+        `UPDATE checkpoints
+            SET status = 'expired', decided_at = $1
+          WHERE status = 'pending' AND expires_at <= $1
+          RETURNING id, run_id, kind`,
+        [at.toISOString()],
+      )
+
+      for (const row of expired) {
+        // Stopped, not failed: the run did exactly what it was told to do when
+        // nobody answered.
+        await t.execute(
+          `UPDATE runs
+              SET status = 'stopped', error = $2, finished_at = $3
+            WHERE id = $1 AND status = 'waiting_human'`,
+          [
+            row.run_id,
+            `Stopped at ${row.kind}: the checkpoint expired unanswered, ` +
+              `so the action was not performed.`,
+            at.toISOString(),
+          ],
+        )
+        await t.execute(
+          `UPDATE run_steps SET status = 'skipped', finished_at = $2
+            WHERE run_id = $1 AND status = 'waiting'`,
+          [row.run_id, at.toISOString()],
+        )
+        const [last] = await t.query<{ next: number }>(
+          `SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM run_events WHERE run_id = $1`,
+          [row.run_id],
+        )
+        await t.execute(
+          `INSERT INTO run_events (id, workspace_id, run_id, seq, kind, payload)
+           VALUES ($1, $2, $3, $4, 'checkpoint', $5)`,
+          [
+            ulid(),
+            options.workspaceId,
+            row.run_id,
+            last?.next ?? 1,
+            JSON.stringify({ checkpoint: row.id, outcome: 'expired' }),
+          ],
+        )
+      }
+
+      return expired.length
+    },
+    { config },
+  )
 }
 
 export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
@@ -261,7 +367,7 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
         )
 
         try {
-          const output = await withSpan(
+          const result = await withSpan(
             `agent.step.${step.type}`,
             {
               'chorus.workspace_id': workspaceId,
@@ -281,6 +387,51 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
               }),
           )
 
+          if (result.kind === 'pause') {
+            // Waiting, not running. A paused run left as `running` is
+            // indistinguishable from a stuck one, and stuck is what an operator
+            // is meant to act on.
+            await tx(workspaceId, async (t) => {
+              await t.execute(
+                `UPDATE run_steps SET status = 'waiting' WHERE run_id = $1 AND step_id = $2`,
+                [runId, step.id],
+              )
+              await t.execute(`UPDATE runs SET status = 'waiting_human' WHERE id = $1`, [runId])
+            })
+            return {
+              runId,
+              status: 'waiting_human',
+              stepsExecuted: executed,
+              stepsSkipped: skipped,
+            }
+          }
+
+          if (result.kind === 'stop') {
+            // Stopped, not failed. A policy of `never`, a rejection or an
+            // expiry are all the system working as asked; recording them as
+            // failures would put healthy runs in an error dashboard.
+            await tx(workspaceId, async (t) => {
+              await t.execute(
+                `UPDATE run_steps SET status = 'skipped', finished_at = now()
+                  WHERE run_id = $1 AND step_id = $2`,
+                [runId, step.id],
+              )
+              await t.execute(
+                `UPDATE runs SET status = 'stopped', error = $1, finished_at = now()
+                  WHERE id = $2`,
+                [result.reason, runId],
+              )
+            })
+            return {
+              runId,
+              status: 'stopped',
+              stepsExecuted: executed,
+              stepsSkipped: skipped,
+              error: result.reason,
+            }
+          }
+
+          const output = result.output
           outputs[step.id] = output
           executed += 1
 
@@ -367,7 +518,7 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
     teamId: string
     runId: string
     actor: { userId: string; role: 'member' | 'senior_member' | 'admin' | 'owner' }
-  }): Promise<unknown> {
+  }): Promise<StepResult> {
     const { step, definition, outputs, workspaceId, teamId, runId, actor } = input
     const ctx = { workspaceId, teamId, runId, actor, now }
 
@@ -383,7 +534,7 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
           step: step.id,
           tool: step.tool,
         })
-        return result
+        return { kind: 'output', output: result }
       }
 
       case 'model': {
@@ -404,8 +555,11 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
           model: model.model,
           prompt: step.prompt,
         })
-        return text
+        return { kind: 'output', output: text }
       }
+
+      case 'checkpoint':
+        return gate({ step: step.id, kind: step.kind, definition, outputs, workspaceId, teamId, runId })
 
       // The remaining step types arrive with the slices that need them:
       // `checkpoint` with AGENT-3, `retrieve` with BRAIN-4, `emit` with the
@@ -416,6 +570,248 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
           step: step.id,
           type: step.type,
         })
+    }
+  }
+
+  /**
+   * The gate (AGENT-3).
+   *
+   * Reached twice in the life of a paused run: once on the way in, when it
+   * creates the checkpoint and stops, and once on the way back, when a decision
+   * has been made and it either continues or ends the run. So the first thing
+   * it does is look for a checkpoint that already exists — a run reaching this
+   * step is more often resuming than arriving.
+   */
+  async function gate(input: {
+    step: string
+    kind: CheckpointKind
+    definition: WorkflowDefinition
+    outputs: Readonly<Record<string, unknown>>
+    workspaceId: string
+    teamId: string
+    runId: string
+  }): Promise<StepResult> {
+    const { step, kind, definition, outputs, workspaceId, teamId, runId } = input
+
+    const existing = await readGate(workspaceId, runId, step)
+    if (existing) return continueFrom(existing)
+
+    const policy = await resolvePolicy(workspaceId, teamId, definition.name, kind)
+
+    if (policy.mode === 'never') {
+      // AC5: prevented, not paused. No row is created, which is what makes
+      // "asks nobody" structural rather than a promise — there is nothing for
+      // any surface to present, and no answer that could change the outcome.
+      await recordEvent(workspaceId, runId, 'checkpoint', {
+        step,
+        kind,
+        mode: 'never',
+        source: policy.source,
+      })
+      return {
+        kind: 'stop',
+        reason:
+          `Stopped at ${kind}: the ${policy.source} policy is "never", ` +
+          `so this run may not proceed past it.`,
+      }
+    }
+
+    const payload = await proposalFor({
+      kind,
+      step,
+      definition,
+      outputs,
+      workspaceId,
+      runId,
+      policy,
+    })
+    const auto = policy.mode === 'auto'
+    const expiresAt = new Date(
+      now().getTime() + (deps.checkpointTtlMs ?? DEFAULT_CHECKPOINT_TTL_MS),
+    )
+
+    await tx(workspaceId, (t) =>
+      t.execute(
+        `INSERT INTO checkpoints
+           (id, workspace_id, run_id, step_id, kind, policy_source, mode, status, payload,
+            decision, decided_at, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         ON CONFLICT (run_id, step_id) DO NOTHING`,
+        [
+          ulid(),
+          workspaceId,
+          runId,
+          step,
+          kind,
+          policy.source,
+          policy.mode,
+          // A gate passed automatically is still a gate that was passed. Not
+          // recording it would leave a trace unable to answer "who allowed
+          // this" — and "the team's policy did" is a legitimate answer, but
+          // only if there is a row to say so.
+          auto ? 'approved' : 'pending',
+          JSON.stringify(payload),
+          auto ? 'approve' : null,
+          auto ? now().toISOString() : null,
+          expiresAt.toISOString(),
+        ],
+      ),
+    )
+
+    await recordEvent(workspaceId, runId, 'checkpoint', {
+      step,
+      kind,
+      mode: policy.mode,
+      source: policy.source,
+    })
+
+    // Re-read rather than trust the insert: `DO NOTHING` means another worker
+    // may have created the row, and if that one was answered in the meantime
+    // this run should honour the answer rather than wait for a second one.
+    const created = await readGate(workspaceId, runId, step)
+    return created ? continueFrom(created) : { kind: 'pause' }
+  }
+
+  /** What a settled — or still unsettled — checkpoint means for the run. */
+  function continueFrom(checkpoint: CheckpointRecord): StepResult {
+    switch (checkpoint.status) {
+      case 'pending':
+        return { kind: 'pause' }
+
+      case 'approved':
+        return {
+          kind: 'output',
+          output: {
+            approved: true,
+            decision: checkpoint.decision,
+            decidedBy: checkpoint.decidedBy,
+            // What the human allowed, which is not always what was proposed.
+            payload: checkpoint.editedPayload ?? checkpoint.payload,
+          },
+        }
+
+      case 'rejected':
+        return {
+          kind: 'stop',
+          reason: checkpoint.decisionNote
+            ? `Rejected at ${checkpoint.kind}: ${checkpoint.decisionNote}`
+            : `Rejected at ${checkpoint.kind}.`,
+        }
+
+      case 'expired':
+        return {
+          kind: 'stop',
+          reason:
+            `Stopped at ${checkpoint.kind}: the checkpoint expired unanswered, ` +
+            `so the action was not performed.`,
+        }
+    }
+  }
+
+  async function readGate(
+    workspaceId: string,
+    runId: string,
+    stepId: string,
+  ): Promise<CheckpointRecord | undefined> {
+    const [row] = await tx(workspaceId, (t) =>
+      t.query<CheckpointRow>(
+        `SELECT ${CHECKPOINT_COLUMNS} FROM checkpoints WHERE run_id = $1 AND step_id = $2`,
+        [runId, stepId],
+      ),
+    )
+    return row ? toCheckpointRecord(row) : undefined
+  }
+
+  /**
+   * The policy tiers, read from rows and resolved by the shared pure function.
+   *
+   * Resolution lives in `packages/core` and the API consumes the same function.
+   * Two implementations would eventually disagree, and a disagreement here is a
+   * gate that silently stopped gating.
+   */
+  async function resolvePolicy(
+    workspaceId: string,
+    teamId: string,
+    workflowName: string,
+    kind: CheckpointKind,
+  ): Promise<ResolvedPolicy> {
+    const rows = await tx(workspaceId, (t) =>
+      t.query<{
+        team_id: string | null
+        workflow_name: string | null
+        checkpoint_kind: CheckpointKind
+        mode: 'auto' | 'ask' | 'never'
+        spend_threshold_cents: number | null
+      }>(
+        `SELECT team_id, workflow_name, checkpoint_kind, mode, spend_threshold_cents
+           FROM policies
+          WHERE checkpoint_kind = $1 AND deleted_at IS NULL`,
+        [kind],
+      ),
+    )
+
+    const rules: PolicyRule[] = rows.map((row) => ({
+      teamId: row.team_id ?? undefined,
+      workflowName: row.workflow_name ?? undefined,
+      checkpointKind: row.checkpoint_kind,
+      mode: row.mode,
+      spendThresholdCents: row.spend_threshold_cents ?? undefined,
+    }))
+
+    return resolveCheckpointPolicy(rules, { teamId, workflowName, checkpointKind: kind })
+  }
+
+  /**
+   * What the person deciding is shown.
+   *
+   * "Present the actual payload — the tasks that would be created, the message
+   * that would be posted — not a summary." So this carries the run's
+   * accumulated outputs, which is literally the work the next step would act
+   * on.
+   */
+  async function proposalFor(input: {
+    kind: CheckpointKind
+    step: string
+    definition: WorkflowDefinition
+    outputs: Readonly<Record<string, unknown>>
+    workspaceId: string
+    runId: string
+    policy: ResolvedPolicy
+  }): Promise<Record<string, unknown>> {
+    const { kind, step, definition, outputs, workspaceId, runId, policy } = input
+    const base: Record<string, unknown> = {
+      step,
+      workflow: `${definition.name}@${definition.version}`,
+      kind,
+      proposed: outputs,
+    }
+
+    if (kind !== 'before_spend_over') return base
+
+    // AC7: spend so far, the threshold, and what finishing is likely to cost.
+    // "You have spent 412" answers nothing on its own.
+    const [row] = await tx(workspaceId, (t) =>
+      t.query<{ cost_cents: number; done: string }>(
+        `SELECT r.cost_cents,
+                (SELECT count(*) FROM run_steps s
+                  WHERE s.run_id = r.id AND s.status = 'succeeded') AS done
+           FROM runs r WHERE r.id = $1`,
+        [runId],
+      ),
+    )
+    const spent = row?.cost_cents ?? 0
+    const done = Number(row?.done ?? 0)
+    const remaining = Math.max(0, definition.steps.length - done - 1)
+
+    return {
+      ...base,
+      spendSoFarCents: spent,
+      thresholdCents: policy.spendThresholdCents ?? null,
+      // Deliberately crude: this run's own cost per completed step, projected
+      // over the steps that are left. It is an estimate, presented as one, and
+      // better than showing nothing — but it is not a forecast, and a real
+      // per-step cost model belongs with the trace work (AGENT-4).
+      estimatedRemainingCents: done === 0 ? 0 : Math.round((spent / done) * remaining),
     }
   }
 

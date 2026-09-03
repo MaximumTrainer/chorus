@@ -191,6 +191,12 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
         [ulid(), workspaceId, runId],
       )
       await owner.query(
+        `INSERT INTO checkpoints
+           (id, workspace_id, run_id, step_id, kind, policy_source, mode, expires_at)
+         VALUES ($1, $2, $3, 'seed', 'before_create_artefacts', 'platform', 'ask', now() + interval '1 day')`,
+        [ulid(), workspaceId, runId],
+      )
+      await owner.query(
         `INSERT INTO route_map
            (id, workspace_id, repository_id, route_pattern, component_file_id, component_path)
          VALUES ($1, $2, $3, '/', $4, 'src/seed.ts')`,
@@ -389,6 +395,16 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
           await tx.execute(
             `INSERT INTO run_events (id, workspace_id, run_id, seq, kind)
              VALUES ($1, $2, $3, 1, 'error')`,
+            [id, workspaceId, run?.id ?? id],
+          )
+          return
+        }
+        case 'checkpoints': {
+          const [run] = await tx.query<{ id: string }>(`SELECT id FROM runs LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO checkpoints
+               (id, workspace_id, run_id, step_id, kind, policy_source, mode, expires_at)
+             VALUES ($1, $2, $3, $1, 'before_create_artefacts', 'platform', 'ask', now() + interval '1 day')`,
             [id, workspaceId, run?.id ?? id],
           )
           return

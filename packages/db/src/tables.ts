@@ -28,6 +28,7 @@ export const TENANT_TABLES = [
   'runs',
   'run_steps',
   'run_events',
+  'checkpoints',
   'signals',
   'webhook_deliveries',
   'audit_events',
