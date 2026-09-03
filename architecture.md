@@ -408,7 +408,7 @@ The application connects as a role **without** `BYPASSRLS`. Migrations run as a 
 `coding_jobs(task_id, run_id, adapter, repo_id, base_sha, branch, status, sandbox_id, brief_key, log_key, diff_key, pr_url, pr_number, preview_url, kind, limits jsonb, result jsonb)`, `job_events(job_id, seq, kind, payload jsonb)`.
 
 **System**
-`audit_events(actor_type, actor_id, action, target_type, target_id, before jsonb, after jsonb, at)`, `notifications(user_id, kind, payload jsonb, read_at)`, `webhook_deliveries(integration_id, delivery_id, signature_ok, headers jsonb, payload text, processed_at, error)`, `spend_ledger(workspace_id, team_id, run_id, provider, model, tokens_in, tokens_out, cost_cents, at)`, `feature_flags`.
+`audit_events(actor_type, actor_id, action, target_type, target_id, before jsonb, after jsonb, at)`, `notifications(user_id, kind, priority, subject, body, target_type, target_id, payload jsonb, read_at)`, `notification_preferences(user_id, kind, channel, enabled)`, `notification_deliveries(notification_id, channel, status, attempts, last_error, delivered_at)`, `webhook_deliveries(integration_id, delivery_id, signature_ok, headers jsonb, payload text, processed_at, error)`, `spend_ledger(workspace_id, team_id, run_id, provider, model, tokens_in, tokens_out, cost_cents, at)`, `feature_flags`.
 
 ### 8.3 Indexing strategy
 
@@ -715,6 +715,22 @@ Three mechanics are worth stating because each removes a way for a gate to stop 
 Retrieved content is always wrapped in a labelled, delimited block marked as **data, not instructions**. External-write tools always pass a checkpoint unless a team explicitly opts into `auto`. `fetch_url` is host-allow-listed. The system prompt states that code pointers must exist in the index, and the emit step validates that every pointer resolves to a real file at a real commit before an artefact is written.
 
 ---
+
+### 11.8 Notifications (SLACK-6)
+
+`packages/notifications` is the baseline surface, and it exists because a self-hosted deployment may connect no chat surface at all. An `ask` checkpoint nobody is told about is not a delayed decision — it is a run stopped forever with nobody aware.
+
+The package knows recipients, kinds, preferences and channels, and nothing about what raised the event. The agent runtime raises an abstract `NotificationEvent` through a `NotificationSink`, both declared in `packages/core` so neither package imports the other (§7). A dispatcher that knew what a checkpoint was would grow a branch per event type, and the fourth would be written by somebody who had forgotten the preference check.
+
+**In-app delivery does not depend on the mail transport.** Misconfigured SMTP is the ordinary state of a fresh deployment, so a failed send is recorded as a failed *delivery* and never as a failed notification: the inbox — the one surface every deployment has — still fills. `notification_deliveries` holds one row per notification per channel with a status of `sent`, `failed` or `suppressed`, so "why did I not get this" is answerable per channel rather than inferred from an absence.
+
+**Defaults live in code, not in rows.** A table pre-populated with every kind for every user would need a backfill on each new kind, and the missing row is exactly when someone stops being told. `checkpoint_requested` defaults on for both channels; most kinds default to in-app only.
+
+**A gating kind cannot be silenced everywhere.** `mayDisable` is a pure function in `core`, consumed by both the API and the dispatcher, and it refuses to turn `checkpoint_requested` off in-app. Email may be declined — that is the channel choice the requirement asks for — but muting the only channel does not mute the work: the run still waits, and nobody is coming.
+
+Mail is sent *outside* the database transaction that writes the notification. Holding a transaction open across a network call is how a slow transport becomes a connection-pool outage.
+
+Still to come in WP-1.2: the single-use decision link carried in a checkpoint email (AC2, and the decision token §11.5 records as deliberately absent), the live in-app badge (AC4, which needs the web app), digest batching (AC5) and transport retry with backoff through the queue (AC6's retry half — the failure is already recorded and visible).
 
 ## 12. Coding-agent execution
 

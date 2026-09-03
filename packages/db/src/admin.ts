@@ -190,6 +190,23 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
          VALUES ($1, $2, $3, 1, 'model_call')`,
         [ulid(), workspaceId, runId],
       )
+      const notificationId = ulid()
+      await owner.query(
+        `INSERT INTO notifications
+           (id, workspace_id, user_id, kind, subject, target_type, target_id)
+         VALUES ($1, $2, $3, 'checkpoint_requested', 'seed', 'checkpoint', $1)`,
+        [notificationId, workspaceId, userId],
+      )
+      await owner.query(
+        `INSERT INTO notification_preferences (id, workspace_id, user_id, kind, channel, enabled)
+         VALUES ($1, $2, $3, 'job_status', 'email', false)`,
+        [ulid(), workspaceId, userId],
+      )
+      await owner.query(
+        `INSERT INTO notification_deliveries (id, workspace_id, notification_id, channel, status)
+         VALUES ($1, $2, $3, 'in_app', 'pending')`,
+        [ulid(), workspaceId, notificationId],
+      )
       await owner.query(
         `INSERT INTO checkpoints
            (id, workspace_id, run_id, step_id, kind, policy_source, mode, expires_at)
@@ -406,6 +423,34 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
                (id, workspace_id, run_id, step_id, kind, policy_source, mode, expires_at)
              VALUES ($1, $2, $3, $1, 'before_create_artefacts', 'platform', 'ask', now() + interval '1 day')`,
             [id, workspaceId, run?.id ?? id],
+          )
+          return
+        }
+        case 'notifications':
+          await tx.execute(
+            `INSERT INTO notifications
+               (id, workspace_id, user_id, kind, subject, target_type, target_id)
+             VALUES ($1, $2, $3, 'mention', 'x', 'checkpoint', $1)`,
+            [id, workspaceId, userId],
+          )
+          return
+        case 'notification_preferences':
+          await tx.execute(
+            `INSERT INTO notification_preferences
+               (id, workspace_id, user_id, kind, channel, enabled)
+             VALUES ($1, $2, $3, 'mention', 'email', true)`,
+            [id, workspaceId, userId],
+          )
+          return
+        case 'notification_deliveries': {
+          const [notification] = await tx.query<{ id: string }>(
+            `SELECT id FROM notifications LIMIT 1`,
+          )
+          await tx.execute(
+            `INSERT INTO notification_deliveries
+               (id, workspace_id, notification_id, channel, status)
+             VALUES ($1, $2, $3, 'email', 'pending')`,
+            [id, workspaceId, notification?.id ?? id],
           )
           return
         }

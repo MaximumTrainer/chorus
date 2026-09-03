@@ -22,6 +22,8 @@ import { oauthRoutes } from './oauth-routes.js'
 import { createRepositoryService } from './repositories.js'
 import { repositoryRoutes } from './repository-routes.js'
 import { runRoutes, type RunResumer } from './run-routes.js'
+import { notificationRoutes } from './notification-routes.js'
+import { createNotifier } from '@chorus/notifications'
 // WALKING SKELETON — delete in Phase 1. See src/walking-skeleton/README.md.
 import { walkingSkeletonRoutes } from './walking-skeleton/ask.js'
 import { authorise, type AuthorisationDeps } from './authorisation.js'
@@ -173,6 +175,8 @@ function buildRoutes(
   config: DbConfig,
   models?: ModelProvider,
   resumeRun?: RunResumer,
+  mailer?: Mailer,
+  baseUrl = 'http://localhost:3000',
 ): {
   table: readonly RouteDefinition[]
   deps: AuthorisationDeps
@@ -190,6 +194,7 @@ function buildRoutes(
       ...apiTokenRoutes(tokens),
       ...repositoryRoutes(repositories),
       ...runRoutes(config, resumeRun),
+      ...notificationRoutes(createNotifier(config, { baseUrl, ...(mailer ? { mail: mailer } : {}) })),
       // WALKING SKELETON — delete in Phase 1. Mounted only when a provider is
       // supplied, so a deployment without one simply does not have it.
       ...(models ? walkingSkeletonRoutes({ dbConfig: config, models }) : []),
@@ -366,7 +371,13 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
   const isProduction = process.env.NODE_ENV === 'production'
   const built =
     options.dbConfig || options.mailer
-      ? buildRoutes(options.dbConfig ?? configFromEnv(), options.models, options.resumeRun)
+      ? buildRoutes(
+          options.dbConfig ?? configFromEnv(),
+          options.models,
+          options.resumeRun,
+          options.mailer,
+          options.baseUrl,
+        )
       : undefined
 
   for (const definition of built?.table ?? ROUTES) {

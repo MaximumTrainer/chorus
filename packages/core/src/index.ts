@@ -79,3 +79,21 @@ export type {
   PolicySource,
   ResolvedPolicy,
 } from './policies.js'
+export {
+  NOTIFICATION_CHANNELS,
+  NOTIFICATION_KINDS,
+  NOTIFICATION_PRIORITIES,
+  GATING_NOTIFICATION_KINDS,
+  defaultNotificationPreference,
+  isNotificationKind,
+  isNotificationChannel,
+  mayDisable,
+} from './notifications.js'
+export type {
+  NotificationChannel,
+  NotificationKind,
+  NotificationPriority,
+  NotificationEvent,
+  NotificationSink,
+  MailTransport,
+} from './notifications.js'

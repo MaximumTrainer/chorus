@@ -4,6 +4,7 @@ import {
   resolveCheckpointPolicy,
   ulid,
   type CheckpointKind,
+  type NotificationSink,
   type PolicyRule,
   type ResolvedPolicy,
   type WorkflowDefinition,
@@ -82,6 +83,16 @@ export interface ExecutorDeps {
    * resources, so the cost of the window is staleness, not capacity.
    */
   readonly checkpointTtlMs?: number
+  /**
+   * Where a "needs a human" event goes (SLACK-6, plan.md §2.1).
+   *
+   * A `NotificationSink` from `core`, not the notifications package: the
+   * runtime raises an abstract event and knows nothing about inboxes, mail or
+   * chat. Optional, because a run must still pause correctly in a deployment
+   * that has told nobody how to reach anyone — the gate is what stops the run,
+   * and the notification is what makes it answerable.
+   */
+  readonly notify?: NotificationSink['notify']
 }
 
 const DEFAULT_CHECKPOINT_TTL_MS = 72 * 60 * 60 * 1000
@@ -840,7 +851,16 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
       }
 
       case 'checkpoint':
-        return gate({ step: step.id, kind: step.kind, definition, outputs, workspaceId, teamId, runId })
+        return gate({
+          step: step.id,
+          kind: step.kind,
+          definition,
+          outputs,
+          workspaceId,
+          teamId,
+          runId,
+          startedBy: actor.userId,
+        })
 
       // `loop` never reaches here: it is control flow over other steps, so
       // the run loop owns it. `retrieve` arrives with BRAIN-4 and `emit` with
@@ -871,8 +891,9 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
     workspaceId: string
     teamId: string
     runId: string
+    startedBy: string
   }): Promise<StepResult> {
-    const { step, kind, definition, outputs, workspaceId, teamId, runId } = input
+    const { step, kind, definition, outputs, workspaceId, teamId, runId, startedBy } = input
 
     const existing = await readGate(workspaceId, runId, step)
     if (existing) return continueFrom(existing)
@@ -950,6 +971,34 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
     // may have created the row, and if that one was answered in the meantime
     // this run should honour the answer rather than wait for a second one.
     const created = await readGate(workspaceId, runId, step)
+
+    if (created?.status === 'pending' && deps.notify) {
+      // Raised only for a gate that is genuinely waiting. An `auto` checkpoint
+      // asks nobody, and telling someone about a decision already made trains
+      // them to ignore the ones that are not.
+      //
+      // After the row exists, so a recipient following the link finds something
+      // to act on rather than a race; and outside the insert, because a
+      // notification failing must not undo the checkpoint — a gate that
+      // vanished because the mail server was down is worse than a silent one.
+      await deps.notify({
+        workspaceId,
+        recipients: [startedBy],
+        kind: 'checkpoint_requested',
+        subject: `${definition.name}@${definition.version} is waiting for your approval`,
+        body:
+          `A run of ${definition.name} has stopped at ${kind} and needs a decision ` +
+          `before it can continue.`,
+        targetType: 'checkpoint',
+        targetId: created.id,
+        // Urgent by nature: a run is stopped until this is answered, so it must
+        // not be swept into a digest (AC5).
+        priority: 'urgent',
+        path: `/workspaces/${workspaceId}/checkpoints/${created.id}`,
+        payload: { runId, step, kind, workflow: `${definition.name}@${definition.version}` },
+      })
+    }
+
     return created ? continueFrom(created) : { kind: 'pause' }
   }
 
