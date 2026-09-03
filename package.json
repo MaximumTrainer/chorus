@@ -23,6 +23,7 @@
   },
   "devDependencies": {
     "@chorus/api": "workspace:*",
+    "@chorus/connectors": "workspace:*",
     "@chorus/core": "workspace:*",
     "@chorus/db": "workspace:*",
     "@chorus/llm": "workspace:*",

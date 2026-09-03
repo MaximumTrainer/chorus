@@ -144,10 +144,36 @@ unconditionally passes every test written against valid input.
 
 ### Not yet covered
 
-**OAuth token refresh.** No connector performs it yet — the reference connector
-authenticates with nothing, and the first real OAuth connector arrives with
-INT-2. The guarantee will be added to the kit then, alongside the code that
-implements it, rather than written now as a promise nothing enforces.
+**OAuth token refresh.** Still nothing performs it. The GitHub connector
+authenticates as an App installation, which is a different mechanism — the
+framework hands a connector `ctx.saveCredentials` for exactly this, and the
+guarantee joins the kit alongside the first connector that refreshes a token
+(GitLab or Linear), rather than being written now as a promise nothing enforces.
+
+## Cassettes
+
+A cassette is a JSON file of recorded interactions living in `__cassettes__/`
+beside its connector. `cassettePlayer(name)` returns a `fetch` that answers from
+one; hand it to your connector through `ctx.fetch`.
+
+Two rules make them worth having:
+
+- **An unmatched request is an error, never a 404.** A player that answered
+  "not found" for a request nobody recorded would turn a connector bug into a
+  silently empty result and a passing test. Matching is on method and full URL,
+  including the query string — a connector asking for `?per_page=100` where the
+  cassette recorded `?per_page=30` would paginate differently against the real
+  API, and a lenient match would hide exactly that. It caught a malformed-query
+  bug in the GitHub connector on its first run.
+- **Nothing is committed unredacted.** `cassetteRecorder` strips authorization
+  headers, cookies and signatures on the way in, so redaction is the same code
+  every time rather than something each contributor remembers.
+
+The GitHub cassettes currently in the tree are **hand-authored from GitHub's
+published response shapes**, not recorded against a live installation — nobody
+has run this against github.com. They are faithful about the shape the connector
+must parse and claim nothing more. Re-recording them with `cassetteRecorder`
+against a real installation is a worthwhile follow-up for anyone who has one.
 
 ---
 

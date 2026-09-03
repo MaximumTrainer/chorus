@@ -42,6 +42,8 @@ export interface DeliveryOutcome {
 
 export interface WebhookReceiverDeps {
   readonly now?: () => Date
+  /** The network the connectors get. A cassette player in tests. */
+  readonly fetch?: typeof fetch
 }
 
 export interface WebhookReceiver {
@@ -72,6 +74,7 @@ export function createWebhookReceiver(
   deps: WebhookReceiverDeps = {},
 ): WebhookReceiver {
   const now = deps.now ?? (() => new Date())
+  const http = deps.fetch ?? fetch
 
   const tx = <T>(workspaceId: string, fn: (t: TenantTx) => Promise<T>): Promise<T> =>
     withTenant(workspaceId, fn, { config })
@@ -173,7 +176,15 @@ export function createWebhookReceiver(
     const secrets = await credentials.credentialsFor(workspaceId, integrationId)
     return {
       secrets,
-      ctx: { workspaceId, integrationId, credentials: secrets, config: integration.config, now },
+      ctx: {
+        workspaceId,
+        integrationId,
+        credentials: secrets,
+        config: integration.config,
+        now,
+        fetch: http,
+        saveCredentials: (next) => credentials.updateCredentials(workspaceId, integrationId, next),
+      },
     }
   }
 

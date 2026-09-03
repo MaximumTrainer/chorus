@@ -1,0 +1,31 @@
+{
+  "description": "Minting an installation access token scoped to one repository. Hand-authored from the published response shape; not recorded against a live installation.",
+  "interactions": [
+    {
+      "request": {
+        "method": "POST",
+        "url": "https://api.github.com/app/installations/12345/access_tokens"
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "token": "ghs_scopedtokenfortheonerepository",
+          "expires_at": "2026-09-02T12:30:00Z",
+          "permissions": {
+            "contents": "read",
+            "metadata": "read"
+          },
+          "repository_selection": "selected",
+          "repositories": [
+            {
+              "id": 900,
+              "name": "widgets",
+              "full_name": "acme/widgets",
+              "private": true
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

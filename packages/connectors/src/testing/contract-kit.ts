@@ -63,6 +63,12 @@ export function contractContext(overrides: Partial<ConnectorContext> = {}): Conn
     credentials: {},
     config: {},
     now: () => frozen,
+    // Refuses rather than reaching the network: a connector that slips past its
+    // cassette must fail the suite, not quietly call the real source.
+    fetch: (() => {
+      throw new Error('a connector under contract test must use its injected fetch')
+    }) as unknown as typeof fetch,
+    saveCredentials: async () => {},
     ...overrides,
   }
 }
@@ -88,7 +94,7 @@ export function describeConnectorContract(
       // A kind outside the catalogue means signals land in a corpus nothing
       // queries, and a health page nobody can find.
       expect(CONNECTOR_KINDS).toContain(connector.kind)
-      expect(['oauth2', 'token', 'none']).toContain(connector.auth.kind)
+      expect(['oauth2', 'token', 'github_app', 'none']).toContain(connector.auth.kind)
 
       const declared = Object.values(connector.capabilities).filter(Boolean)
       expect(declared.length, 'a connector that can do nothing is misconfigured').toBeGreaterThan(0)

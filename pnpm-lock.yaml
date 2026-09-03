@@ -11,6 +11,9 @@ importers:
       '@chorus/api':
         specifier: workspace:*
         version: link:apps/api
+      '@chorus/connectors':
+        specifier: workspace:*
+        version: link:packages/connectors
       '@chorus/core':
         specifier: workspace:*
         version: link:packages/core

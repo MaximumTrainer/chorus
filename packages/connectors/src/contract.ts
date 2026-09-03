@@ -24,6 +24,12 @@ export type AuthSpec =
     }
   /** A long-lived token pasted by an admin — a PAT, an API key. */
   | { readonly kind: 'token'; readonly label: string }
+  /**
+   * A GitHub App installation. Distinct from `oauth2` because the credential is
+   * an installation token minted from the app's own key, scoped to what the
+   * installation was granted — not a user's token with the user's reach.
+   */
+  | { readonly kind: 'github_app'; readonly appId: string; readonly scopes: readonly string[] }
   /** No credential at all. The reference connector, and anything reading public data. */
   | { readonly kind: 'none' }
 
@@ -68,6 +74,24 @@ export interface ConnectorContext {
   readonly config: Readonly<Record<string, unknown>>
   /** Injected so tests are deterministic (CLAUDE.md §5). */
   readonly now: () => Date
+  /**
+   * The connector's only way out to the network.
+   *
+   * Injected rather than reached for, so a test can substitute a cassette
+   * player and a connector's parsing and pagination become the thing under
+   * test. A connector calling global `fetch` is one that cannot be tested
+   * without an account.
+   */
+  readonly fetch: typeof fetch
+  /**
+   * Replaces this integration's stored credentials — a refreshed access token,
+   * a rotated secret.
+   *
+   * The framework re-encrypts and audits. A connector cannot reach the database
+   * any other way, so this is the whole of its write access, and it is confined
+   * to its own integration's credentials.
+   */
+  saveCredentials(next: Readonly<Record<string, string>>): Promise<void>
 }
 
 export interface PullResult {

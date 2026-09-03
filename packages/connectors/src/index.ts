@@ -25,3 +25,5 @@ export type {
   DeliveryOutcome,
   DeliveryState,
 } from './webhooks.js'
+export { createGitHubConnector } from './github/index.js'
+export type { GitHubConnector, GitHubOptions, ScopedRepositoryToken } from './github/index.js'

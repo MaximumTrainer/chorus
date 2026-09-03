@@ -52,6 +52,8 @@ export interface SyncOptions {
 export interface SyncRunnerDeps {
   /** Injected and frozen in tests (CLAUDE.md §5). */
   readonly now?: () => Date
+  /** The network the connectors get. A cassette player in tests. */
+  readonly fetch?: typeof fetch
   /** A ceiling, so a connector with a broken cursor cannot loop forever. */
   readonly maxPagesPerRun?: number
 }
@@ -88,6 +90,7 @@ export function createSyncRunner(
   deps: SyncRunnerDeps = {},
 ): SyncRunner {
   const now = deps.now ?? (() => new Date())
+  const http = deps.fetch ?? fetch
   const ceiling = deps.maxPagesPerRun ?? DEFAULT_MAX_PAGES
 
   const tx = <T>(workspaceId: string, fn: (t: TenantTx) => Promise<T>): Promise<T> =>
@@ -181,6 +184,8 @@ export function createSyncRunner(
         credentials: secrets,
         config: integration.config,
         now,
+        fetch: http,
+        saveCredentials: (next) => credentials.updateCredentials(workspaceId, integrationId, next),
       }
 
       if (!connector.pull) {
