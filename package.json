@@ -14,6 +14,7 @@
     "test": "vitest run --passWithNoTests --project unit --project integration --project contract",
     "test:acceptance": "vitest run --passWithNoTests --project acceptance",
     "test:nfr": "vitest run --project nfr",
+    "test:perf": "vitest run --project performance",
     "test:watch": "vitest",
     "verify": "pnpm typecheck && pnpm lint && pnpm test && pnpm test:acceptance && pnpm test:nfr",
     "site": "node website/build.mjs",

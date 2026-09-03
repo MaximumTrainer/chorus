@@ -1173,7 +1173,11 @@ Time, randomness and identifiers are injected (`Clock`, `Random`, `IdGen`) and f
 - **Sandbox security suite** — asserts no platform credentials in the environment, egress blocked outside the allow-list, limits enforced, path allow-list respected (CODE-4).
 - **Redaction suite** — asserts secrets and masked fields never reach logs or traces.
 - **Migration suite** — every migration runs forward on a seeded database; every tenant table has an RLS policy.
-- **Performance suite** — retrieval, chat first token and index throughput measured against §24 budgets on a fixed corpus, run nightly with trend reporting.
+- **Performance suite** — retrieval, chat first token and index throughput measured against §24 budgets on a fixed corpus, run nightly with trend reporting. The corpus is **generated, not vendored** (`generateCorpus`): half a million lines committed would slow every clone forever, and a generator can be re-run at a different size when a budget or the hardware moves. It is seeded, so the same input produces byte-identical output — a corpus that varied would turn every regression into an argument about whether the corpus got harder.
+
+  Its *shape* matters more than its size, and this is the trap: a first version truncated files to an exact line count, cutting them mid-class, so half the corpus failed to parse. Failures are cheap — no symbol walk, no chunk-per-symbol — and the benchmark reported four times the real throughput. The corpus therefore reproduces a real repository's distribution deliberately: a long tail of small files with a few large ones, several languages, files with no grammar, a deliberate unparseable file, and a substantial ignored directory that must cost nothing.
+
+  The measurement excludes embedding, whose latency belongs to whichever model endpoint a deployment configured rather than to the indexer, and it reports the machine it ran on: §24's budget is stated for a 4 vCPU / 8 GB reference host, so a pass elsewhere bounds the implementation without certifying the target.
 - **Accessibility suite** — axe checks on every primary screen and the extension panel (NFR-10).
 
 ### 23.6 Golden tests for agent behaviour
@@ -1193,7 +1197,7 @@ Pull requests must pass: typecheck, lint, dependency-boundary check, unit, integ
 | Chat first token | < 2 s p50 with a cloud provider | acceptance timing + production metric |
 | Retrieval | < 300 ms p95 over 1M chunks | performance suite on a fixed corpus |
 | Document collaboration | < 100 ms local echo, < 250 ms peer propagation | collab benchmark |
-| Repository index | 500k LOC in < 15 min on the reference host | indexer benchmark |
+| Repository index | 500k LOC in < 15 min on the reference host | indexer benchmark (`pnpm test:perf`) |
 | Brain map | < 1 s for 5k nodes | map query benchmark |
 | Coding job start | < 60 s from approval to first agent output | job metric |
 | Reference host | 4 vCPU / 8 GB serves a 10-person team | compose smoke test under load |

@@ -53,6 +53,19 @@ export default defineWorkspace([
     },
   },
   {
+    // Throughput and latency against the §24 budgets, on a fixed corpus.
+    // Deliberately NOT part of `pnpm verify`: it is minutes of wall-clock, and
+    // a gate people skip because it is slow is a gate that is not run. It runs
+    // nightly with trend reporting (plan.md §5).
+    test: {
+      name: 'performance',
+      include: ['test/performance/**/*.test.ts'],
+      environment: 'node',
+      testTimeout: 900_000,
+      hookTimeout: 900_000,
+    },
+  },
+  {
     // Tenancy, permissions, redaction, sandbox security, bootstrap: the
     // cross-cutting guarantees of plan.md §5. Green on every pull request.
     test: {

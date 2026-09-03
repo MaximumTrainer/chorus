@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The performance suite runs nightly rather than per pull request: it is
+  # minutes of wall-clock, and a gate people skip because it is slow is a gate
+  # that is not run. plan.md §5 asks for trend reporting, and a trend needs a
+  # fixed schedule and a fixed runner more than it needs frequency.
+  schedule:
+    - cron: '0 3 * * *'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -122,3 +128,48 @@ jobs:
       - name: Stop the stack
         if: always()
         run: docker compose -f deploy/docker-compose.yml down --volumes
+
+  # BRAIN-2 AC6, NFR-7: throughput against the §24 budgets, on a fixed corpus.
+  performance:
+    name: performance (nightly)
+    if: github.event_name == 'schedule' || contains(github.event.head_commit.message, '[perf]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: chorus
+          POSTGRES_PASSWORD: chorus
+          POSTGRES_DB: chorus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U chorus -d chorus"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The runner is fixed so the numbers are comparable night to night. It is
+      # NOT the 4 vCPU / 8 GB reference host §24 states the budget for, so a
+      # pass here bounds the implementation rather than certifying the target.
+      - name: Report the runner
+        run: |
+          nproc
+          free -g || true
+
+      - name: Indexing benchmark
+        run: pnpm test:perf

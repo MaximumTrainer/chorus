@@ -15,3 +15,5 @@ export type {
   Conventions,
   DesignSystem,
 } from './detect.js'
+export { generateCorpus } from './testing/generate-corpus.js'
+export type { CorpusOptions, GeneratedCorpus } from './testing/generate-corpus.js'
