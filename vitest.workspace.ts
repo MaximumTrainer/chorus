@@ -25,6 +25,11 @@ export default defineWorkspace([
       include: ['packages/*/test/integration/**/*.test.ts', 'apps/*/test/integration/**/*.test.ts'],
       environment: 'node',
       testTimeout: 30_000,
+      // Hooks here create and drop real databases, and a drop waits on
+      // connections closing. Vitest's 10s default was never sized for that: it
+      // passes on an idle machine and fails under the load of a full run, which
+      // is the worst kind of flake — it looks like the last thing you changed.
+      hookTimeout: 120_000,
     },
   },
   {
@@ -34,6 +39,7 @@ export default defineWorkspace([
       include: ['packages/*/test/contract/**/*.test.ts', 'apps/*/test/contract/**/*.test.ts'],
       environment: 'node',
       testTimeout: 30_000,
+      hookTimeout: 120_000,
     },
   },
   {
@@ -43,6 +49,7 @@ export default defineWorkspace([
       include: ['apps/*/test/acceptance/**/*.test.ts', 'test/acceptance/**/*.test.ts'],
       environment: 'node',
       testTimeout: 120_000,
+      hookTimeout: 120_000,
     },
   },
   {
@@ -53,6 +60,7 @@ export default defineWorkspace([
       include: ['test/nfr/**/*.test.ts'],
       environment: 'node',
       testTimeout: 120_000,
+      hookTimeout: 120_000,
     },
   },
 ])

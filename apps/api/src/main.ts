@@ -1,5 +1,6 @@
 import { serve } from '@hono/node-server'
 import { configFromEnv } from '@chorus/db'
+import { initTelemetry } from '@chorus/telemetry'
 import { createApp } from './app.js'
 
 /**
@@ -8,6 +9,10 @@ import { createApp } from './app.js'
  * Stateless: everything long-running is enqueued. The only thing this file
  * decides is how the process is wired to its environment and how it stops.
  */
+
+// Before anything else: a span cannot be recorded by a provider that does not
+// exist yet, so late initialisation silently loses the first requests.
+initTelemetry({ serviceName: 'chorus-api' })
 
 const port = Number(process.env.CHORUS_PORT ?? 3000)
 

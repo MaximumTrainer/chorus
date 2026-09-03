@@ -1062,6 +1062,12 @@ Revocation and expiry are evaluated in the same statement that finds the token a
 
 **Prompt injection.** Retrieved content is delimited and labelled as data; external-write tools pass checkpoints; `fetch_url` is host-allow-listed; emitted code pointers are validated against the index before persistence.
 
+**Tracing (NFR-5 AC2).** One trace spans request → queue → worker → model call, and the whole difficulty is the second hop: within a process a trace is ambient context that propagates by itself, and across a queue it does not. It is carried explicitly as W3C `traceparent` in the job envelope — beside the payload, never merged into it, since a `_trace` key inside a payload is eventually read as data by something — and re-established on the far side. A system that traces beautifully on each side of that boundary while producing two unrelated traces has answered nothing, because the question a trace exists to answer is *where did this request's work actually go*.
+
+Wrapping is applied where consumers are registered rather than inside each consumer: one that forgot would produce an orphan trace, and "did you remember to wrap it" is not a property anyone can check by reading. Request spans are named by route pattern, not by concrete URL — a span per URL produces one trace name per workspace id, which makes latency-by-endpoint unanswerable. A failing span is recorded as failed and the error rethrown unchanged: a trace showing only successes is worse than no trace, because it is trusted.
+
+OpenTelemetry lives in `packages/telemetry` and nowhere else, enforced by a boundary rule. Instrumentation spreads faster than any other dependency because every call site is a plausible place for a span. When no OTLP endpoint is configured, tracing is **fully disabled** rather than exported nowhere — NFR-1 requires a stack that stands up with no external service, and a provider collecting spans nobody reads is pure overhead.
+
 **Privacy (NFR-4).** Source permission scopes propagate into retrieval. Captures mask input values and redact configured selectors before upload. Retention is configurable per data class (prompts, transcripts, screenshots, DOM snapshots, run traces) with a purge job. A workspace can export everything it owns as a signed archive and can be erased, including object-storage keys and vector rows.
 
 **Supply chain.** Dependency and container scanning in CI, pinned base images, SBOM published per release, signed images.

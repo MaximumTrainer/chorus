@@ -5,6 +5,7 @@ import { configFromEnv } from '@chorus/db'
 import { createIndexer } from '@chorus/indexer'
 import { createOpenAiCompatibleProvider, routerConfigFromEnv } from '@chorus/llm'
 import { createQueue, redisConfigFromEnv } from '@chorus/queue'
+import { initTelemetry, shutdownTelemetry } from '@chorus/telemetry'
 import { createGitRepositoryAccess } from './access.js'
 import { createWorker } from './worker.js'
 
@@ -45,6 +46,10 @@ function masterKeys() {
 }
 
 async function main(): Promise<void> {
+  // Before the consumers register: a job picked up by a worker whose provider
+  // is not yet running loses the one span that joins it to its request.
+  initTelemetry({ serviceName: 'chorus-worker' })
+
   const dbConfig = configFromEnv()
   const queue = createQueue(redisConfigFromEnv())
 
@@ -118,6 +123,9 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     console.warn(JSON.stringify({ level: 'info', message: 'worker stopping', signal }))
     clearInterval(beat)
+    // Flushed before exit: a batch of spans still in memory when the process
+    // ends is a trace that stops mid-run for no visible reason.
+    await shutdownTelemetry()
     // Awaited: an in-flight job that is killed mid-write is the case NFR-6's
     // crash tests exist for, and a clean stop is the cheapest way to avoid it.
     await worker.stop()

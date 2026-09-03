@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { AppError, NotFoundError, ForbiddenError, ValidationError, ulid } from '@chorus/core'
 import type { ModelProvider } from '@chorus/llm'
+import { currentTraceId, withSpan } from '@chorus/telemetry'
 import { withTenant, configFromEnv, type DbConfig } from '@chorus/db'
 import {
   route,
@@ -223,15 +224,34 @@ function sessionResolver(auth: ReturnType<typeof createAuth>) {
 export function createApp(options: AppOptions = {}): Hono<AppEnv> {
   const app = new Hono<AppEnv>()
 
-  // Every response carries a request id so a user's report maps to a log line.
+  // Every response carries a request id so a user's report maps to a log line,
+  // and every request is a span so that line maps to a trace (NFR-5 AC2).
   app.use('*', async (c, next) => {
     const requestId = c.req.header('x-request-id') ?? ulid()
     c.set('requestId', requestId)
     c.set('checkReadiness', options.checkReadiness ?? defaultReadiness(options.dbConfig))
     c.set('baseUrl', options.baseUrl ?? 'http://localhost:3000')
     if (options.mailer) c.set('mailer', options.mailer)
-    await next()
+
+    // Named by route pattern, not by URL: a span per concrete path produces one
+    // trace name per workspace id, which makes latency by endpoint
+    // unanswerable — the question traces are most often asked.
+    await withSpan(
+      `http.${c.req.method} ${c.req.routePath}`,
+      {
+        'http.request.method': c.req.method,
+        'http.route': c.req.routePath,
+        'chorus.request_id': requestId,
+      },
+      async () => {
+        await next()
+      },
+    )
+
     c.header('x-request-id', requestId)
+    // Emitted so a user's report reaches the trace, not only the log line.
+    const traceId = currentTraceId()
+    if (traceId) c.header('x-trace-id', traceId)
   })
 
   // WS-1: authentication is mounted under /auth/*, per architecture.md §18.

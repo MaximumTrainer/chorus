@@ -42,6 +42,8 @@ export interface Job<T> {
   readonly payload: T
   /** 1 on the first delivery. A retry can behave differently knowing this. */
   readonly attempt: number
+  /** Whatever the producer carried, for the consumer to continue the trace. */
+  readonly traceContext?: Readonly<Record<string, string>>
 }
 
 export type JobHandler<T> = (job: Job<T>) => Promise<void>
@@ -57,6 +59,16 @@ export interface EnqueueOptions {
   readonly idempotencyKey?: string
   /** Milliseconds to wait before the job becomes available. */
   readonly delayMs?: number
+  /**
+   * Opaque trace context, carried across the queue boundary (NFR-5 AC2).
+   *
+   * A trace is process-local ambient state and a queue is a boundary it does
+   * not cross by itself, so it is carried explicitly. Typed as a plain string
+   * map rather than anything OpenTelemetry-shaped: the queue's job is to move
+   * it unchanged, and knowing what it means would be the same leak ADR-0004
+   * forbids for its own backend.
+   */
+  readonly traceContext?: Readonly<Record<string, string>>
 }
 
 export interface ConsumeOptions {
@@ -86,6 +98,12 @@ export interface Queue {
   /** Jobs that exhausted their attempts. "What failed, and why" must be answerable. */
   failed(name: string): Promise<FailedJob[]>
   close(): Promise<void>
+}
+
+/** What is actually stored: the caller's payload, plus carried metadata. */
+interface Envelope<T> {
+  readonly payload: T
+  readonly trace?: Readonly<Record<string, string>>
 }
 
 const DEFAULT_ATTEMPTS = 3
@@ -147,7 +165,17 @@ export function createQueue(config: RedisConfig): Queue {
         backoffMs: DEFAULT_BACKOFF_MS,
       }
 
-      await producerFor(name).add(name, payload, {
+      // Enveloped rather than merged into the payload: a consumer's `payload`
+      // must be exactly what the producer sent, and a `_trace` key appearing
+      // inside it would eventually be read as data by something.
+      const envelope: Envelope<unknown> = {
+        payload,
+        ...(options.traceContext && Object.keys(options.traceContext).length > 0
+          ? { trace: options.traceContext }
+          : {}),
+      }
+
+      await producerFor(name).add(name, envelope, {
         attempts: policy.attempts,
         backoff: { type: 'exponential', delay: policy.backoffMs },
         // BullMQ deduplicates on job id, so the idempotency key *is* the id.
@@ -167,12 +195,14 @@ export function createQueue(config: RedisConfig): Queue {
       const worker = new Worker(
         name,
         async (job) => {
-          // The four-field view. Nothing backend-shaped crosses this line.
+          const envelope = job.data as Envelope<unknown>
+          // Nothing backend-shaped crosses this line.
           await handler({
             id: String(job.id),
             name: job.name,
-            payload: job.data,
+            payload: envelope.payload as never,
             attempt: job.attemptsMade + 1,
+            ...(envelope.trace ? { traceContext: envelope.trace } : {}),
           })
         },
         {

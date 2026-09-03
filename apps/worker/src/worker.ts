@@ -1,6 +1,7 @@
 import type { DbConfig } from '@chorus/db'
 import type { Indexer } from '@chorus/indexer'
-import type { Queue } from '@chorus/queue'
+import type { Job, Queue } from '@chorus/queue'
+import { withRemoteContext, withSpan } from '@chorus/telemetry'
 import {
   INDEX_REPOSITORY_QUEUE,
   indexRepositoryConsumer,
@@ -32,14 +33,42 @@ export interface RunningWorker {
   stop(): Promise<void>
 }
 
+/**
+ * Wraps a consumer so its work joins the trace that enqueued it (NFR-5 AC2).
+ *
+ * Applied here rather than inside each consumer: a consumer that forgot would
+ * produce an orphan trace, and "did you remember to wrap it" is not a property
+ * anyone can check by reading. Registering through this function is.
+ */
+function traced<T extends { workspaceId?: string }>(
+  queueName: string,
+  handler: (job: Job<T>) => Promise<void>,
+): (job: Job<T>) => Promise<void> {
+  return (job) =>
+    withRemoteContext(job.traceContext, () =>
+      withSpan(
+        `worker.${queueName}`,
+        {
+          'chorus.queue': queueName,
+          'chorus.job.attempt': job.attempt,
+          ...(job.payload.workspaceId ? { 'chorus.workspace_id': job.payload.workspaceId } : {}),
+        },
+        () => handler(job),
+      ),
+    )
+}
+
 export async function createWorker(deps: WorkerDeps): Promise<RunningWorker> {
   await deps.queue.consume(
     INDEX_REPOSITORY_QUEUE,
-    indexRepositoryConsumer({
-      dbConfig: deps.dbConfig,
-      indexer: deps.indexer,
-      access: deps.access,
-    }),
+    traced(
+      INDEX_REPOSITORY_QUEUE,
+      indexRepositoryConsumer({
+        dbConfig: deps.dbConfig,
+        indexer: deps.indexer,
+        access: deps.access,
+      }),
+    ),
     // Indexing is long and I/O bound, and a transient clone failure is worth
     // retrying; a malformed job is not, which is why a missing repository
     // throws NotFoundError rather than something retried three times.

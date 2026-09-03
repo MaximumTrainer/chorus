@@ -165,6 +165,9 @@ const DATABASE_DRIVERS = [/^pg$/, /^postgres$/, /^drizzle-orm/, /^@electric-sql\
  * Concrete model identifiers. A model name in feature code means the router was
  * bypassed, which is how provider-agnosticism is lost one call at a time.
  */
+/** Tracing SDKs that may only be imported by packages/telemetry (NFR-5). */
+const TELEMETRY_SDKS = [/^@opentelemetry\//] as const
+
 /** Queue backends that may only be imported by packages/queue (ADR-0004). */
 const QUEUE_BACKENDS = [/^bullmq$/, /^ioredis$/, /^@temporalio\//] as const
 
@@ -233,6 +236,16 @@ export const CHORUS_BOUNDARY_RULES: readonly BoundaryRule[] = [
     appliesTo: /^(apps|packages)\//,
     except: [/^packages\/queue\//, RULE_ENGINE_FIXTURES],
     forbidImports: QUEUE_BACKENDS,
+  },
+  {
+    id: 'NFR-5: no tracing SDK outside packages/telemetry',
+    rationale:
+      'Instrumentation spreads faster than any other dependency, because every ' +
+      'call site is a plausible place for a span. Confining it keeps the ' +
+      'vocabulary ours and the backend swappable.',
+    appliesTo: /^(apps|packages)\//,
+    except: [/^packages\/telemetry\//, RULE_ENGINE_FIXTURES],
+    forbidImports: TELEMETRY_SDKS,
   },
   {
     id: 'architecture.md §7: packages never import from apps',

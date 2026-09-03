@@ -176,6 +176,42 @@ describe('NFR-6 queue', () => {
     expect(order.sort()).toEqual(['heavy', 'light'])
   })
 
+  it('NFR-5 AC2: trace context is carried across the queue, unchanged', async () => {
+    const name = `trace-${ulid()}`
+    let received: Readonly<Record<string, string>> | undefined
+    await queue.consume(name, async (job) => {
+      received = job.traceContext
+    })
+
+    // A trace is process-local ambient state; a queue is a boundary it does not
+    // cross by itself. Carried explicitly, or a run appears as two unrelated
+    // traces and "where did this request's work go" has no answer.
+    const carrier = { traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01' }
+    await queue.enqueue(name, { n: 1 }, { traceContext: carrier })
+    await queue.drain(name)
+
+    expect(received).toEqual(carrier)
+  })
+
+  it('NFR-5 AC2: the payload is exactly what was sent, with no carried metadata in it', async () => {
+    const name = `envelope-${ulid()}`
+    let payload: unknown
+    await queue.consume(name, async (job) => {
+      payload = job.payload
+    })
+
+    await queue.enqueue(
+      name,
+      { repositoryId: 'repo-1' },
+      { traceContext: { traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01' } },
+    )
+    await queue.drain(name)
+
+    // Enveloped, not merged: a `_trace` key inside the payload would eventually
+    // be read as data by something.
+    expect(payload).toEqual({ repositoryId: 'repo-1' })
+  })
+
   it('NFR-6: nothing in the public surface names BullMQ', async () => {
     // ADR-0004: "the engine's step interface must not leak BullMQ types", so
     // Temporal stays swappable. Asserted on the value a caller actually holds,
@@ -188,6 +224,8 @@ describe('NFR-6 queue', () => {
     await queue.enqueue(name, { a: 1 })
     await queue.drain(name)
 
+    // `traceContext` is absent when none was carried, so the shape stays
+    // minimal for a caller that does not trace.
     expect(Object.keys(received as object).sort()).toEqual(['attempt', 'id', 'name', 'payload'])
   })
 })

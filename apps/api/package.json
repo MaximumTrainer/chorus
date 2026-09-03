@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "HTTP/SSE API, OAuth 2.1 server, MCP endpoint, webhook receivers. Enqueues everything long-running (architecture.md §6).",
+  "description": "HTTP/SSE API, OAuth 2.1 server, MCP endpoint, webhook receivers. Enqueues everything long-running (architecture.md \u00a76).",
   "exports": {
     ".": "./src/index.ts"
   },
@@ -14,6 +14,7 @@
     "@chorus/core": "workspace:*",
     "@chorus/db": "workspace:*",
     "@chorus/llm": "workspace:*",
+    "@chorus/telemetry": "workspace:*",
     "@hono/node-server": "^2.1.1",
     "better-auth": "1.7.2",
     "hono": "4.6.9",

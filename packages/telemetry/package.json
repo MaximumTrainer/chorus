@@ -1,0 +1,28 @@
+{
+  "name": "@chorus/telemetry",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The only place OpenTelemetry may be imported (NFR-5). Spans, and trace context that survives a queue.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@chorus/core": "workspace:*",
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/core": "^2.11.0",
+    "@opentelemetry/exporter-trace-otlp-http": "0.222.0",
+    "@opentelemetry/resources": "2.11.0",
+    "@opentelemetry/sdk-trace-node": "2.11.0",
+    "@opentelemetry/semantic-conventions": "1.43.0"
+  },
+  "devDependencies": {
+    "@chorus/config": "workspace:*",
+    "@types/node": "22.7.5",
+    "typescript": "5.6.3",
+    "vitest": "2.1.3"
+  }
+}

@@ -17,7 +17,8 @@
     "@chorus/db": "workspace:*",
     "@chorus/indexer": "workspace:*",
     "@chorus/llm": "workspace:*",
-    "@chorus/queue": "workspace:*"
+    "@chorus/queue": "workspace:*",
+    "@chorus/telemetry": "workspace:*"
   },
   "devDependencies": {
     "@chorus/config": "workspace:*",
