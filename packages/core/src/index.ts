@@ -114,3 +114,30 @@ export type {
   ContextBundle,
   Retriever,
 } from './retrieval.js'
+export {
+  TASK_STATUSES,
+  TASK_PRIORITIES,
+  TASK_SIZES,
+  RESERVED_TASK_TAGS,
+  MAX_TASK_DEPTH,
+  CHILD_DISPOSITIONS,
+  AcceptanceCriterionSchema,
+  StoredAcceptanceCriterionSchema,
+  CreateTaskSchema,
+  UpdateTaskSchema,
+  normaliseTags,
+  isReservedTaskTag,
+  isChildDisposition,
+} from './tasks.js'
+export type {
+  TaskStatus,
+  TaskPriority,
+  TaskSize,
+  ReservedTaskTag,
+  AcceptanceCriterion,
+  StoredAcceptanceCriterion,
+  CreateTask,
+  UpdateTask,
+  TaskRecord,
+  ChildDisposition,
+} from './tasks.js'

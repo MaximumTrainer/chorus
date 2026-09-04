@@ -214,6 +214,21 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
          VALUES ($1, $2, $3, 'seed', 'before_create_artefacts', 'platform', 'ask', now() + interval '1 day')`,
         [ulid(), workspaceId, runId],
       )
+      const taskId = ulid()
+      await owner.query(
+        `INSERT INTO tasks (id, workspace_id, team_id, key, title, created_by)
+         VALUES ($1, $2, $3, 'CH-1', 'seed task', $4)`,
+        [taskId, workspaceId, teamId, userId],
+      )
+      await owner.query(
+        `INSERT INTO task_counters (workspace_id, team_id, next_number) VALUES ($1, $2, 2)`,
+        [workspaceId, teamId],
+      )
+      await owner.query(
+        `INSERT INTO artefact_links (id, workspace_id, from_type, from_id, to_type, to_id)
+         VALUES ($1, $2, 'task', $3, 'document', $3)`,
+        [ulid(), workspaceId, taskId],
+      )
       await owner.query(
         `INSERT INTO context_bundles (id, workspace_id, user_id, team_id, query)
          VALUES ($1, $2, $3, $4, 'seed')`,
@@ -479,6 +494,36 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
           )
           return
         }
+        case 'tasks': {
+          // Falls back to a literal when the team is not visible, so a
+          // cross-tenant attempt is *rejected* rather than silently inserting
+          // nothing — a SELECT that RLS filters out would make this pass
+          // without proving anything.
+          const [team] = await tx.query<{ id: string }>(`SELECT id FROM teams LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO tasks (id, workspace_id, team_id, key, title, created_by)
+             VALUES ($1, $2, $3, 'CH-999', 'x', $4)`,
+            [id, workspaceId, team?.id ?? id, userId],
+          )
+          return
+        }
+        case 'task_counters': {
+          const [team] = await tx.query<{ id: string }>(`SELECT id FROM teams LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO task_counters (workspace_id, team_id, next_number)
+             VALUES ($1, $2, 1)
+             ON CONFLICT (workspace_id, team_id) DO UPDATE SET next_number = 1`,
+            [workspaceId, team?.id ?? id],
+          )
+          return
+        }
+        case 'artefact_links':
+          await tx.execute(
+            `INSERT INTO artefact_links (id, workspace_id, from_type, from_id, to_type, to_id)
+             VALUES ($1, $2, 'task', $1, 'document', $1)`,
+            [id, workspaceId],
+          )
+          return
         case 'context_bundles':
           await tx.execute(
             `INSERT INTO context_bundles (id, workspace_id, user_id, query)

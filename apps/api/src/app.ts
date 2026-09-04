@@ -24,6 +24,8 @@ import { repositoryRoutes } from './repository-routes.js'
 import { runRoutes, type RunResumer } from './run-routes.js'
 import { notificationRoutes } from './notification-routes.js'
 import { decisionLinkRoutes } from './decision-link-routes.js'
+import { createTaskService } from './tasks.js'
+import { taskRoutes } from './task-routes.js'
 import { createNotifier } from '@chorus/notifications'
 import { createDecisionLinks } from '@chorus/agent'
 // WALKING SKELETON — delete in Phase 1. See src/walking-skeleton/README.md.
@@ -196,6 +198,7 @@ function buildRoutes(
       ...apiTokenRoutes(tokens),
       ...repositoryRoutes(repositories),
       ...runRoutes(config, resumeRun),
+      ...taskRoutes(createTaskService(config)),
       ...notificationRoutes(createNotifier(config, { baseUrl, ...(mailer ? { mail: mailer } : {}) })),
       ...decisionLinkRoutes(config, createDecisionLinks(config), resumeRun),
       // WALKING SKELETON — delete in Phase 1. Mounted only when a provider is

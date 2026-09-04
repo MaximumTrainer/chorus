@@ -188,7 +188,7 @@ State machines live in `packages/core/src/state/` as explicit transition tables.
 ### 4.4 Identity, keys and links
 
 - All primary keys are **ULIDs** (sortable, 26 characters, from `packages/core`). No sequential integers appear in URLs or APIs.
-- Tasks additionally carry a human key `CH-<n>`, unique per **team**, generated from a per-team counter row taken with `SELECT … FOR UPDATE`. The key is stable for the task's life and is what appears in chat, PR titles and MCP prompts.
+- Tasks additionally carry a human key `CH-<n>`, unique per **team**, generated from a per-team counter row taken with `SELECT … FOR UPDATE`. The allocation is one `INSERT … ON CONFLICT DO UPDATE … RETURNING`, which creates the counter on first use and takes the row lock in the same statement — a separate read-then-write would be the very race the lock exists to prevent. A deleted task never releases its key: reuse would point every old link, pull request title and chat message at a different task, silently and long after anybody could connect the two. The key is stable for the task's life and is what appears in chat, PR titles and MCP prompts.
 - Cross-artefact relationships are expressed once, in `artefact_links(from_type, from_id, to_type, to_id, relation)`, rather than as bespoke foreign keys per pair. Foreign keys are reserved for containment (`tasks.parent_id`, `messages.session_id`).
 - Every artefact exposes a canonical web URL (`/t/{teamSlug}/task/{key}`) and a canonical MCP resource URI (`chorus://task/{id}`). Both resolve through the same permission check.
 
