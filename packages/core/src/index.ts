@@ -144,3 +144,22 @@ export type {
 export { keyBetween, needsRebalance, rebalance, ORDER_REBALANCE_THRESHOLD } from './ordering.js'
 export { POINTER_SOURCES, MIN_POINTER_CONFIDENCE, deepLink, isPointerSource } from './pointers.js'
 export type { PointerSource, CodePointer, DeepLinkTarget } from './pointers.js'
+export {
+  DOCUMENT_TYPES,
+  DOCUMENT_STATUSES,
+  DEFAULT_TEMPLATES,
+  TemplateSectionSchema,
+  TemplateSchema,
+  isDocumentType,
+  validateTemplate,
+  applyTemplate,
+  missingSections,
+  toMarkdown,
+} from './documents.js'
+export type {
+  DocumentType,
+  DocumentStatus,
+  TemplateSection,
+  TemplateProblem,
+  DocumentSection,
+} from './documents.js'

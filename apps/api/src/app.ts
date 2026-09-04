@@ -28,6 +28,8 @@ import { createTaskService } from './tasks.js'
 import { taskRoutes } from './task-routes.js'
 import { createPointerService } from './pointers.js'
 import { pointerRoutes } from './pointer-routes.js'
+import { createDocumentService } from './documents.js'
+import { documentRoutes } from './document-routes.js'
 import { createRetriever } from '@chorus/brain'
 import { createNotifier } from '@chorus/notifications'
 import { createDecisionLinks } from '@chorus/agent'
@@ -202,6 +204,7 @@ function buildRoutes(
       ...repositoryRoutes(repositories),
       ...runRoutes(config, resumeRun),
       ...taskRoutes(createTaskService(config)),
+      ...documentRoutes(createDocumentService(config)),
       // Pointers retrieve through the one retrieval function, so a pointer can
       // never surface code the person could not open (BRAIN-4 AC2).
       ...(models

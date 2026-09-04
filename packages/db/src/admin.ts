@@ -229,6 +229,17 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
          VALUES ($1, $2, 'task', $3, 'document', $3)`,
         [ulid(), workspaceId, taskId],
       )
+      const documentId = ulid()
+      await owner.query(
+        `INSERT INTO documents (id, workspace_id, team_id, type, title, created_by)
+         VALUES ($1, $2, $3, 'prd', 'seed document', $4)`,
+        [documentId, workspaceId, teamId, userId],
+      )
+      await owner.query(
+        `INSERT INTO document_templates (id, workspace_id, team_id, type, version, sections)
+         VALUES ($1, $2, $3, 'prd', 1, '[]'::jsonb)`,
+        [ulid(), workspaceId, teamId],
+      )
       await owner.query(
         `INSERT INTO code_pointers
            (id, workspace_id, task_id, repository_id, path, line_start, line_end, source)
@@ -530,6 +541,24 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
             [id, workspaceId],
           )
           return
+        case 'documents': {
+          const [team] = await tx.query<{ id: string }>(`SELECT id FROM teams LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO documents (id, workspace_id, team_id, type, title, created_by)
+             VALUES ($1, $2, $3, 'prd', 'x', $4)`,
+            [id, workspaceId, team?.id ?? id, userId],
+          )
+          return
+        }
+        case 'document_templates': {
+          const [team] = await tx.query<{ id: string }>(`SELECT id FROM teams LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO document_templates (id, workspace_id, team_id, type, version, sections)
+             VALUES ($1, $2, $3, 'prd', 99, '[]'::jsonb)`,
+            [id, workspaceId, team?.id ?? id],
+          )
+          return
+        }
         case 'code_pointers': {
           const [task] = await tx.query<{ id: string }>(`SELECT id FROM tasks LIMIT 1`)
           const [repo] = await tx.query<{ id: string }>(`SELECT id FROM repositories LIMIT 1`)
