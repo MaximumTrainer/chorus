@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import {
+  ConfigurationError,
   DEFAULT_REDACTION_LEVEL,
   NotFoundError,
   redactBody,
@@ -9,6 +10,7 @@ import {
   type NotificationSink,
   type PolicyRule,
   type RedactionLevel,
+  type Retriever,
   type ResolvedPolicy,
   type WorkflowDefinition,
   type WorkflowStep,
@@ -106,6 +108,14 @@ export interface ExecutorDeps {
    * and the trace says so rather than pretending otherwise.
    */
   readonly prompts?: PromptSource
+  /**
+   * Where a `retrieve` step gets its context (BRAIN-4).
+   *
+   * One implementation, shared with chat, MCP and search — which is what makes
+   * "no path leaks content a user cannot see" assertable once rather than per
+   * caller.
+   */
+  readonly retriever?: Retriever
   /**
    * What a call cost, in whole cents.
    *
@@ -1008,6 +1018,49 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
             : undefined,
         )
         return { kind: 'output', output: text }
+      }
+
+      case 'retrieve': {
+        if (!deps.retriever) {
+          // Refusing beats retrieving nothing and calling it an empty result: a
+          // workflow whose grounding silently vanished produces a confident
+          // answer from no evidence, which is the worst failure this system has.
+          throw new ConfigurationError(
+            `Step "${step.id}" retrieves, but no retriever is configured for this runtime.`,
+            { step: step.id },
+          )
+        }
+
+        const bundle = await deps.retriever.retrieve({
+          query: String(resolve(step.query, scope) ?? step.query),
+          workspaceId,
+          teamId,
+          // Retrieval is filtered against the person the run acts for, never
+          // the platform. An agent is not a privileged actor (AGENT-5 AC5), and
+          // that has to hold for what it can *read* as much as what it can do.
+          userId: actor.userId,
+          k: step.limit,
+          expand: step.expand as 0 | 1 | 2,
+          ...(step.kinds.length > 0
+            ? { kinds: step.kinds as readonly ['code'][number][] }
+            : {}),
+        })
+
+        // Persisted, so the "Context used" panel is exact rather than
+        // reconstructed (CHAT-3), and so a run can be replayed against the
+        // evidence it actually had.
+        await deps.retriever.persist(workspaceId, bundle)
+
+        await recordEvent(workspaceId, runId, 'tool_call', {
+          step: step.id,
+          retrieval: {
+            bundleId: bundle.id,
+            considered: bundle.considered,
+            returned: bundle.fragments.length,
+          },
+        })
+
+        return { kind: 'output', output: bundle }
       }
 
       case 'branch': {

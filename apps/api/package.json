@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@chorus/agent": "workspace:*",
+    "@chorus/brain": "workspace:*",
     "@chorus/core": "workspace:*",
     "@chorus/db": "workspace:*",
     "@chorus/llm": "workspace:*",

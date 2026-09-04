@@ -106,3 +106,11 @@ export {
   redactBody,
 } from './redaction.js'
 export type { RedactionLevel, RedactedBody } from './redaction.js'
+export { RETRIEVABLE_KINDS } from './retrieval.js'
+export type {
+  RetrievableKind,
+  RetrieveQuery,
+  Fragment,
+  ContextBundle,
+  Retriever,
+} from './retrieval.js'

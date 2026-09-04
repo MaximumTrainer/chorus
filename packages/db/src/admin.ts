@@ -214,6 +214,11 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
         [ulid(), workspaceId, runId],
       )
       await owner.query(
+        `INSERT INTO context_bundles (id, workspace_id, user_id, team_id, query)
+         VALUES ($1, $2, $3, $4, 'seed')`,
+        [ulid(), workspaceId, userId, teamId],
+      )
+      await owner.query(
         `INSERT INTO spend_ledger (id, workspace_id, team_id, run_id, provider, model, purpose)
          VALUES ($1, $2, $3, $4, 'fake', 'fake-1', 'chat')`,
         [ulid(), workspaceId, teamId, runId],
@@ -471,6 +476,13 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
           )
           return
         }
+        case 'context_bundles':
+          await tx.execute(
+            `INSERT INTO context_bundles (id, workspace_id, user_id, query)
+             VALUES ($1, $2, $3, 'seed')`,
+            [id, workspaceId, userId],
+          )
+          return
         case 'spend_ledger':
           await tx.execute(
             `INSERT INTO spend_ledger (id, workspace_id, provider, model, purpose)

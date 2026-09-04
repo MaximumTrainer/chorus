@@ -574,6 +574,16 @@ Algorithm: run lexical (`tsvector` + trigram) and vector (HNSW) search in parall
 
 Bundles are persisted on the `message` or `run` that used them, which is what makes the "Context used" panel exact rather than reconstructed (CHAT-3).
 
+**The interface lives in `core`; the implementation lives in `packages/brain`.** The agent runtime consumes a `Retriever` and the brain provides one, so neither imports the other — putting the interface beside the implementation created a dependency cycle the moment the runtime needed it, which the build caught. Cross-package tests of the seam live in `apps/api/test/acceptance`, since only an app may depend on both.
+
+**Fusion is reciprocal rank, not normalised scores.** A `ts_rank` and a cosine distance share no scale, and normalising them invents one that is wrong in a way nobody can see, because both halves still produce plausible orderings. RRF discards the scores and keeps the ranks, needs no tuning per corpus, and rewards agreement between independent methods — which is exactly what AC1's "at least as good as the better of the two" asks for. One consequence is worth knowing: past roughly `RRF_K`, every rank contributes about the same, so two deep appearances can outweigh one first place. The mitigation is to keep each search's candidate list short rather than to fight the formula.
+
+**Both searches carry a distance or match requirement, so an empty result stays empty.** Everything is nearest to something; without a cosine ceiling, every query returns its *k* nearest chunks whatever the corpus holds, and AC6's "no low-relevance filler to appear helpful" becomes impossible. A padded bundle is how an agent comes to cite something irrelevant with total confidence.
+
+Lexical search uses the `simple` text configuration rather than `english`: this is code, and stemming `parseInvoices` to `parseinvoic` helps nobody. A trigram index on `symbol_name` covers the substring searches full-text cannot — `parseInvoiceLine` is one token to the parser and three words to the person searching.
+
+A citation id is derived from what is cited — repository, path, line range and a hash of the text — not from when it was cited. An id that changed per retrieval would make two bundles of the same fragment impossible to compare, which is what the evaluation harness does; and including the text hash means a chunk whose content changed gets a *different* id, so a citation visibly stops resolving rather than silently pointing at a rewritten file.
+
 ### 10.6 Wiki compilation (BRAIN-5)
 
 For every entity above a salience threshold (edge count, recency, mention frequency, or a manual pin), the compiler renders Markdown from a template — summary, current state, key decisions, related entities, evidence links, open questions — and writes:

@@ -1,0 +1,25 @@
+{
+  "name": "@chorus/brain",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "One retrieval function (BRAIN-4). Hybrid search, rank fusion, the permission predicate, and the context bundle.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@chorus/core": "workspace:*",
+    "@chorus/db": "workspace:*",
+    "@chorus/llm": "workspace:*"
+  },
+  "devDependencies": {
+    "@chorus/config": "workspace:*",
+    "@chorus/testing": "workspace:*",
+    "@types/node": "22.7.5",
+    "typescript": "5.6.3",
+    "vitest": "2.1.3"
+  }
+}
