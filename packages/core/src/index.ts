@@ -142,3 +142,5 @@ export type {
   ChildDisposition,
 } from './tasks.js'
 export { keyBetween, needsRebalance, rebalance, ORDER_REBALANCE_THRESHOLD } from './ordering.js'
+export { POINTER_SOURCES, MIN_POINTER_CONFIDENCE, deepLink, isPointerSource } from './pointers.js'
+export type { PointerSource, CodePointer, DeepLinkTarget } from './pointers.js'

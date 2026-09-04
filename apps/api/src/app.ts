@@ -26,6 +26,9 @@ import { notificationRoutes } from './notification-routes.js'
 import { decisionLinkRoutes } from './decision-link-routes.js'
 import { createTaskService } from './tasks.js'
 import { taskRoutes } from './task-routes.js'
+import { createPointerService } from './pointers.js'
+import { pointerRoutes } from './pointer-routes.js'
+import { createRetriever } from '@chorus/brain'
 import { createNotifier } from '@chorus/notifications'
 import { createDecisionLinks } from '@chorus/agent'
 // WALKING SKELETON — delete in Phase 1. See src/walking-skeleton/README.md.
@@ -199,6 +202,19 @@ function buildRoutes(
       ...repositoryRoutes(repositories),
       ...runRoutes(config, resumeRun),
       ...taskRoutes(createTaskService(config)),
+      // Pointers retrieve through the one retrieval function, so a pointer can
+      // never surface code the person could not open (BRAIN-4 AC2).
+      ...(models
+        ? pointerRoutes(
+            createPointerService(
+              config,
+              createRetriever(config, {
+                models,
+                embeddingModel: { provider: 'unconfigured', model: 'unconfigured' },
+              }),
+            ),
+          )
+        : []),
       ...notificationRoutes(createNotifier(config, { baseUrl, ...(mailer ? { mail: mailer } : {}) })),
       ...decisionLinkRoutes(config, createDecisionLinks(config), resumeRun),
       // WALKING SKELETON — delete in Phase 1. Mounted only when a provider is

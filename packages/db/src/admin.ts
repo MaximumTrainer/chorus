@@ -230,6 +230,12 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
         [ulid(), workspaceId, taskId],
       )
       await owner.query(
+        `INSERT INTO code_pointers
+           (id, workspace_id, task_id, repository_id, path, line_start, line_end, source)
+         VALUES ($1, $2, $3, $4, 'src/seed.ts', 1, 1, 'generated')`,
+        [ulid(), workspaceId, taskId, repositoryId],
+      )
+      await owner.query(
         `INSERT INTO context_bundles (id, workspace_id, user_id, team_id, query)
          VALUES ($1, $2, $3, $4, 'seed')`,
         [ulid(), workspaceId, userId, teamId],
@@ -524,6 +530,17 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
             [id, workspaceId],
           )
           return
+        case 'code_pointers': {
+          const [task] = await tx.query<{ id: string }>(`SELECT id FROM tasks LIMIT 1`)
+          const [repo] = await tx.query<{ id: string }>(`SELECT id FROM repositories LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO code_pointers
+               (id, workspace_id, task_id, repository_id, path, line_start, line_end, source)
+             VALUES ($1, $2, $3, $4, 'src/a.ts', 1, 2, 'manual')`,
+            [id, workspaceId, task?.id ?? id, repo?.id ?? id],
+          )
+          return
+        }
         case 'context_bundles':
           await tx.execute(
             `INSERT INTO context_bundles (id, workspace_id, user_id, query)

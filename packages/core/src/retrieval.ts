@@ -41,7 +41,22 @@ export interface Fragment {
   readonly lineEnd: number
   readonly symbolName: string | null
   readonly text: string
+  /**
+   * The raw fusion score. Useful for ordering, meaningless on its own.
+   */
   readonly score: number
+  /**
+   * The same result on a 0–1 scale, relative to the best a fragment could
+   * possibly score (AC6, and TASK-3's confidence).
+   *
+   * A reciprocal-rank score is a *ranking* device: `1/(k+rank)` is about 0.016
+   * at the top with the usual constant, which means nothing to a consumer and
+   * cannot be compared against a threshold anybody would write down. Dividing
+   * by the maximum attainable — first place in every search — turns it into
+   * something a caller can reason about, and it keeps the property that
+   * agreement between searches beats a single strong hit.
+   */
+  readonly confidence: number
   /** Which searches found it — `lexical`, `vector`, or both. */
   readonly sources: readonly string[]
   /**
