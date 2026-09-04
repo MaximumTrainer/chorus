@@ -40,6 +40,16 @@ export interface SignedInUser {
   readonly email: string
   readonly userId: string
   readonly cookie: string
+  /**
+   * A request with headers of the caller's choosing, signed in.
+   *
+   * The helpers below cover the ordinary verbs; this exists for the cases that
+   * turn on a header — `If-Match` for optimistic concurrency (TASK-2 AC4), and
+   * conditional reads. Building those with `fetch` directly would mean each
+   * suite reassembling the session cookie, which is how a test ends up
+   * authenticating differently from the product.
+   */
+  request(path: string, init?: RequestInit): Promise<Response>
   get(path: string): Promise<Response>
   post(path: string, body?: unknown): Promise<Response>
   patch(path: string, body?: unknown): Promise<Response>
@@ -164,6 +174,7 @@ export function createTestClient(app: RequestableApp, mailer: RecordingMailer): 
         email,
         userId,
         cookie,
+        request: (path, init) => send(path, withCookie(init)),
         get: (path) => send(path, withCookie()),
         post: (path, body) => send(path, withCookie(json(body))),
         patch: (path, body) => send(path, withCookie({ ...json(body), method: 'PATCH' })),

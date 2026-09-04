@@ -150,6 +150,84 @@ describe('TASK-1 task service', () => {
     expect(await tasks.listForTeam(workspaceId, teamId)).toEqual([])
   })
 
+  it('TASK-2 AC1: concurrent moves into different gaps both survive', async () => {
+    const { workspaceId, teamId, userId } = await world()
+    const made = []
+    for (const title of ['A', 'B', 'C', 'D']) {
+      made.push(await tasks.create({ workspaceId, teamId, actorId: userId, task: task(title) }))
+    }
+    const [a, b, c, d] = made
+
+    // Two people reordering at the same moment, in different parts of the list.
+    // With integer positions each would write a complete ordering computed from
+    // a state the other had already changed, and one would be lost.
+    await Promise.all([
+      tasks.move({ workspaceId, taskId: d!.id, actorId: userId, before: null, after: a!.id }),
+      tasks.move({ workspaceId, taskId: b!.id, actorId: userId, before: c!.id, after: undefined }),
+    ])
+
+    const after = await tasks.listForTeam(workspaceId, teamId)
+    // Nothing vanished and nothing doubled, which is the failure AC1 names.
+    expect(after).toHaveLength(4)
+    expect(new Set(after.map((t) => t.id)).size).toBe(4)
+    // And the order is a real order, not two people's views spliced together.
+    const positions = after.map((t) => t.position)
+    expect([...positions].sort((x, y) => x - y)).toEqual(positions)
+  })
+
+  it('TASK-2 AC1: a move rewrites one row, so it cannot clobber a sibling', async () => {
+    const { workspaceId, teamId, userId } = await world()
+    const a = await tasks.create({ workspaceId, teamId, actorId: userId, task: task('A') })
+    const b = await tasks.create({ workspaceId, teamId, actorId: userId, task: task('B') })
+    const c = await tasks.create({ workspaceId, teamId, actorId: userId, task: task('C') })
+
+    const before = await tasks.listForTeam(workspaceId, teamId)
+    await tasks.move({ workspaceId, taskId: c.id, actorId: userId, before: null, after: a.id })
+    const after = await tasks.listForTeam(workspaceId, teamId)
+
+    // The property the whole scheme exists for. Anything else here means a
+    // move is rewriting siblings, and the concurrency test above is passing by
+    // luck rather than by construction.
+    for (const id of [a.id, b.id]) {
+      expect(after.find((t) => t.id === id)!.position).toBe(
+        before.find((t) => t.id === id)!.position,
+      )
+    }
+  })
+
+  it('TASK-2 AC1: a gap subdivided to exhaustion is rebalanced rather than colliding', async () => {
+    const { workspaceId, teamId, userId } = await world()
+    const first = await tasks.create({ workspaceId, teamId, actorId: userId, task: task('first') })
+    const last = await tasks.create({ workspaceId, teamId, actorId: userId, task: task('last') })
+
+    // Drop everything into the same gap, repeatedly — what reviewing a proposed
+    // tree actually looks like.
+    const moved: string[] = []
+    for (let i = 0; i < 40; i += 1) {
+      const made = await tasks.create({
+        workspaceId,
+        teamId,
+        actorId: userId,
+        task: task(`n${i}`),
+      })
+      await tasks.move({
+        workspaceId,
+        taskId: made.id,
+        actorId: userId,
+        before: first.id,
+        after: last.id,
+      })
+      moved.push(made.id)
+    }
+
+    const after = await tasks.listForTeam(workspaceId, teamId)
+    // Distinct positions throughout. Two tasks sharing a key would order
+    // arbitrarily, and a list that was stable yesterday would quietly stop
+    // being so.
+    expect(new Set(after.map((t) => t.position)).size).toBe(after.length)
+    expect(after).toHaveLength(42)
+  })
+
   it('TASK-1 AC6: every mutation writes an audit event in the same transaction', async () => {
     const { workspaceId, teamId, userId } = await world()
 

@@ -1,8 +1,11 @@
+import { createHash } from 'node:crypto'
 import {
+  ConflictError,
   CreateTaskSchema,
   UpdateTaskSchema,
   ValidationError,
   type ChildDisposition,
+  type TaskRecord,
 } from '@chorus/core'
 import { route, type RouteDefinition } from './routes.js'
 import { caller } from './authorisation.js'
@@ -19,6 +22,21 @@ import { requireChildDisposition, type TaskService } from './tasks.js'
  * the API and the MCP tools that arrive with WP-1.11 validate against one
  * definition — two would drift, and the MCP side is where nobody would notice.
  */
+/**
+ * A task's version, for optimistic concurrency (AC4).
+ *
+ * Derived from `updatedAt` rather than a stored counter: the timestamp already
+ * changes on every write, and a second source of truth for "has this changed"
+ * is one that can disagree with the first.
+ */
+function etagFor(task: TaskRecord): string {
+  const digest = createHash('sha256')
+    .update(`${task.id}:${task.updatedAt}`)
+    .digest('hex')
+    .slice(0, 32)
+  return `"${digest}"`
+}
+
 export function taskRoutes(tasks: TaskService): RouteDefinition[] {
   return [
     route({
@@ -50,12 +68,109 @@ export function taskRoutes(tasks: TaskService): RouteDefinition[] {
     route({
       method: 'GET',
       path: '/workspaces/:workspaceId/teams/:teamId/tasks',
-      summary: 'List a team’s tasks.',
+      summary: 'List a team’s tasks, optionally scoped and filtered.',
       auth: { kind: 'workspace', role: 'member', scopes: ['read:artefacts'] },
-      handler: async (c) =>
-        c.json(
-          await tasks.listForTeam(c.req.param('workspaceId'), c.req.param('teamId')),
-        ),
+      handler: async (c) => {
+        const scopeType = c.req.query('scopeType')
+        const scopeId = c.req.query('scopeId')
+
+        return c.json(
+          await tasks.listForTeam(c.req.param('workspaceId'), c.req.param('teamId'), {
+            // Scope is a *link*, not a column, so a task can belong to a
+            // session and a document at once without the schema growing a
+            // field per kind of scope.
+            ...(scopeType && scopeId ? { scope: { type: scopeType, id: scopeId } } : {}),
+            ...(c.req.query('status') ? { status: c.req.query('status') } : {}),
+            ...(c.req.query('assigneeId') ? { assigneeId: c.req.query('assigneeId') } : {}),
+            ...(c.req.query('tag') ? { tag: c.req.query('tag') } : {}),
+          }),
+        )
+      },
+    }),
+
+    route({
+      method: 'POST',
+      path: '/workspaces/:workspaceId/tasks/bulk',
+      summary: 'Apply one change to many tasks, reporting each outcome.',
+      auth: { kind: 'workspace', role: 'member', scopes: ['write:artefacts'] },
+      handler: async (c) => {
+        const body = (await c.req.json().catch(() => ({}))) as {
+          taskIds?: unknown
+          changes?: unknown
+        }
+        if (!Array.isArray(body.taskIds) || body.taskIds.length === 0) {
+          throw new ValidationError('taskIds must be a non-empty array', { field: 'taskIds' })
+        }
+        const parsed = UpdateTaskSchema.safeParse(body.changes ?? {})
+        if (!parsed.success) {
+          throw new ValidationError(parsed.error.issues[0]?.message ?? 'Invalid change', {
+            field: 'changes',
+          })
+        }
+
+        const results = await tasks.bulkUpdate({
+          workspaceId: c.req.param('workspaceId'),
+          taskIds: body.taskIds.map(String),
+          actorId: caller(c).userId,
+          changes: parsed.data,
+        })
+
+        // 207, because the batch genuinely had mixed outcomes and a single
+        // status code would have to lie about one of them.
+        return c.json({ results }, 207)
+      },
+    }),
+
+    route({
+      method: 'POST',
+      path: '/workspaces/:workspaceId/tasks/:taskId/move',
+      summary: 'Place a task between two siblings, optionally under a new parent.',
+      auth: { kind: 'workspace', role: 'member', scopes: ['write:artefacts'] },
+      handler: async (c) => {
+        const body = (await c.req.json().catch(() => ({}))) as {
+          before?: string | null
+          after?: string | null
+          parentId?: string | null
+        }
+
+        return c.json(
+          await tasks.move({
+            workspaceId: c.req.param('workspaceId'),
+            taskId: c.req.param('taskId'),
+            actorId: caller(c).userId,
+            ...('before' in body ? { before: body.before } : {}),
+            ...('after' in body ? { after: body.after } : {}),
+            ...('parentId' in body ? { parentId: body.parentId } : {}),
+          }),
+        )
+      },
+    }),
+
+    route({
+      method: 'POST',
+      path: '/workspaces/:workspaceId/tasks/:taskId/links',
+      summary: 'Link a task to another artefact.',
+      auth: { kind: 'workspace', role: 'member', scopes: ['write:artefacts'] },
+      handler: async (c) => {
+        const body = (await c.req.json().catch(() => ({}))) as {
+          toType?: unknown
+          toId?: unknown
+          relation?: unknown
+        }
+        if (typeof body.toType !== 'string' || typeof body.toId !== 'string') {
+          throw new ValidationError('toType and toId are required', { field: 'toType' })
+        }
+
+        await tasks.link({
+          workspaceId: c.req.param('workspaceId'),
+          taskId: c.req.param('taskId'),
+          actorId: caller(c).userId,
+          toType: body.toType,
+          toId: body.toId,
+          ...(typeof body.relation === 'string' ? { relation: body.relation } : {}),
+        })
+        return c.json({ ok: true }, 201)
+      },
     }),
 
     route({
@@ -63,8 +178,13 @@ export function taskRoutes(tasks: TaskService): RouteDefinition[] {
       path: '/workspaces/:workspaceId/tasks/:taskId',
       summary: 'Read one task.',
       auth: { kind: 'workspace', role: 'member', scopes: ['read:artefacts'] },
-      handler: async (c) =>
-        c.json(await tasks.get(c.req.param('workspaceId'), c.req.param('taskId'))),
+      handler: async (c) => {
+        const task = await tasks.get(c.req.param('workspaceId'), c.req.param('taskId'))
+        // The version a client sends back as `If-Match`. Without it there is
+        // no way to write optimistically and still detect a lost update.
+        c.header('ETag', etagFor(task))
+        return c.json(task)
+      },
     }),
 
     route({
@@ -81,14 +201,31 @@ export function taskRoutes(tasks: TaskService): RouteDefinition[] {
           })
         }
 
-        return c.json(
-          await tasks.update({
-            workspaceId: c.req.param('workspaceId'),
-            taskId: c.req.param('taskId'),
-            actorId: caller(c).userId,
-            changes: parsed.data,
-          }),
-        )
+        const workspaceId = c.req.param('workspaceId')
+        const taskId = c.req.param('taskId')
+
+        // Optimistic concurrency, and only when asked for: a client that sends
+        // no `If-Match` has not claimed to know the current state, and
+        // demanding one would break every simple caller.
+        const expected = c.req.header('if-match')
+        if (expected) {
+          const current = await tasks.get(workspaceId, taskId)
+          if (etagFor(current) !== expected) {
+            // The current state travels with the refusal, so a client can
+            // reconcile in one round trip and explain *what* changed rather
+            // than only that something did.
+            throw new ConflictError('This task changed since you read it', { current })
+          }
+        }
+
+        const updated = await tasks.update({
+          workspaceId,
+          taskId,
+          actorId: caller(c).userId,
+          changes: parsed.data,
+        })
+        c.header('ETag', etagFor(updated))
+        return c.json(updated)
       },
     }),
 

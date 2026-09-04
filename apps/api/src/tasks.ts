@@ -1,5 +1,8 @@
 import {
   MAX_TASK_DEPTH,
+  keyBetween,
+  needsRebalance,
+  rebalance,
   NotFoundError,
   ValidationError,
   normaliseTags,
@@ -38,7 +41,11 @@ export interface TaskService {
     task: CreateTask
   }): Promise<TaskRecord>
   get(workspaceId: string, taskId: string): Promise<TaskRecord>
-  listForTeam(workspaceId: string, teamId: string): Promise<TaskRecord[]>
+  listForTeam(
+    workspaceId: string,
+    teamId: string,
+    filters?: TaskFilters,
+  ): Promise<TaskRecord[]>
   update(input: {
     workspaceId: string
     taskId: string
@@ -59,6 +66,63 @@ export interface TaskService {
    * safeguard, and ceremony is what teaches people to pass the flag blindly.
    */
   childCount(workspaceId: string, taskId: string): Promise<number>
+  /**
+   * Places a task between two siblings, optionally under a new parent.
+   *
+   * Expressed as neighbours rather than an index: an index is a statement
+   * about the whole list, and acting on one means rewriting every sibling
+   * after it. A neighbour is a statement about one gap, so the write touches
+   * a single row — which is what lets two people reorder at once (AC1).
+   */
+  move(input: {
+    workspaceId: string
+    taskId: string
+    actorId: string
+    before?: string | null | undefined
+    after?: string | null | undefined
+    parentId?: string | null | undefined
+  }): Promise<TaskRecord>
+  /** Applies one change to many tasks, reporting each outcome separately. */
+  bulkUpdate(input: {
+    workspaceId: string
+    taskIds: readonly string[]
+    actorId: string
+    changes: UpdateTask
+  }): Promise<BulkOutcome[]>
+  link(input: {
+    workspaceId: string
+    taskId: string
+    actorId: string
+    toType: string
+    toId: string
+    relation?: string
+  }): Promise<void>
+}
+
+/**
+ * What happened to one task in a bulk operation (AC3).
+ *
+ * Per task and named. "Three of four succeeded" leaves the caller to work out
+ * which, and a client cannot revert what it cannot identify.
+ */
+/**
+ * How a view narrows the list (AC5, and the filtering half of the scope).
+ *
+ * `scope` is a *link* rather than a column: a task can belong to a session and
+ * a document at once, and a column per kind of scope is how a schema acquires
+ * a dozen nullable foreign keys and no way to ask what something belongs to.
+ */
+export interface TaskFilters {
+  readonly scope?: { readonly type: string; readonly id: string } | undefined
+  readonly status?: string | undefined
+  readonly assigneeId?: string | undefined
+  readonly tag?: string | undefined
+}
+
+export interface BulkOutcome {
+  readonly taskId: string
+  readonly ok: boolean
+  readonly error?: string
 }
 
 interface TaskRow {
@@ -125,6 +189,55 @@ function withIds(
 export function createTaskService(config: DbConfig): TaskService {
   const tx = <T>(workspaceId: string, fn: (t: TenantTx) => Promise<T>, userId?: string) =>
     withTenant(workspaceId, fn, { config, ...(userId ? { userId } : {}) })
+
+  /**
+   * The gap a move should land in, as the keys either side of it.
+   *
+   * Resolved against the task's *actual adjacent* siblings rather than against
+   * the two ids the caller named. Those are not the same thing: a caller says
+   * "after A", and A may have twenty tasks after it — subdividing between the
+   * two named ids then lands somewhere in the middle of them, and can hit an
+   * existing key exactly. Between two genuinely adjacent siblings there is
+   * nothing to hit.
+   */
+  const gapFor = async (
+    t: TenantTx,
+    input: {
+      teamId: string
+      parentId: string | null
+      movingId: string
+      before: string | null | undefined
+      after: string | null | undefined
+    },
+  ): Promise<{ left?: number | undefined; right?: number | undefined } | undefined> => {
+    if (input.before == null && input.after == null) return undefined
+
+    const siblings = await t.query<{ id: string; position: number }>(
+      `SELECT id, position FROM tasks
+        WHERE team_id = $1 AND parent_id IS NOT DISTINCT FROM $2 AND deleted_at IS NULL
+          AND id <> $3
+        ORDER BY position, created_at`,
+      [input.teamId, input.parentId, input.movingId],
+    )
+
+    // "Immediately after `before`" is the primary reading; `after` covers the
+    // case of dropping at the very top, where there is no task above.
+    if (input.before != null) {
+      const index = siblings.findIndex((sibling) => sibling.id === input.before)
+      if (index === -1) return undefined
+      return {
+        left: siblings[index]!.position,
+        ...(siblings[index + 1] ? { right: siblings[index + 1]!.position } : {}),
+      }
+    }
+
+    const index = siblings.findIndex((sibling) => sibling.id === input.after)
+    if (index === -1) return undefined
+    return {
+      ...(siblings[index - 1] ? { left: siblings[index - 1]!.position } : {}),
+      right: siblings[index]!.position,
+    }
+  }
 
   const load = async (t: TenantTx, taskId: string): Promise<TaskRow> => {
     const [row] = await t.query<TaskRow>(
@@ -213,6 +326,17 @@ export function createTaskService(config: DbConfig): TaskService {
           if (task.parentId) await assertPlaceable(t, id, task.parentId)
 
           const key = await nextKey(t, workspaceId, teamId)
+
+          // A new task goes after its current siblings. Leaving every task at
+          // the column default put them all at position 0, where the order
+          // fell back to `created_at` and the first move produced a collision
+          // — silently, because positions are not unique.
+          const [furthest] = await t.query<{ position: number | null }>(
+            `SELECT max(position) AS position FROM tasks
+              WHERE team_id = $1 AND parent_id IS NOT DISTINCT FROM $2 AND deleted_at IS NULL`,
+            [teamId, task.parentId ?? null],
+          )
+          const position = keyBetween(furthest?.position ?? undefined, undefined)
           const criteria = withIds(task.acceptanceCriteria)
           const tags = normaliseTags(task.tags)
 
@@ -227,8 +351,10 @@ export function createTaskService(config: DbConfig): TaskService {
               const [row] = await t.query<TaskRow>(
                 `INSERT INTO tasks
                    (id, workspace_id, team_id, key, parent_id, title, description,
-                    acceptance_criteria, tags, status, priority, size, assignee_id, created_by)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, $12, $13, $14)
+                    acceptance_criteria, tags, status, priority, size, assignee_id, created_by,
+                    position)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, $12, $13,
+                         $14, $15)
                  RETURNING ${COLUMNS}`,
                 [
                   id,
@@ -245,6 +371,7 @@ export function createTaskService(config: DbConfig): TaskService {
                   task.size ?? null,
                   task.assigneeId ?? null,
                   actorId,
+                  position,
                 ],
               )
               return row!
@@ -261,13 +388,32 @@ export function createTaskService(config: DbConfig): TaskService {
       return tx(workspaceId, async (t) => toRecord(await load(t, taskId)))
     },
 
-    async listForTeam(workspaceId, teamId) {
+    async listForTeam(workspaceId, teamId, filters = {}) {
       return tx(workspaceId, async (t) => {
+        const where: string[] = ['team_id = $1', 'deleted_at IS NULL']
+        const params: unknown[] = [teamId]
+        const add = (clause: (placeholder: string) => string, value: unknown): void => {
+          params.push(value)
+          where.push(clause(`$${params.length}`))
+        }
+
+        if (filters.status) add((p) => `status = ${p}`, filters.status)
+        if (filters.assigneeId) add((p) => `assignee_id = ${p}`, filters.assigneeId)
+        if (filters.tag) add((p) => `${p} = ANY(tags)`, filters.tag)
+        if (filters.scope) {
+          params.push(filters.scope.type, filters.scope.id)
+          where.push(
+            `EXISTS (SELECT 1 FROM artefact_links l
+                      WHERE l.from_type = 'task' AND l.from_id = tasks.id
+                        AND l.to_type = $${params.length - 1} AND l.to_id = $${params.length})`,
+          )
+        }
+
         const rows = await t.query<TaskRow>(
           `SELECT ${COLUMNS} FROM tasks
-            WHERE team_id = $1 AND deleted_at IS NULL
+            WHERE ${where.join(' AND ')}
             ORDER BY position, created_at`,
-          [teamId],
+          params,
         )
         return rows.map(toRecord)
       })
@@ -327,6 +473,112 @@ export function createTaskService(config: DbConfig): TaskService {
           })
 
           return toRecord(updated)
+        },
+        actorId,
+      )
+    },
+
+    async move({ workspaceId, taskId, actorId, before, after, parentId }) {
+      return tx(
+        workspaceId,
+        async (t) => {
+          const current = await load(t, taskId)
+          if (parentId) await assertPlaceable(t, taskId, parentId)
+
+          const parentOf = parentId === undefined ? current.parent_id : parentId
+          const locate = { teamId: current.team_id, parentId: parentOf, movingId: taskId, before, after }
+
+          let gap = await gapFor(t, locate)
+          let position = gap === undefined ? current.position : keyBetween(gap.left, gap.right)
+
+          // Precision runs out. It happens rarely — gaps start 1024 apart — and
+          // it must not happen silently: two tasks sharing a key order
+          // arbitrarily, so a list that was stable yesterday quietly stops
+          // being so. Spreading the siblings out again is the one operation
+          // that rewrites them all, which is affordable because it is rare.
+          if (gap?.left !== undefined && gap.right !== undefined && needsRebalance(gap.left, gap.right)) {
+            const ordered = await t.query<{ id: string }>(
+              `SELECT id FROM tasks
+                WHERE team_id = $1 AND parent_id IS NOT DISTINCT FROM $2 AND deleted_at IS NULL
+                ORDER BY position, created_at`,
+              [current.team_id, parentOf],
+            )
+            const spread = rebalance(ordered.length)
+            for (const [index, sibling] of ordered.entries()) {
+              await t.execute(`UPDATE tasks SET position = $2 WHERE id = $1`, [
+                sibling.id,
+                spread[index],
+              ])
+            }
+
+            // Recomputed against the neighbours' *new* keys: the old ones
+            // describe an ordering that no longer exists.
+            gap = await gapFor(t, locate)
+            position = gap === undefined ? current.position : keyBetween(gap.left, gap.right)
+          }
+
+          const moved = await mutate(t, {
+            workspaceId,
+            actor: { type: 'user', id: actorId },
+            action: 'task.move',
+            targetType: 'task',
+            targetId: taskId,
+            before: { position: current.position, parentId: current.parent_id },
+            after: { position, parentId: parentId ?? current.parent_id },
+            apply: async () => {
+              const [row] = await t.query<TaskRow>(
+                `UPDATE tasks
+                    SET position = $2,
+                        parent_id = CASE WHEN $3::boolean THEN $4 ELSE parent_id END,
+                        updated_at = now()
+                  WHERE id = $1 RETURNING ${COLUMNS}`,
+                [taskId, position, parentId !== undefined, parentId ?? null],
+              )
+              return row!
+            },
+          })
+
+          return toRecord(moved)
+        },
+        actorId,
+      )
+    },
+
+    async bulkUpdate({ workspaceId, taskIds, actorId, changes }) {
+      const outcomes: BulkOutcome[] = []
+
+      // One transaction per task, deliberately. A single transaction would make
+      // the batch all-or-nothing, and AC3 asks for the opposite: precisely which
+      // succeeded and which failed. A caller that wanted atomicity would be
+      // asking a different question.
+      for (const taskId of taskIds) {
+        try {
+          await this.update({ workspaceId, taskId, actorId, changes })
+          outcomes.push({ taskId, ok: true })
+        } catch (error) {
+          outcomes.push({
+            taskId,
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        }
+      }
+
+      return outcomes
+    },
+
+    async link({ workspaceId, taskId, actorId, toType, toId, relation }) {
+      await tx(
+        workspaceId,
+        async (t) => {
+          await load(t, taskId)
+          await t.execute(
+            `INSERT INTO artefact_links
+               (id, workspace_id, from_type, from_id, to_type, to_id, relation, created_by)
+             VALUES ($1, $2, 'task', $3, $4, $5, $6, $7)
+             ON CONFLICT DO NOTHING`,
+            [ulid(), workspaceId, taskId, toType, toId, relation ?? 'relates_to', actorId],
+          )
         },
         actorId,
       )

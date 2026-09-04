@@ -141,3 +141,4 @@ export type {
   TaskRecord,
   ChildDisposition,
 } from './tasks.js'
+export { keyBetween, needsRebalance, rebalance, ORDER_REBALANCE_THRESHOLD } from './ordering.js'
