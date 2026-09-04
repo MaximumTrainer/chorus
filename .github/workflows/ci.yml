@@ -73,6 +73,29 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # AGENT-4 AC5 asserts that an exported trace is accepted by a *standard*
+      # collector, which can only be shown by sending it to one. Started as a
+      # step rather than a service container because the collector needs its
+      # config file, and a service container cannot mount one from the
+      # checkout.
+      #
+      # The same image and the same config as the compose stack, so what CI
+      # proves and what a deployment runs are the same thing.
+      - name: Start an OpenTelemetry collector
+        run: |
+          set -euo pipefail
+          docker run --detach --name otel-collector             --publish 4318:4318 --publish 8888:8888             --volume "$GITHUB_WORKSPACE/deploy/otel-collector.yaml:/etc/otelcol/config.yaml:ro"             otel/opentelemetry-collector-contrib:0.116.1             --config=/etc/otelcol/config.yaml
+
+          # Wait for it rather than sleeping: the metrics endpoint answering is
+          # exactly the condition the test depends on.
+          for _ in $(seq 1 30); do
+            if curl --silent --fail http://localhost:8888/metrics > /dev/null; then
+              echo "collector ready"; exit 0
+            fi
+            sleep 1
+          done
+          echo "collector did not become ready"; docker logs otel-collector; exit 1
+
       - name: Verify
         run: pnpm verify
 
