@@ -14,6 +14,9 @@ importers:
       '@chorus/api':
         specifier: workspace:*
         version: link:apps/api
+      '@chorus/brain':
+        specifier: workspace:*
+        version: link:packages/brain
       '@chorus/connectors':
         specifier: workspace:*
         version: link:packages/connectors

@@ -358,13 +358,19 @@ export async function createIndexer(config: DbConfig, deps: IndexerDeps): Promis
 
           for (const [index, chunk] of chunks.entries()) {
             await t.execute(
+              // `repository_id` is denormalised onto the chunk: filtering
+              // through a join to `code_files` puts the retrieval indexes out
+              // of the planner's reach (BRAIN-4 AC5). Safe because re-indexing
+              // replaces a chunk rather than updating it, so the two cannot
+              // drift.
               `INSERT INTO code_chunks
-                 (id, workspace_id, file_id, text, line_start, line_end, symbol_name,
-                  symbol_kind, embedding)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+                 (id, workspace_id, repository_id, file_id, text, line_start, line_end,
+                  symbol_name, symbol_kind, embedding)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
               [
                 ulid(),
                 input.workspaceId,
+                input.repositoryId,
                 fileId,
                 chunk.text,
                 chunk.lineStart,

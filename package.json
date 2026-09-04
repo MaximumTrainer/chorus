@@ -25,6 +25,7 @@
   },
   "devDependencies": {
     "@chorus/agent": "workspace:*",
+    "@chorus/brain": "workspace:*",
     "@chorus/api": "workspace:*",
     "@chorus/connectors": "workspace:*",
     "@chorus/core": "workspace:*",

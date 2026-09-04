@@ -164,9 +164,10 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
         [ulid(), workspaceId, fileId],
       )
       await owner.query(
-        `INSERT INTO code_chunks (id, workspace_id, file_id, text, line_start, line_end)
-         VALUES ($1, $2, $3, 'export const seed = 1', 1, 1)`,
-        [ulid(), workspaceId, fileId],
+        `INSERT INTO code_chunks
+           (id, workspace_id, repository_id, file_id, text, line_start, line_end)
+         VALUES ($1, $2, $3, $4, 'export const seed = 1', 1, 1)`,
+        [ulid(), workspaceId, repositoryId, fileId],
       )
       const workflowId = ulid()
       await owner.query(
@@ -391,8 +392,10 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
         case 'code_chunks': {
           const [file] = await tx.query<{ id: string }>(`SELECT id FROM code_files LIMIT 1`)
           await tx.execute(
-            `INSERT INTO code_chunks (id, workspace_id, file_id, text, line_start, line_end)
-             VALUES ($1, $2, $3, 'x', 1, 1)`,
+            `INSERT INTO code_chunks
+               (id, workspace_id, repository_id, file_id, text, line_start, line_end)
+             SELECT $1, $2, f.repository_id, f.id, 'x', 1, 1
+               FROM code_files f WHERE f.id = $3`,
             [id, workspaceId, file?.id ?? id],
           )
           return

@@ -91,11 +91,12 @@ describe('BRAIN-4 retrieval', () => {
     const chunkId = ulid()
     await db.admin.execute(
       `INSERT INTO code_chunks
-         (id, workspace_id, file_id, text, line_start, line_end, symbol_name, embedding)
-       VALUES ($1, $2, $3, $4, 1, 10, $5, $6::vector)`,
+         (id, workspace_id, repository_id, file_id, text, line_start, line_end, symbol_name, embedding)
+       VALUES ($1, $2, $3, $4, $5, 1, 10, $6, $7::vector)`,
       [
         chunkId,
         w.workspaceId,
+        input.repoId ?? w.repoId,
         fileId,
         input.text,
         input.symbol ?? null,

@@ -16,6 +16,20 @@ services:
     # pgvector is not optional: retrieval (BRAIN-4) is built on it.
     image: pgvector/pgvector:pg16
     restart: unless-stopped
+    # `random_page_cost` defaults to 4, which assumes a spinning disk. On SSD —
+    # every deployment this ships to — the true ratio is close to 1, and the
+    # default makes the planner systematically overvalue sequential scans.
+    #
+    # This is not a micro-optimisation. Measured on the retrieval benchmark, the
+    # default made Postgres abandon the HNSW index at 20,000 chunks and sort the
+    # whole table: 375ms against 4.5ms for the same query at 40,000 rows, where
+    # the estimate happened to fall the other way. A planner flipping between a
+    # millisecond and a third of a second on corpus size alone is not something
+    # to tune around in each query.
+    command:
+      - "postgres"
+      - "-c"
+      - "random_page_cost=1.1"
     environment:
       POSTGRES_USER: ${CHORUS_DB_USER:-chorus}
       POSTGRES_PASSWORD: ${CHORUS_DB_PASSWORD:-chorus}
