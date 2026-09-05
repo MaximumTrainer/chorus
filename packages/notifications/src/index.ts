@@ -42,6 +42,8 @@ export interface NotificationRecord {
   readonly targetType: string
   readonly targetId: string | null
   readonly payload: Record<string, unknown>
+  /** Where to go to act on it, or null when there is nowhere in particular. */
+  readonly path: string | null
   readonly readAt: string | null
   readonly createdAt: string
 }
@@ -162,6 +164,7 @@ interface NotificationRow {
   target_type: string
   target_id: string | null
   payload: Record<string, unknown>
+  path: string | null
   read_at: Date | null
   created_at: Date
 }
@@ -176,6 +179,7 @@ const toRecord = (row: NotificationRow): NotificationRecord => ({
   targetType: row.target_type,
   targetId: row.target_id,
   payload: row.payload,
+  path: row.path,
   readAt: row.read_at ? row.read_at.toISOString() : null,
   createdAt: row.created_at.toISOString(),
 })
@@ -221,8 +225,8 @@ export function createNotifier(config: DbConfig, options: NotifierOptions): Noti
           await t.execute(
             `INSERT INTO notifications
                (id, workspace_id, user_id, kind, priority, subject, body, target_type,
-                target_id, payload)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+                target_id, payload, path)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
             [
               id,
               event.workspaceId,
@@ -234,6 +238,10 @@ export function createNotifier(config: DbConfig, options: NotifierOptions): Noti
               event.targetType,
               event.targetId ?? null,
               JSON.stringify(event.payload ?? {}),
+              // Stored, not only rendered into the email. The in-app copy of a
+              // notification that cannot say where to go tells somebody they
+              // are wanted and not where.
+              event.path ?? null,
             ],
           )
 
@@ -296,7 +304,7 @@ export function createNotifier(config: DbConfig, options: NotifierOptions): Noti
       return tx(workspaceId, async (t) => {
         const rows = await t.query<NotificationRow>(
           `SELECT id, user_id, kind, priority, subject, body, target_type, target_id,
-                  payload, read_at, created_at
+                  payload, path, read_at, created_at
              FROM notifications
             WHERE user_id = $1
             ORDER BY created_at DESC

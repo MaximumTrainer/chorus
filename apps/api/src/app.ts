@@ -31,6 +31,8 @@ import { pointerRoutes } from './pointer-routes.js'
 import { createCollaborationService } from './collaboration.js'
 import { createDocumentService } from './documents.js'
 import { createSuggestionService, type EditSuggester } from './suggestions.js'
+import { createCommentService } from './comments.js'
+import { commentRoutes } from './comment-routes.js'
 import { suggestionRoutes } from './suggestion-routes.js'
 import { documentRoutes } from './document-routes.js'
 import { createSessionService } from './sessions.js'
@@ -218,6 +220,9 @@ function buildRoutes(
   table: readonly RouteDefinition[]
   deps: AuthorisationDeps
 } {
+  // One notifier, shared. Two would mean two sets of delivery preferences and
+  // two places to change how anything reaches anybody.
+  const notifier = createNotifier(config, { baseUrl, ...(mailer ? { mail: mailer } : {}) })
   const workspaces = createWorkspaceService(config)
   const teams = createTeamService(config)
   const tokens = createApiTokenService(config)
@@ -233,6 +238,7 @@ function buildRoutes(
       ...runRoutes(config, resumeRun),
       ...taskRoutes(createTaskService(config)),
       ...documentRoutes(createDocumentService(config), createCollaborationService(config)),
+      ...commentRoutes(createCommentService(config, { notify: (event) => notifier.notify(event) })),
       ...suggestionRoutes(
         createSuggestionService(config, suggestEdits ? { suggest: suggestEdits } : {}),
       ),
@@ -250,7 +256,7 @@ function buildRoutes(
             ),
           )
         : []),
-      ...notificationRoutes(createNotifier(config, { baseUrl, ...(mailer ? { mail: mailer } : {}) })),
+      ...notificationRoutes(notifier),
       ...decisionLinkRoutes(config, createDecisionLinks(config), resumeRun),
       // WALKING SKELETON — delete in Phase 1. Mounted only when a provider is
       // supplied, so a deployment without one simply does not have it.

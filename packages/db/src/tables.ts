@@ -48,6 +48,8 @@ export const TENANT_TABLES = [
   'collaboration_tickets',
   'document_suggestion_sets',
   'document_suggestions',
+  'comment_threads',
+  'comments',
   'signals',
   'webhook_deliveries',
   'audit_events',

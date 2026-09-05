@@ -182,3 +182,5 @@ export {
   withSection,
 } from './document-body.js'
 export type { DocumentBody } from './document-body.js'
+export { locateAnchor } from './anchors.js'
+export type { Anchor, AnchorLocation } from './anchors.js'

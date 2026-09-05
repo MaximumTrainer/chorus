@@ -1,0 +1,11 @@
+-- DOC-4 AC4 — an in-app notification that links to the exact anchor.
+--
+-- `path` was already part of a notification event and was used for one thing:
+-- rendering a link into the email. The in-app copy of the same notification had
+-- no link at all, so a mention arriving in the inbox told somebody they were
+-- wanted and not where.
+--
+-- Storing it makes the two copies of one notification say the same thing, which
+-- is the point of them being one notification. Nullable because plenty of
+-- notifications are about something with nowhere in particular to go.
+ALTER TABLE notifications ADD COLUMN path text;

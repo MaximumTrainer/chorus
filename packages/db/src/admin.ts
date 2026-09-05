@@ -275,6 +275,17 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
          VALUES ($1, $2, $3, 1, 'seed', 'seeded')`,
         [ulid(), workspaceId, suggestionSetId],
       )
+      const threadId = ulid()
+      await owner.query(
+        `INSERT INTO comment_threads (id, workspace_id, document_id, quote, created_by)
+         VALUES ($1, $2, $3, 'seed quote', $4)`,
+        [threadId, workspaceId, documentId, userId],
+      )
+      await owner.query(
+        `INSERT INTO comments (id, workspace_id, thread_id, author_id, body)
+         VALUES ($1, $2, $3, $4, 'seed comment')`,
+        [ulid(), workspaceId, threadId, userId],
+      )
       await owner.query(
         `INSERT INTO code_pointers
            (id, workspace_id, task_id, repository_id, path, line_start, line_end, source)
@@ -618,6 +629,24 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
             `INSERT INTO document_templates (id, workspace_id, team_id, type, version, sections)
              VALUES ($1, $2, $3, 'prd', 99, '[]'::jsonb)`,
             [id, workspaceId, team?.id ?? id],
+          )
+          return
+        }
+        case 'comment_threads': {
+          const [document] = await tx.query<{ id: string }>(`SELECT id FROM documents LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO comment_threads (id, workspace_id, document_id, quote, created_by)
+             VALUES ($1, $2, $3, 'seed', $4)`,
+            [id, workspaceId, document?.id ?? id, userId],
+          )
+          return
+        }
+        case 'comments': {
+          const [thread] = await tx.query<{ id: string }>(`SELECT id FROM comment_threads LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO comments (id, workspace_id, thread_id, author_id, body)
+             VALUES ($1, $2, $3, $4, 'seed')`,
+            [id, workspaceId, thread?.id ?? id, userId],
           )
           return
         }
