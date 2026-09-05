@@ -211,3 +211,17 @@ You are subject to every rule above, and to these in addition:
 - **Do not touch unrelated code.** If you spot an adjacent problem, mention it or open an issue; do not fix it in the same change.
 - **Respect the boundaries in §6** even when a shortcut would be faster. Tenancy, permission, audit, checkpoint and sandbox rules are the ones most costly to get wrong and least visible when broken.
 - **Never fabricate a code pointer, citation, benchmark or test result.** If you did not run it, say you did not run it.
+
+### The skills in `.claude/skills`
+
+Five skills carry the routine parts of this file so they are applied the same
+way every time, by a person or an agent. They are documentation with a trigger,
+not a substitute for reading `CLAUDE.md` and `architecture.md`.
+
+| Skill | Use it when |
+|---|---|
+| `plan-next` | Choosing what to do next: `plan.md`'s critical path and work packages against the open issues, ending in one requirement id and the acceptance test to write. |
+| `tdd` | Implementing anything: the outside-in cycle, which layer a test belongs in, how to show the red, and the §6 cross-cutting rules. |
+| `ship` | Finishing: `pnpm verify`, the commit message shape and the two hooks, the push, and watching the remote run to green. |
+| `green-main` | `main` is red, or its state is unknown: find the run, read the real failure, reproduce it locally, land the fix. |
+| `backlog-sync` | Closing issues that a green build actually proves, and filing precise issues for what was deliberately left out. |
