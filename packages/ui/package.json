@@ -1,0 +1,36 @@
+{
+  "name": "@chorus/ui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared React components and editor extensions (architecture.md §5.1). Owns the document schema: the node types a Chorus document may contain, and how they round-trip through storage and export.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@chorus/core": "workspace:*",
+    "@tiptap/core": "2.27.3",
+    "@tiptap/extension-image": "2.27.3",
+    "@tiptap/extension-mention": "2.27.3",
+    "@tiptap/extension-table": "2.27.3",
+    "@tiptap/extension-table-cell": "2.27.3",
+    "@tiptap/extension-table-header": "2.27.3",
+    "@tiptap/extension-table-row": "2.27.3",
+    "@tiptap/extension-task-item": "2.27.3",
+    "@tiptap/extension-task-list": "2.27.3",
+    "@tiptap/pm": "2.27.3",
+    "@tiptap/starter-kit": "2.27.3",
+    "prosemirror-model": "1.24.1",
+    "y-prosemirror": "1.2.15",
+    "yjs": "13.6.20"
+  },
+  "devDependencies": {
+    "@chorus/config": "workspace:*",
+    "@types/node": "22.7.5",
+    "typescript": "5.6.3",
+    "vitest": "2.1.3"
+  }
+}
