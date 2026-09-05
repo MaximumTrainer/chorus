@@ -83,7 +83,13 @@ describe('AGENT-3 checkpoints', () => {
       definition: definition(overrides),
       input: {},
     })
-    await executor.run(world.workspaceId, run.id)
+    // Checked, not discarded. Every test below reads what the paused run left
+    // behind, so a run that failed instead of pausing reports itself as an
+    // empty table — "expected 0 to be 1" — and says nothing about why.
+    const outcome = await executor.run(world.workspaceId, run.id)
+    expect(outcome.status, `the run should have paused at the gate: ${outcome.error ?? ''}`).toBe(
+      'waiting_human',
+    )
     return { ...world, runId: run.id }
   }
 
