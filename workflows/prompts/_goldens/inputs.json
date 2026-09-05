@@ -2,5 +2,10 @@
   "routing/classify": {
     "workflows": "- shape-idea\n- decompose-tasks\n- implement-task\n- research",
     "trigger": "{\n  \"kind\": \"chat\",\n  \"text\": \"I have a rough idea about improving onboarding\",\n  \"entryPoint\": \"web\"\n}"
+  },
+  "document/draft": {
+    "topic": "Finance cannot split a single payment across two invoices",
+    "documentType": "prd",
+    "gather": "{\n  \"fragments\": [\n    {\n      \"path\": \"src/invoices.ts\",\n      \"lines\": \"1-12\",\n      \"text\": \"export function parseInvoice(payment: Payment): Invoice { return settleInFull(payment) }\"\n    }\n  ]\n}"
   }
 }

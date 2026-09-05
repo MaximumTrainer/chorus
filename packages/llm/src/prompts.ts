@@ -157,19 +157,44 @@ const PLACEHOLDER = /\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g
  * unused value almost always means a placeholder was renamed and a call site
  * was missed.
  */
-export function renderPrompt(prompt: Prompt, values: Record<string, unknown>): string {
+/**
+ * Fills a prompt's placeholders, refusing to leave one unfilled.
+ *
+ * Extra values are allowed. A workflow step is rendered against everything in
+ * scope — every earlier step's output — and most prompts name a few of them,
+ * so "unused" there is the normal case rather than a mistake.
+ *
+ * What is never allowed is sending a placeholder. "Write a {{documentType}}
+ * about invoices" is answered, plausibly, by any model, and the run succeeds
+ * having asked a question nobody wrote — the most expensive kind of silent
+ * failure this system can have.
+ *
+ * One definition of what a placeholder is, shared with the executor, because
+ * two of them means a name one side substitutes and the other passes through
+ * untouched.
+ */
+export function fillPrompt(
+  prompt: Pick<Prompt, 'id' | 'body'>,
+  values: Record<string, unknown>,
+): { text: string; used: ReadonlySet<string> } {
   const used = new Set<string>()
 
-  const rendered = prompt.body.replace(PLACEHOLDER, (_match, name: string) => {
+  const text = prompt.body.replace(PLACEHOLDER, (_match, name: string) => {
     if (!(name in values)) {
-      throw new PromptError(
-        `Prompt "${prompt.id}" needs a value for "${name}"`,
-        { id: prompt.id, missing: name },
-      )
+      throw new PromptError(`Prompt "${prompt.id}" needs a value for "${name}"`, {
+        id: prompt.id,
+        missing: name,
+      })
     }
     used.add(name)
     return String(values[name])
   })
+
+  return { text, used }
+}
+
+export function renderPrompt(prompt: Prompt, values: Record<string, unknown>): string {
+  const { text: rendered, used } = fillPrompt(prompt, values)
 
   const unused = Object.keys(values).filter((key) => !used.has(key))
   if (unused.length > 0) {

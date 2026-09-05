@@ -80,7 +80,7 @@ describe('AGENT-1 AC1 workflow definitions', () => {
     ).toBe(true)
   })
 
-  it('AGENT-5 AC1: a step may not call a tool the workflow did not allow-list', () => {
+  it('AGENT-1 AC3 / AGENT-5 AC1: a step may not call a tool the workflow did not allow-list', () => {
     // The allow-list is a ceiling, not a manifest. Catching this at load means
     // the run never starts; catching it at run time means it stops partway.
     const broken = definition({

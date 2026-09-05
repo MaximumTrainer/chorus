@@ -75,6 +75,10 @@ describe('NFR-11 redaction', () => {
   const definition = WorkflowDefinitionSchema.parse({
     name: 'thinking-flow',
     version: 1,
+    // The classifier prompt is a real shipped file, so the run has to be able
+    // to fill its placeholders — an unfilled one fails the step now, rather
+    // than reaching the model inside the text.
+    inputs: { workflows: 'the list offered', trigger: 'what arrived' },
     steps: [{ id: 'think', type: 'model', prompt: 'routing/classify' }],
   })
 
@@ -97,7 +101,7 @@ describe('NFR-11 redaction', () => {
       teamId: teams[0]!.id,
       startedBy: ada.userId,
       definition,
-      input: {},
+      input: { workflows: '- shape-idea', trigger: '{"kind":"chat"}' },
     })
     await executor.run(workspace.id, run.id)
     return { ada, workspaceId: workspace.id, runId: run.id }

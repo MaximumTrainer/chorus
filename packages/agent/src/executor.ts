@@ -3,12 +3,15 @@ import {
   ConfigurationError,
   DEFAULT_REDACTION_LEVEL,
   NotFoundError,
+  ValidationError,
   redactBody,
   resolveCheckpointPolicy,
   ulid,
   type CheckpointKind,
   type NotificationSink,
   type PolicyRule,
+  type ArtefactDraft,
+  type ArtefactWriter,
   type RedactionLevel,
   type Retriever,
   type ResolvedPolicy,
@@ -22,6 +25,7 @@ import {
   type CheckpointRecord,
   type CheckpointRow,
 } from './checkpoints.js'
+import { fillPrompt } from '@chorus/llm'
 import type { ModelProvider, ModelRef } from '@chorus/llm'
 import { withSpan } from '@chorus/telemetry'
 import { issueDecisionToken } from './decision-links.js'
@@ -116,6 +120,14 @@ export interface ExecutorDeps {
    * caller.
    */
   readonly retriever?: Retriever
+  /**
+   * Where an `emit` step writes (AGENT-1, architecture.md §11.7).
+   *
+   * An `ArtefactWriter` from `core`, so the runtime describes an artefact and
+   * the API decides how that becomes rows — a workflow handing over a partial
+   * database record would make every schema change a workflow change.
+   */
+  readonly artefacts?: ArtefactWriter
   /**
    * What a call cost, in whole cents.
    *
@@ -478,7 +490,22 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
 
       /** Per-iteration values a loop publishes, e.g. `each.item`. */
       const items: Record<string, unknown> = {}
+      /**
+       * What the run was started with, addressable as `{{input.<name>}}`.
+       *
+       * A definition declares `inputs`; without this the declaration is
+       * decoration, and every workflow needs a first step whose only job is to
+       * restate the request its caller already made. Read from the trigger
+       * rather than held in memory so a resumed run sees the same values it
+       * started with — the alternative is a run that resumes against different
+       * inputs and reports success.
+       */
+      const startedWith = run.trigger?.input ?? {}
+
       const scope = (): Scope => ({
+        ...Object.fromEntries(
+          Object.entries(startedWith).map(([name, value]) => [`input.${name}`, value]),
+        ),
         ...Object.fromEntries(Object.entries(outputs).map(([id, value]) => [`${id}.output`, value])),
         ...items,
       })
@@ -572,6 +599,7 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
                 redaction,
                 scope: scope(),
                 outputs,
+                startedWith,
                 workspaceId,
                 teamId: run.team_id ?? '',
                 runId,
@@ -885,12 +913,14 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
     /** Every `{{id.field}}` value visible to this step. */
     scope: Scope
     outputs: Record<string, unknown>
+    /** What the run was started with, so a prompt can name its inputs. */
+    startedWith: Readonly<Record<string, unknown>>
     workspaceId: string
     teamId: string
     runId: string
     actor: { userId: string; role: 'member' | 'senior_member' | 'admin' | 'owner' }
   }): Promise<StepResult> {
-    const { step, definition, redaction, scope, outputs, workspaceId, teamId, runId, actor } =
+    const { step, definition, redaction, scope, outputs, startedWith, workspaceId, teamId, runId, actor } =
       input
     const ctx = { workspaceId, teamId, runId, actor, now }
 
@@ -917,9 +947,16 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
         // and a result has to be replayable against the text that produced it
         // rather than against whatever the file says today.
         const template = deps.prompts?.get(step.prompt)
+        // The run's inputs first, then step outputs — a step id and an input
+        // sharing a name means the step, which is the later and more specific
+        // fact. The first step of a workflow is usually a model call with no
+        // earlier step to read from, so a prompt that cannot name what the run
+        // was started with forces every workflow to carry a step whose only
+        // job is to copy the request somewhere the prompt can see it.
+        const visible = { ...startedWith, ...outputs }
         const content = template
-          ? renderTemplate(template.body, outputs)
-          : renderPrompt(step.prompt, outputs)
+          ? renderTemplate(step.prompt, template.body, visible)
+          : renderPrompt(step.prompt, visible)
 
         const startedAt = Date.now()
         let text = ''
@@ -1081,6 +1118,48 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
           output: { taken: satisfied ? 'then' : 'otherwise', disabled: [...disable] },
           disable,
         }
+      }
+
+      case 'emit': {
+        if (!deps.artefacts) {
+          // Refusing beats pretending. A workflow whose emit silently did
+          // nothing would report success having produced no artefact, and the
+          // person who asked for a document would go looking for one.
+          throw new ConfigurationError(
+            `Step "${step.id}" emits a ${step.artefact}, but no artefact writer is configured.`,
+            { step: step.id, artefact: step.artefact },
+          )
+        }
+
+        const draft = draftFrom(step.artefact, outputs)
+        if (!draft) {
+          throw new ValidationError(
+            `Step "${step.id}" found nothing to emit as a ${step.artefact}. ` +
+              `An emit step reads the output of an earlier step; none of them produced one.`,
+            { step: step.id, artefact: step.artefact },
+          )
+        }
+
+        // Validation lives in the writer and runs *before* the write
+        // (§11.7). An artefact written first and checked later has already
+        // been seen, linked to and acted on by the time anybody notices it
+        // is wrong.
+        const emitted = await deps.artefacts.emit(draft, {
+          workspaceId,
+          teamId,
+          runId,
+          actorId: actor.userId,
+        })
+
+        await recordEvent(workspaceId, runId, 'artefact', {
+          step: step.id,
+          kind: emitted.kind,
+          artefactId: emitted.id,
+          title: emitted.title,
+          pointers: emitted.pointerCount,
+        })
+
+        return { kind: 'output', output: emitted }
       }
 
       case 'checkpoint':
@@ -1398,6 +1477,89 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
   }
 
   /**
+   * The artefact a workflow is proposing, from what its steps produced.
+   *
+   * An emit step names a *kind*, not a source: `emit: structure_proposal` says
+   * what to write, and the material is whatever an earlier step produced. So
+   * this walks the outputs backwards and takes the most recent one that looks
+   * like an artefact — the last step to have said something is the one that
+   * said it.
+   *
+   * A model step produces a string, and a string is not an artefact. Rather
+   * than guessing a title from a paragraph, an unparseable output yields
+   * nothing and the step fails with a message naming the step — which is
+   * recoverable, where a document titled after the first line of a model's
+   * preamble is not.
+   */
+  function draftFrom(
+    artefact: string,
+    outputs: Readonly<Record<string, unknown>>,
+  ): ArtefactDraft | undefined {
+    for (const value of [...Object.values(outputs)].reverse()) {
+      const candidate = parseDraft(artefact, value)
+      if (candidate) return candidate
+    }
+    return undefined
+  }
+
+  function parseDraft(artefact: string, value: unknown): ArtefactDraft | undefined {
+    // A model asked for JSON usually returns JSON, sometimes wrapped in prose.
+    // Taking the outermost braces is the smallest thing that handles both
+    // without inventing a parser.
+    const record =
+      typeof value === 'string' ? parseJsonObject(value) : (value as Record<string, unknown>)
+    if (!record || typeof record !== 'object') return undefined
+
+    const title = record.title
+    if (typeof title !== 'string' || title.trim() === '') return undefined
+
+    const kind: ArtefactDraft['kind'] = artefact === 'task' ? 'task' : 'document'
+
+    return {
+      kind,
+      title: title.trim(),
+      ...(isStringRecord(record.sections) ? { sections: record.sections } : {}),
+      ...(isStringArray(record.acceptanceCriteria)
+        ? { acceptanceCriteria: record.acceptanceCriteria }
+        : {}),
+      ...(isStringArray(record.tags) ? { tags: record.tags } : {}),
+      ...(Array.isArray(record.pointers)
+        ? { pointers: record.pointers as NonNullable<ArtefactDraft['pointers']> }
+        : {}),
+      ...(typeof record.documentType === 'string'
+        ? { documentType: record.documentType }
+        : artefact !== 'task'
+          ? { documentType: artefact }
+          : {}),
+    }
+  }
+
+  function parseJsonObject(text: string): Record<string, unknown> | undefined {
+    const start = text.indexOf('{')
+    const end = text.lastIndexOf('}')
+    if (start === -1 || end <= start) return undefined
+    try {
+      const parsed: unknown = JSON.parse(text.slice(start, end + 1))
+      return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  function isStringRecord(value: unknown): value is Record<string, string> {
+    return (
+      value !== null &&
+      typeof value === 'object' &&
+      !Array.isArray(value) &&
+      Object.values(value as Record<string, unknown>).every((entry) => typeof entry === 'string')
+    )
+  }
+
+  function isStringArray(value: unknown): value is string[] {
+    return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
+  }
+
+  /**
    * Placeholder rendering.
    *
    * The prompt registry (`workflows/prompts/**`) is wired in with the built-in
@@ -1452,11 +1614,27 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
    * placeholders until the workflows themselves land, and failing a run over a
    * placeholder mismatch would be a worse answer than leaving it visible.
    */
-  function renderTemplate(body: string, outputs: Readonly<Record<string, unknown>>): string {
-    return body.replace(/\{\{\s*([a-z][a-z0-9_]*)\s*\}\}/g, (original, name: string) => {
-      const value = outputs[name]
-      if (value === undefined) return original
-      return typeof value === 'string' ? value : JSON.stringify(value)
-    })
+  /**
+   * Fills a prompt template from what the run can see.
+   *
+   * Delegates the placeholder rule to `packages/llm`, which owns what a prompt
+   * is. Two definitions of a placeholder means a name one side substitutes and
+   * the other passes through untouched, and the symptom is a model asked a
+   * question containing `{{documentType}}` — which it answers, plausibly.
+   */
+  function renderTemplate(
+    id: string,
+    body: string,
+    visible: Readonly<Record<string, unknown>>,
+  ): string {
+    return fillPrompt(
+      { id, body },
+      Object.fromEntries(
+        Object.entries(visible).map(([name, value]) => [
+          name,
+          typeof value === 'string' ? value : JSON.stringify(value),
+        ]),
+      ),
+    ).text
   }
 }

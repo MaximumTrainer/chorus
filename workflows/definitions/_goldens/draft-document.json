@@ -1,0 +1,31 @@
+{
+  "input": {
+    "topic": "Finance cannot split a single payment across two invoices",
+    "documentType": "prd"
+  },
+  "context": [
+    {
+      "path": "src/invoices.ts",
+      "text": "// Finance cannot split a single payment across two invoices: parseInvoice\n// settles each payment in full against the first invoice it matches.\nexport function parseInvoice(payment: Payment): Invoice { return settleInFull(payment) }"
+    },
+    {
+      "path": "src/reconcile.ts",
+      "text": "// Anything a single payment could not settle in full is left across the\n// reconciliation queue for two people to split by hand each invoices run.\nexport function reconcile(invoices: Invoice[]) { return invoices.filter((i) => !i.settled) }"
+    }
+  ],
+  "model": {
+    "chunks": [
+      "{\"title\": \"Splitting part-payments across invoices\", \"docume",
+      "ntType\": \"prd\", \"sections\": {\"problem\": \"Finance reconciles part-payments by hand because `parseInvoice` in src/invoices.ts treats every payment as settling one invoice in full. A payment covering two invoices lands against the first and leaves the second open.\", \"outcome\": \"A payment can be split across invoices at the point it is recorded, and the reconciliation queue is empty at the end of a working day rather than at the end of a week.\"}}"
+    ]
+  },
+  "expect": {
+    "kind": "document",
+    "type": "prd",
+    "title": "Splitting part-payments across invoices",
+    "sections": {
+      "problem": "Finance reconciles part-payments by hand because `parseInvoice` in src/invoices.ts treats every payment as settling one invoice in full. A payment covering two invoices lands against the first and leaves the second open.",
+      "outcome": "A payment can be split across invoices at the point it is recorded, and the reconciliation queue is empty at the end of a working day rather than at the end of a week."
+    }
+  }
+}

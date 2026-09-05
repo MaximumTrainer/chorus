@@ -141,6 +141,9 @@ importers:
 
   apps/worker:
     dependencies:
+      '@chorus/agent':
+        specifier: workspace:*
+        version: link:../../packages/agent
       '@chorus/connectors':
         specifier: workspace:*
         version: link:../../packages/connectors
@@ -196,6 +199,9 @@ importers:
       '@chorus/telemetry':
         specifier: workspace:*
         version: link:../telemetry
+      yaml:
+        specifier: 2.6.0
+        version: 2.6.0
       zod:
         specifier: 4.5.4
         version: 4.5.4

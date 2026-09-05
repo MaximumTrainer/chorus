@@ -119,6 +119,139 @@ describe('AGENT-1 step executor', () => {
     expect(steps.every((step) => step.status === 'succeeded')).toBe(true)
   })
 
+  it('AGENT-1: a step reads the run input, so a definition declaring inputs means something', async () => {
+    calls.length = 0
+    models = createFakeModelProvider()
+    const { workspaceId, userId, teamId } = await workspace()
+
+    // A tool that reports what it was handed, so the assertion is on the value
+    // the step actually received rather than on the template surviving.
+    const echo = {
+      name: 'echo',
+      description: 'echo',
+      input: z.object({}).passthrough(),
+      output: z.object({}).passthrough(),
+      sideEffect: 'none',
+      requiredRole: 'member',
+      requiredScopes: [],
+      execute: async (given: Record<string, unknown>) => given,
+    } as unknown as AnyTool
+
+    const executor = executorWith([echo])
+
+    // A definition declares `inputs`, and the run is started with values for
+    // them. If nothing puts those in scope, the declaration is decoration: the
+    // workflow can only ever act on what its own earlier steps produced, and
+    // every workflow ends up with a first step whose only job is to restate
+    // the request the caller already made.
+    const run = await executor.start({
+      workspaceId,
+      teamId,
+      startedBy: userId,
+      definition: WorkflowDefinitionSchema.parse({
+        name: 'input-reading-flow',
+        version: 1,
+        inputs: { topic: 'what to work on' },
+        tools: ['echo'],
+        steps: [{ id: 'repeat', type: 'tool', tool: 'echo', input: { said: '{{input.topic}}' } }],
+      }),
+      input: { topic: 'part-payment reconciliation' },
+    })
+
+    const outcome = await executor.run(workspaceId, run.id)
+    expect(outcome.status, outcome.error).toBe('succeeded')
+
+    const [step] = await db.admin.query<{ output: { said?: string } }>(
+      `SELECT output FROM run_steps WHERE run_id = $1 AND step_id = 'repeat'`,
+      [run.id],
+    )
+    expect(step!.output.said).toBe('part-payment reconciliation')
+  })
+
+  it('AGENT-1 AC2: a prompt can name the run inputs, not only earlier steps', async () => {
+    calls.length = 0
+    models = createFakeModelProvider({ chunks: ['{"ok":true}'] })
+    const { workspaceId, userId, teamId } = await workspace()
+
+    const executor = createExecutor(db.config, {
+      registry: createToolRegistry([]),
+      models,
+      modelFor: () => ({ provider: 'fake', model: 'chat' }),
+      prompts: {
+        get: () => ({
+          id: 'test/draft',
+          version: 1,
+          inputs: ['topic'],
+          body: 'Write about {{topic}}.',
+          hash: 'abc',
+        }),
+      },
+    })
+
+    const run = await executor.start({
+      workspaceId,
+      teamId,
+      startedBy: userId,
+      definition: WorkflowDefinitionSchema.parse({
+        name: 'prompted-flow',
+        version: 1,
+        inputs: { topic: 'what to write about' },
+        steps: [{ id: 'draft', type: 'model', prompt: 'test/draft' }],
+      }),
+      input: { topic: 'part-payment reconciliation' },
+    })
+    expect((await executor.run(workspaceId, run.id)).status).toBe('succeeded')
+
+    // The first step of a workflow is a model call more often than not, and
+    // it has no earlier step to read from. If a prompt cannot name what the
+    // run was started with, every workflow needs a step that exists only to
+    // copy the request into somewhere the prompt can see it.
+    expect(models.requests()[0]!.prompt).toBe('Write about part-payment reconciliation.')
+  })
+
+  it('AGENT-1 AC2: a placeholder the run cannot fill fails the step, rather than being sent', async () => {
+    calls.length = 0
+    models = createFakeModelProvider({ chunks: ['{"ok":true}'] })
+    const { workspaceId, userId, teamId } = await workspace()
+
+    const executor = createExecutor(db.config, {
+      registry: createToolRegistry([]),
+      models,
+      modelFor: () => ({ provider: 'fake', model: 'chat' }),
+      prompts: {
+        get: () => ({
+          id: 'test/draft',
+          version: 1,
+          inputs: ['topic'],
+          body: 'Write a {{documentType}} about {{topic}}.',
+          hash: 'abc',
+        }),
+      },
+    })
+
+    const run = await executor.start({
+      workspaceId,
+      teamId,
+      startedBy: userId,
+      definition: WorkflowDefinitionSchema.parse({
+        name: 'half-filled-flow',
+        version: 1,
+        inputs: { topic: 'what to write about' },
+        steps: [{ id: 'draft', type: 'model', prompt: 'test/draft' }],
+      }),
+      input: { topic: 'part-payment reconciliation' },
+    })
+    const outcome = await executor.run(workspaceId, run.id)
+
+    // Sending "Write a {{documentType}} about part-payment reconciliation." is
+    // the worst available outcome: the model answers it, plausibly, and the
+    // run succeeds having asked a question nobody wrote. A prompt is the most
+    // behaviour-changing artefact here and the least visible when it is wrong.
+    expect(outcome.status).toBe('failed')
+    expect(outcome.error).toMatch(/documentType/)
+    expect(models.requests()).toHaveLength(0)
+  })
+
   it('AGENT-1 AC4: the workflow version is pinned at the start of the run', async () => {
     const { workspaceId, userId, teamId } = await workspace()
     const executor = executorWith([counting('first'), counting('second'), counting('third')])
@@ -240,7 +373,7 @@ describe('AGENT-1 step executor', () => {
     expect(calls).toEqual(['second', 'third'])
   })
 
-  it('AGENT-5 AC1: a step calling a tool outside the allow-list fails the run, not the step silently', async () => {
+  it('AGENT-1 AC3 / AGENT-5 AC1: a step calling a tool outside the allow-list fails the run, not the step silently', async () => {
     calls.length = 0
     models = createFakeModelProvider()
     const { workspaceId, userId, teamId } = await workspace()

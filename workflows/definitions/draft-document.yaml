@@ -1,0 +1,44 @@
+# architecture.md §11.3 — draft-document.
+#
+# Triggered by a chat command, a quick action, or an extension PRD request. It
+# retrieves what the workspace already knows, drafts a document citing it, and
+# emits it as a draft.
+#
+# No checkpoint, deliberately: the artefact lands as a draft somebody reads and
+# edits, so a gate before writing one would ask a question whose answer is the
+# document itself. A gate that stops work to ask something the next screen
+# answers is how people learn to approve without looking.
+name: draft-document
+version: 1
+
+inputs:
+  topic: What the document should be about, in the requester's own words
+  documentType: The kind of document — prd, spec, strategy, gap_spec or freeform
+
+outputs:
+  - document
+
+# A tier, never a model (AC5). Drafting is the workflow's whole output and is
+# read by a person who will act on it, so it is not the place to economise.
+model: balanced
+
+# An empty allow-list is a ceiling, not an oversight: this workflow retrieves,
+# drafts and writes, and nothing it does needs a tool. Widening it later is a
+# visible change to this file.
+tools: []
+
+checkpoints: {}
+
+steps:
+  - id: gather
+    type: retrieve
+    query: '{{input.topic}}'
+    limit: 12
+
+  - id: draft
+    type: model
+    prompt: document/draft
+
+  - id: write
+    type: emit
+    artefact: prd

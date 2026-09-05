@@ -163,3 +163,12 @@ export type {
   TemplateProblem,
   DocumentSection,
 } from './documents.js'
+export { ARTEFACT_KINDS, isArtefactKind, ArtefactRefusedError } from './artefacts.js'
+export type {
+  ArtefactKind,
+  ArtefactPointer,
+  ArtefactDraft,
+  EmittedArtefact,
+  ArtefactContext,
+  ArtefactWriter,
+} from './artefacts.js'

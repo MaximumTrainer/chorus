@@ -4,14 +4,19 @@
   "private": true,
   "type": "module",
   "description": "The agent runtime (AGENT-1, AGENT-3, AGENT-5): workflow registry, step executor, checkpoints and the typed tool registry. One package because the three are a dependency cycle at the contract level (plan.md §2.1).",
-  "exports": { ".": "./src/index.ts" },
-  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json" },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
   "dependencies": {
     "@chorus/core": "workspace:*",
     "@chorus/db": "workspace:*",
     "@chorus/llm": "workspace:*",
     "@chorus/telemetry": "workspace:*",
-    "zod": "4.5.4"
+    "zod": "4.5.4",
+    "yaml": "2.6.0"
   },
   "devDependencies": {
     "@chorus/config": "workspace:*",

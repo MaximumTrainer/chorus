@@ -655,6 +655,10 @@ The hash covers the step's own definition and **only the outputs it actually ref
 
 **A loop's iterations are separate steps.** Each records itself as `bodyId#index`, because resumption matches by step id and two iterations sharing one could not be told apart — a crash mid-loop would then resume by repeating whatever the last iteration wrote. The body steps are excluded from the main sequential pass, since their definitions live in `steps` like any other but their execution belongs to the loop; a step named by two loops is a load-time error for the same identity reason. `maxIterations` is checked *before* the first iteration, so an over-long collection leaves no partial work to reconcile.
 
+**The registry loads from disk at process boot, and refuses to.** `workflows/definitions/*.yaml` are parsed, schema-checked, and validated against the tools that are actually registered and the prompts that are actually on disk; every problem in every file is collected and reported together, and the process does not start with any of them outstanding (AGENT-1 AC1). Reporting one at a time would make fixing a directory of workflows a restart-per-typo exercise. Files and directories prefixed `_`, and `README.md`, are excluded by an explicit rule rather than by ignoring whatever fails to parse — the latter would make a workflow with a typo in it silently stop existing, and the first symptom would be a router that cannot find it.
+
+**A run's inputs are addressable as `{{input.<name>}}`, and its prompts may name them directly.** A definition declares `inputs`; without this the declaration is decoration, and every workflow needs a first step whose only job is to restate the request its caller already made. They are read from the run's trigger rather than held in memory, so a resumed run sees the values it started with. A placeholder that does not resolve **fails the step** rather than reaching the model: "Write a {{documentType}} about invoices" is answered plausibly by any model, and the run then succeeds having asked a question nobody wrote. What counts as a placeholder is defined once, in `packages/llm` — two definitions means a name one side substitutes and the other passes through untouched.
+
 **Truthiness is spelled out, not inherited.** `branch.when` treats an empty list, an empty string, zero and the string `"false"` as unsatisfied, and unwraps the `{ ok }` / `{ result }` shapes tools conventionally return. Left to JavaScript's `!!`, an empty result list reads as true, which is the opposite of what every author who writes `when: {{search.output}}` means.
 
 ### 11.2 Workflow router (AGENT-2)
@@ -689,6 +693,9 @@ The classifier prompt is a **versioned file** (`workflows/prompts/routing/classi
 | `board-to-spec` | whiteboard board/frame chosen as entry point, import, or command from a board card | pull board items with spatial structure → cluster by frame/connector/colour → draft Document citing each source item → `decompose-tasks` | `before_create_artefacts: ask` |
 | `summarise-signal` | schedule or chat surface | retrieve → digest → post | `before_external_write: ask` |
 | `research` | chat request | allow-listed web search + brain → cited memo | none |
+
+
+**Shipped so far: `draft-document` (v1).** Each built-in lands as its phase does, and each carries a golden in `workflows/definitions/_goldens/` recording the artefact it produces from a fixed context bundle and scripted model responses (AC6); a workflow added without one fails the suite. Two deliberate narrowings in v1 of `draft-document`, both recorded here rather than left as a silent difference from the table above: it drafts in **one model call** rather than outlining and then generating section by section, because writing into a live document section by section is DOC-3's accept/reject editing and does not exist yet; and it has no checkpoint, per the table, because the artefact lands as a draft somebody reads. `shape-idea` waits on CHAT-2 — its key step is the streamed reply, and shipping it without one would mean shipping a different workflow under its name.
 
 ### 11.4 Tool registry (AGENT-5)
 

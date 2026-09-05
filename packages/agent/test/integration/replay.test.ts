@@ -77,6 +77,10 @@ describe('NFR-11 replay and hooks', () => {
   const everyStepType = WorkflowDefinitionSchema.parse({
     name: 'busy-flow',
     version: 1,
+    // The model step uses a real shipped prompt, so the run has to be able to
+    // fill its placeholders. A prompt sent with one unfilled is a step failure
+    // now, which is why they are declared here rather than left to chance.
+    inputs: { workflows: 'the list offered to the classifier', trigger: 'what arrived' },
     tools: ['collect', 'body', 'after'],
     steps: [
       { id: 'collect', type: 'tool', tool: 'collect' },
@@ -116,7 +120,7 @@ describe('NFR-11 replay and hooks', () => {
       teamId: world.teamId,
       startedBy: world.userId,
       definition: everyStepType,
-      input: {},
+      input: { workflows: '- shape-idea', trigger: '{"kind":"chat"}' },
     })
     const outcome = await executor.run(world.workspaceId, record.id)
     return { ...world, runId: record.id, outcome }

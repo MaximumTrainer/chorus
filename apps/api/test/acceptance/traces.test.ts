@@ -107,6 +107,10 @@ describe('AGENT-4 run traces', () => {
       definition: WorkflowDefinitionSchema.parse({
         name: 'traced-flow',
         version: 1,
+        // The classifier prompt is a real shipped file, so the run has to be
+        // able to fill its placeholders — an unfilled one fails the step now,
+        // rather than reaching the model inside the text.
+        inputs: { workflows: 'the list offered', trigger: 'what arrived' },
         tools: ['prepare', 'finish'],
         steps: [
           { id: 'prepare', type: 'tool', tool: 'prepare' },
@@ -115,7 +119,7 @@ describe('AGENT-4 run traces', () => {
           { id: 'finish', type: 'tool', tool: 'finish' },
         ],
       }),
-      input: {},
+      input: { workflows: '- shape-idea', trigger: '{"kind":"chat"}' },
     })
     await executor.run(workspace.id, run.id)
 

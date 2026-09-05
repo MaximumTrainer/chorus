@@ -2,6 +2,7 @@ import { writeFileSync } from 'node:fs'
 import { ConfigurationError, createKeyring, parseMasterKey } from '@chorus/core'
 import { createCredentialStore } from '@chorus/connectors'
 import { configFromEnv } from '@chorus/db'
+import { builtInWorkflows } from '@chorus/agent'
 import { createIndexer } from '@chorus/indexer'
 import { createOpenAiCompatibleProvider, routerConfigFromEnv } from '@chorus/llm'
 import { createQueue, redisConfigFromEnv } from '@chorus/queue'
@@ -49,6 +50,18 @@ async function main(): Promise<void> {
   // Before the consumers register: a job picked up by a worker whose provider
   // is not yet running loses the one span that joins it to its request.
   initTelemetry({ serviceName: 'chorus-worker' })
+
+  // Before anything else that could accept work (AGENT-1 AC1). A definition
+  // naming a tool that is not registered or a prompt somebody renamed is a
+  // problem the process should die of at boot, not one a run discovers at step
+  // four having already done steps one to three — some of which may have
+  // written something.
+  const workflows = builtInWorkflows({
+    allowedHosts: (process.env.CHORUS_TOOL_ALLOWED_HOSTS ?? '')
+      .split(',')
+      .map((host) => host.trim())
+      .filter((host) => host !== ''),
+  })
 
   const dbConfig = configFromEnv()
   const queue = createQueue(redisConfigFromEnv())
@@ -117,7 +130,12 @@ async function main(): Promise<void> {
   writeFileSync(HEARTBEAT, new Date().toISOString(), 'utf8')
 
   console.warn(
-    JSON.stringify({ level: 'info', message: 'worker started', queues: worker.queues }),
+    JSON.stringify({
+      level: 'info',
+      message: 'worker started',
+      queues: worker.queues,
+      workflows: workflows.names(),
+    }),
   )
 
   const shutdown = async (signal: string): Promise<void> => {

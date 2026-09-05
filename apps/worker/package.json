@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "BullMQ consumers: index builds, connector syncs, agent runs (architecture.md \u00a76). Enqueued by api, never called directly.",
+  "description": "BullMQ consumers: index builds, connector syncs, agent runs (architecture.md §6). Enqueued by api, never called directly.",
   "exports": {
     ".": "./src/index.ts"
   },
@@ -12,6 +12,7 @@
     "start": "tsx src/main.ts"
   },
   "dependencies": {
+    "@chorus/agent": "workspace:*",
     "@chorus/connectors": "workspace:*",
     "@chorus/core": "workspace:*",
     "@chorus/db": "workspace:*",
