@@ -15,7 +15,9 @@
     "@chorus/core": "workspace:*",
     "@chorus/db": "workspace:*",
     "@chorus/telemetry": "workspace:*",
+    "@chorus/ui": "workspace:*",
     "@hocuspocus/server": "2.15.2",
+    "y-prosemirror": "1.2.15",
     "yjs": "13.6.20"
   },
   "devDependencies": {

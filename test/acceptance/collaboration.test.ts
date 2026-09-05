@@ -105,10 +105,14 @@ describe('DOC-2 collaborative editing', () => {
   }
 
   /** Waits for a condition rather than sleeping (CLAUDE.md §5). */
-  async function until(what: string, predicate: () => boolean, ms = 5_000): Promise<void> {
+  async function until(
+    what: string,
+    predicate: () => boolean | Promise<boolean>,
+    ms = 5_000,
+  ): Promise<void> {
     const deadline = Date.now() + ms
     while (Date.now() < deadline) {
-      if (predicate()) return
+      if (await predicate()) return
       await new Promise((resolve) => setTimeout(resolve, 25))
     }
     throw new Error(`timed out waiting for: ${what}`)
@@ -236,6 +240,54 @@ describe('DOC-2 collaborative editing', () => {
     expect(text(online.doc).match(/Written together\. /g)).toHaveLength(1)
     expect(text(online.doc).match(/Written alone\. /g)).toHaveLength(1)
   })
+
+  it('DOC-2: a write through the API is not lost when an editor is open', async () => {
+    const w = await world()
+    const granted = await ticketFor(w.ada, w.workspaceId, w.documentId)
+    const session = await connect(granted.name!, granted.ticket!)
+    expect(session.authorised).toBe(true)
+
+    // The agent emitting a draft, or somebody filling a section from the task
+    // panel — a write that does not come through the socket, while somebody has
+    // the document open.
+    const written = await w.ada.patch(
+      `/workspaces/${w.workspaceId}/documents/${w.documentId}`,
+      { sections: [{ key: 'problem', content: 'Written through the API.' }] },
+    )
+    expect(written.status, await written.clone().text()).toBe(200)
+
+    const ydocAfterApi = (
+      await db.admin.query<{ ydoc: Buffer }>(`SELECT ydoc FROM documents WHERE id = $1`, [
+        w.documentId,
+      ])
+    )[0]!.ydoc
+
+    // Now the open session writes, which is what makes the server store its own
+    // in-memory copy. Without merging what is already in the row, that copy
+    // does not contain the write above — and the API's change disappears with
+    // no error anywhere, which is the worst way to lose somebody's paragraph.
+    session.doc.getText('scratch').insert(0, 'typing')
+
+    // Waited for by watching the stored bytes change, not by watching a column
+    // the collaboration server never writes: the first version of this test
+    // did the latter and passed without the server having stored anything.
+    await until(
+      'the server has stored the session',
+      async () => {
+        const [row] = await db.admin.query<{ ydoc: Buffer }>(
+          `SELECT ydoc FROM documents WHERE id = $1`,
+          [w.documentId],
+        )
+        return row !== undefined && !row.ydoc.equals(ydocAfterApi)
+      },
+      20_000,
+    )
+
+    const exported = await (
+      await w.ada.get(`/workspaces/${w.workspaceId}/documents/${w.documentId}/export`)
+    ).text()
+    expect(exported).toContain('Written through the API')
+  }, 40_000)
 
   it('DOC-2 AC5: a connection without a ticket is refused', async () => {
     const w = await world()

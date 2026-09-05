@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import * as Y from 'yjs'
 import { prosemirrorJSONToYDoc, yDocToProsemirrorJSON } from 'y-prosemirror'
-import { DOCUMENT_FRAGMENT, documentSchema, documentToMarkdown, SUPPORTED_NODES } from './document-schema.js'
+import { documentToMarkdown } from '@chorus/core'
+import { DOCUMENT_FRAGMENT, documentSchema, SUPPORTED_NODES } from './document-schema.js'
 
 /**
  * DOC-2 AC6 — every node type round-trips.

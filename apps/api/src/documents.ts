@@ -3,15 +3,20 @@ import {
   NotFoundError,
   ValidationError,
   applyTemplate,
+  bodyFromTemplate,
+  documentToMarkdown,
   missingSections,
-  toMarkdown,
+  sectionsOf,
   ulid,
+  withSection,
   validateTemplate,
+  type DocumentBody,
   type DocumentSection,
   type DocumentType,
   type TemplateSection,
 } from '@chorus/core'
 import { mutate, withTenant, type DbConfig, type TenantTx } from '@chorus/db'
+import { decodeBody, encodeBody, rewriteBody } from '@chorus/ui/schema'
 
 /**
  * Documents and templates (DOC-1).
@@ -87,23 +92,51 @@ interface DocumentRow {
   created_by: string
   created_at: Date
   updated_at: Date
+  ydoc: Buffer | null
 }
 
 const COLUMNS = `id, team_id, type, title, template_version, sections, status, created_by,
-                 created_at, updated_at`
+                 created_at, updated_at, ydoc`
 
-const toRecord = (row: DocumentRow): DocumentRecord => ({
+/**
+ * A document as its readers see it.
+ *
+ * The section *content* is read out of the body rather than out of the
+ * `sections` column, which now carries structure alone. One source of truth
+ * (DOC-2): the editor writes the body, and everything that asks what a document
+ * says — this, the export, a prompt — reads the same thing the editor shows.
+ */
+const toRecord = (row: DocumentRow): DocumentRecord => {
+  const written = sectionsOf(decodeBody(row.ydoc))
+  return {
   id: row.id,
   teamId: row.team_id,
   type: row.type,
   title: row.title,
   templateVersion: row.template_version,
-  sections: row.sections,
+  sections: row.sections.map((section) => ({ ...section, content: written[section.key] ?? '' })),
   status: row.status,
   createdBy: row.created_by,
   createdAt: row.created_at.toISOString(),
   updatedAt: row.updated_at.toISOString(),
-})
+  }
+}
+
+/**
+ * The document as Markdown: its title, then its body.
+ *
+ * The title is a column rather than the body's first heading, because it is
+ * what every list, link and search result shows — and a title that lives inside
+ * the text is one somebody can delete by pressing backspace in the wrong place.
+ */
+function markdownOf(title: string, body: DocumentBody): string {
+  const rendered = documentToMarkdown(body)
+  return rendered ? `# ${title}
+
+${rendered}
+` : `# ${title}
+`
+}
 
 export function createDocumentService(config: DbConfig): DocumentService {
   const tx = <T>(workspaceId: string, fn: (t: TenantTx) => Promise<T>, userId?: string) =>
@@ -190,6 +223,14 @@ export function createDocumentService(config: DbConfig): DocumentService {
           const sections = applyTemplate(template.sections)
           const id = ulid()
 
+          // The body is laid out from the template at creation, so a document
+          // opens with its headings already there and the editor has something
+          // to write into. Guidance stays out of it: a document pre-filled with
+          // "Who has this problem?" is one where the guidance must be deleted
+          // before anything can be written, and the copy somebody forgets to
+          // delete ships as though it were content.
+          const body = bodyFromTemplate(template.sections)
+
           const created = await mutate(t, {
             workspaceId,
             actor: { type: 'user', id: actorId },
@@ -201,8 +242,8 @@ export function createDocumentService(config: DbConfig): DocumentService {
               const [row] = await t.query<DocumentRow>(
                 `INSERT INTO documents
                    (id, workspace_id, team_id, type, title, template_id, template_version,
-                    sections, body_md_cache, created_by)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10)
+                    sections, ydoc, body_md_cache, created_by)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11)
                  RETURNING ${COLUMNS}`,
                 [
                   id,
@@ -213,7 +254,8 @@ export function createDocumentService(config: DbConfig): DocumentService {
                   template.id,
                   template.version,
                   JSON.stringify(sections),
-                  toMarkdown(title, sections),
+                  encodeBody(body),
+                  markdownOf(title, body),
                   actorId,
                 ],
               )
@@ -241,11 +283,6 @@ export function createDocumentService(config: DbConfig): DocumentService {
           // must not orphan what people wrote under it, and a reordered
           // template must not move content between sections.
           const written = new Map(sections.map((section) => [section.key, section.content]))
-          const merged = current.sections.map((section) =>
-            written.has(section.key)
-              ? { ...section, content: written.get(section.key)! }
-              : section,
-          )
 
           const unknown = sections.filter(
             (section) => !current.sections.some((existing) => existing.key === section.key),
@@ -270,11 +307,26 @@ export function createDocumentService(config: DbConfig): DocumentService {
             before: { sections: current.sections.map((s) => s.key) },
             after: { changed: sections.map((s) => s.key) },
             apply: async () => {
+              // Written into the body, which is the document. Diffed into the
+              // existing CRDT rather than replacing it, so an edit made here
+              // and an edit made in an open editor merge the way two people
+              // typing merge — a replacement would duplicate rather than
+              // overwrite.
+              let body = decodeBody(current.ydoc)
+              for (const section of current.sections) {
+                if (!written.has(section.key)) continue
+                body = withSection(body, {
+                  key: section.key,
+                  title: section.title,
+                  content: written.get(section.key)!,
+                })
+              }
+
               const [row] = await t.query<DocumentRow>(
                 `UPDATE documents
-                    SET sections = $2::jsonb, body_md_cache = $3, updated_at = now()
+                    SET ydoc = $2, body_md_cache = $3, updated_at = now()
                   WHERE id = $1 RETURNING ${COLUMNS}`,
-                [documentId, JSON.stringify(merged), toMarkdown(current.title, merged)],
+                [documentId, rewriteBody(current.ydoc, body), markdownOf(current.title, body)],
               )
               return row!
             },
@@ -289,17 +341,23 @@ export function createDocumentService(config: DbConfig): DocumentService {
     async exportMarkdown(workspaceId, documentId) {
       return tx(workspaceId, async (t) => {
         const row = await load(t, documentId)
-        // Rendered from `sections` rather than served from the cache: the cache
+        // Rendered from the body rather than served from the cache: the cache
         // is a convenience for search, and anything that disagrees with the
-        // sections is stale rather than right.
-        return toMarkdown(row.title, row.sections)
+        // body is stale rather than right.
+        return markdownOf(row.title, decodeBody(row.ydoc))
       })
     },
 
     async readiness(workspaceId, documentId) {
       return tx(workspaceId, async (t) => {
         const row = await load(t, documentId)
-        const missing = missingSections(row.sections)
+        // Against what is written in the body, not against the `sections`
+        // column — which now carries structure alone, and would report every
+        // required section as empty forever.
+        const written = sectionsOf(decodeBody(row.ydoc))
+        const missing = missingSections(
+          row.sections.map((section) => ({ ...section, content: written[section.key] ?? '' })),
+        )
         // Reported, never enforced (AC4). A template is a standard, not a gate.
         return { ready: missing.length === 0, missing }
       })

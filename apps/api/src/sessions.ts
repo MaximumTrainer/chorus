@@ -2,10 +2,13 @@ import {
   NotFoundError,
   ValidationError,
   applyTemplate,
+  bodyFromTemplate,
   DEFAULT_TEMPLATES,
-  toMarkdown,
+  documentToMarkdown,
   ulid,
+  withSection,
 } from '@chorus/core'
+import { encodeBody } from '@chorus/ui/schema'
 import { mutate, withTenant, type DbConfig, type TenantTx } from '@chorus/db'
 
 /**
@@ -187,23 +190,36 @@ export function createSessionService(config: DbConfig): SessionService {
               // else can reference, and the "cheapest bridge from existing
               // material" then leads nowhere.
               const documentId = ulid()
-              const sections = applyTemplate(DEFAULT_TEMPLATES.freeform).map((section) => ({
-                ...section,
-                content: input.pastedText!.trim(),
-              }))
+              const template = DEFAULT_TEMPLATES.freeform
               const title = input.title?.trim() || titleFrom(input.pastedText)
+
+              // Into the body, not into `sections`. The document has one body
+              // (DOC-2), and pasted material that landed anywhere else would be
+              // invisible to the editor somebody opens it in.
+              const body = withSection(bodyFromTemplate(template), {
+                key: template[0]!.key,
+                title: template[0]!.title,
+                content: input.pastedText.trim(),
+              })
+              const markdown = documentToMarkdown(body)
 
               await t.execute(
                 `INSERT INTO documents
-                   (id, workspace_id, team_id, type, title, sections, body_md_cache, created_by)
-                 VALUES ($1, $2, $3, 'freeform', $4, $5::jsonb, $6, $7)`,
+                   (id, workspace_id, team_id, type, title, sections, ydoc, body_md_cache,
+                    created_by)
+                 VALUES ($1, $2, $3, 'freeform', $4, $5::jsonb, $6, $7, $8)`,
                 [
                   documentId,
                   input.workspaceId,
                   input.teamId,
                   title,
-                  JSON.stringify(sections),
-                  toMarkdown(title, sections),
+                  JSON.stringify(applyTemplate(template)),
+                  encodeBody(body),
+                  markdown ? `# ${title}
+
+${markdown}
+` : `# ${title}
+`,
                   input.actorId,
                 ],
               )

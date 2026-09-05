@@ -182,13 +182,19 @@ describe('AGENT-1 emit', () => {
     })
 
     expect(outcome.status, outcome.error).toBe('succeeded')
-    const [doc] = await db.admin.query<{
-      title: string
-      sections: Array<{ key: string; content: string }>
-    }>(`SELECT title, sections FROM documents WHERE workspace_id = $1`, [w.workspaceId])
 
+    // Read through the service rather than out of the `sections` column, which
+    // carries structure only: a document's content is its body (DOC-2), and a
+    // test reading the column would be asserting on the wrong thing while
+    // looking like it asserted on the right one.
+    const [doc] = await db.admin.query<{ id: string; title: string }>(
+      `SELECT id, title FROM documents WHERE workspace_id = $1`,
+      [w.workspaceId],
+    )
     expect(doc!.title).toBe('Invoice splitting')
-    expect(doc!.sections.find((section) => section.key === 'problem')!.content).toContain(
+
+    const stored = await createDocumentService(db.config).get(w.workspaceId, doc!.id)
+    expect(stored.sections.find((section) => section.key === 'problem')!.content).toContain(
       'day a week',
     )
   })

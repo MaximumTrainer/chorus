@@ -171,16 +171,18 @@ describe('AGENT-1 AC6 built-in workflow goldens', () => {
       }
 
       if (golden.expect.kind === 'document') {
-        const [document] = await db.admin.query<{
-          title: string
-          type: string
-          sections: Array<{ key: string; content: string }>
-        }>(`SELECT title, type, sections FROM documents WHERE workspace_id = $1`, [workspaceId])
+        const [row] = await db.admin.query<{ id: string; title: string; type: string }>(
+          `SELECT id, title, type FROM documents WHERE workspace_id = $1`,
+          [workspaceId],
+        )
+        expect(row!.title).toBe(golden.expect.title)
+        expect(row!.type).toBe(golden.expect.type)
 
-        expect(document!.title).toBe(golden.expect.title)
-        expect(document!.type).toBe(golden.expect.type)
+        // Through the service: the content is in the body, and the `sections`
+        // column carries structure alone (DOC-2).
+        const document = await createDocumentService(db.config).get(workspaceId, row!.id)
         for (const [key, content] of Object.entries(golden.expect.sections ?? {})) {
-          expect(document!.sections.find((section) => section.key === key)?.content).toBe(content)
+          expect(document.sections.find((section) => section.key === key)?.content).toBe(content)
         }
       } else {
         const [task] = await db.admin.query<{

@@ -5,7 +5,8 @@
   "type": "module",
   "description": "Shared React components and editor extensions (architecture.md §5.1). Owns the document schema: the node types a Chorus document may contain, and how they round-trip through storage and export.",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./schema": "./src/document.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json"
@@ -16,6 +17,7 @@
     "@tiptap/core": "2.27.3",
     "@tiptap/extension-collaboration": "2.27.3",
     "@tiptap/extension-collaboration-cursor": "2.27.3",
+    "@tiptap/extension-heading": "2.27.3",
     "@tiptap/extension-image": "2.27.3",
     "@tiptap/extension-mention": "2.27.3",
     "@tiptap/extension-table": "2.27.3",

@@ -172,3 +172,11 @@ export type {
   ArtefactContext,
   ArtefactWriter,
 } from './artefacts.js'
+export {
+  bodyFromTemplate,
+  documentToMarkdown,
+  sectionHeading,
+  sectionsOf,
+  withSection,
+} from './document-body.js'
+export type { DocumentBody } from './document-body.js'

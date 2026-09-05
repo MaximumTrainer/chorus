@@ -95,3 +95,39 @@ test('DOC-2 AC2: a collaborator’s cursor is visible, and labelled with their n
   await grace.close()
   await expect(ada.locator('.collaboration-cursor__caret')).toHaveCount(0)
 })
+
+test('DOC-7 AC1: what was typed in the editor is what the export returns', async ({ browser }) => {
+  const documentId = await newDocument('Exporting')
+  const ada = await openAs(await browser.newContext(), 0, documentId)
+
+  await body(ada).click()
+  await body(ada).pressSequentially('Finance reconciles part-payments by hand.')
+
+  // A document has one body, and this is the assertion that keeps it that way.
+  // Exporting the template's sections while the editor writes somewhere else
+  // gives two answers to "what does this document say" — and the export is the
+  // one that leaves the building.
+  const api = await request.newContext({
+    baseURL: state.apiUrl,
+    extraHTTPHeaders: {
+      cookie: state.people[0]!.cookies.map((c) => `${c.name}=${c.value}`).join('; '),
+    },
+  })
+
+  await expect
+    .poll(
+      async () => {
+        const response = await api.get(
+          `/workspaces/${state.workspaceId}/documents/${documentId}/export`,
+        )
+        return response.ok() ? await response.text() : ''
+      },
+      // Polled rather than slept on: the collaboration server debounces its
+      // writes, so the condition is "the server has stored it", not "some
+      // number of milliseconds have passed".
+      { timeout: 20_000, message: 'the export should contain what was typed' },
+    )
+    .toContain('part-payments by hand')
+
+  await api.dispose()
+})

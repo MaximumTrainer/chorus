@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto'
 import { Server, type Hocuspocus } from '@hocuspocus/server'
 import * as Y from 'yjs'
+import { yDocToProsemirrorJSON } from 'y-prosemirror'
+import { documentToMarkdown, type DocumentBody } from '@chorus/core'
+import { DOCUMENT_FRAGMENT } from '@chorus/ui/schema'
 import { createManagedPool, withTenant, type DbConfig } from '@chorus/db'
 
 /**
@@ -194,19 +197,51 @@ export async function createCollabServer(options: CollabServerOptions): Promise<
       const named = parseChannel(documentName)
       if (!named) return
 
-      // The whole state, not a delta. Yjs merges on load, so storing updates
-      // incrementally would work too — and would leave the row unreadable
-      // without replaying every one of them, which is the thing every other
-      // reader of this table would then have to know how to do.
-      const state = Buffer.from(Y.encodeStateAsUpdate(document))
-
       await withTenant(
         named.workspaceId,
-        (t) =>
-          t.execute(`UPDATE documents SET ydoc = $2, updated_at = now() WHERE id = $1`, [
-            named.documentId,
-            state,
-          ]),
+        async (t) => {
+          const [row] = await t.query<{ title: string; ydoc: Buffer | null }>(
+            `SELECT title, ydoc FROM documents WHERE id = $1`,
+            [named.documentId],
+          )
+          if (!row) return
+
+          // Merged with what is in the row before writing. This process is not
+          // the only writer: the API fills a section when an agent emits a
+          // draft, or when somebody edits from the task panel. Storing the
+          // in-memory copy alone would silently drop every such write made
+          // since this document was loaded — a paragraph disappearing with no
+          // error anywhere. Applying an update is additive and carries its own
+          // delete set, so merging cannot resurrect what was deleted here.
+          if (row.ydoc && row.ydoc.length > 0) Y.applyUpdate(document, new Uint8Array(row.ydoc))
+
+          // The whole state, not a delta. Yjs merges on load, so storing
+          // updates incrementally would work too — and would leave the column
+          // unreadable without replaying every one of them, which every other
+          // reader of this table would then have to know how to do.
+          const state = Buffer.from(Y.encodeStateAsUpdate(document))
+          const body = yDocToProsemirrorJSON(document, DOCUMENT_FRAGMENT) as DocumentBody
+          const markdown = documentToMarkdown(body)
+
+          await t.execute(
+            `UPDATE documents
+                SET ydoc = $2, body_md_cache = $3, updated_at = now()
+              WHERE id = $1`,
+            [
+              named.documentId,
+              state,
+              // Derived, never read back into the editor. Kept current here
+              // because search and prompts read it, and a cache that only some
+              // writers update is worse than none: it is right often enough to
+              // be trusted and wrong exactly when somebody is editing.
+              markdown ? `# ${row.title}
+
+${markdown}
+` : `# ${row.title}
+`,
+            ],
+          )
+        },
         { config },
       )
     },
