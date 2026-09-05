@@ -59,6 +59,14 @@ export interface SignedInUser {
 }
 
 export interface AnonymousCaller {
+  /**
+   * A request with headers and a method of the caller's choosing, unsigned.
+   *
+   * A CORS preflight is the case that needs it: an `OPTIONS` carrying
+   * `Origin` and `Access-Control-Request-Method`, sent by the browser without
+   * credentials before it will send the real request.
+   */
+  request(path: string, init?: RequestInit): Promise<Response>
   get(path: string): Promise<Response>
   post(path: string, body?: unknown): Promise<Response>
   /**
@@ -90,7 +98,15 @@ export interface BearerCaller {
 
 export interface TestClient {
   /** A verified, signed-in user. Drives the real sign-up and sign-in flow. */
-  signedInUser(email?: string): Promise<SignedInUser>
+  /**
+   * A verified, signed-in user.
+   *
+   * The name is settable because more than one thing shows it: a collaborator's
+   * cursor label (DOC-2 AC2), a mention, an audit entry. Two users both called
+   * "Test User" make those assertions vacuous — they pass whichever person the
+   * page is actually showing.
+   */
+  signedInUser(email?: string, name?: string): Promise<SignedInUser>
   /**
    * A signed-in user holding `role` in `workspaceId`, admitted through the real
    * invitation flow rather than by writing a membership row.
@@ -104,6 +120,7 @@ export interface TestClient {
     workspaceId: string,
     role: string,
     email?: string,
+    name?: string,
   ): Promise<SignedInUser>
   anonymous(): AnonymousCaller
   /** A caller presenting `token` as an `Authorization: Bearer` credential. */
@@ -148,8 +165,11 @@ export function createTestClient(app: RequestableApp, mailer: RecordingMailer): 
   }
 
   return {
-    async signedInUser(email = `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.test`) {
-      await send('/auth/sign-up/email', json({ email, password: PASSWORD, name: 'Test User' }))
+    async signedInUser(
+      email = `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.test`,
+      name = 'Test User',
+    ) {
+      await send('/auth/sign-up/email', json({ email, password: PASSWORD, name }))
 
       const verification = mailer.to(email).at(-1)?.verificationUrl
       if (!verification) throw new Error(`no verification email was sent to ${email}`)
@@ -191,7 +211,7 @@ export function createTestClient(app: RequestableApp, mailer: RecordingMailer): 
       return user
     },
 
-    async memberWithRole(inviter, workspaceId, role, email) {
+    async memberWithRole(inviter, workspaceId, role, email, name) {
       const address =
         email ?? `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.test`
 
@@ -206,7 +226,7 @@ export function createTestClient(app: RequestableApp, mailer: RecordingMailer): 
         throw new Error(`could not invite a ${role}: ${invited.status} ${await invited.text()}`)
       }
 
-      const user = await this.signedInUser(address)
+      const user = await this.signedInUser(address, name)
       const link = this.lastInvitationLink(address)
       if (!link) throw new Error(`no invitation email was sent to ${address}`)
 
@@ -219,6 +239,7 @@ export function createTestClient(app: RequestableApp, mailer: RecordingMailer): 
 
     anonymous() {
       return {
+        request: (path, init) => send(path, init),
         get: (path) => send(path),
         post: (path, body) => send(path, json(body)),
         put: (path, body) => send(path, { ...json(body), method: 'PUT' }),

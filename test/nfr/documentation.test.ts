@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -134,10 +134,14 @@ describe('the README describes the repository as it is', () => {
     expect(block).toContain(String(status.requirements.withPassingTests))
   })
 
-  it('does not promise a user interface that does not exist', () => {
-    expect(existsSync(join(ROOT, 'apps', 'web')), 'if a web app exists, update this test').toBe(
-      false,
-    )
+  it('does not promise more of a user interface than exists', () => {
+    // The claim in the README is "the interface is one screen". That stays
+    // true only while it is, so the screens are counted rather than trusted.
+    expect(
+      screens(),
+      'a screen was added or removed — say so in the README status line',
+    ).toEqual(SCREENS_TODAY)
+
     // Markdown syntax stripped before matching: the claim is wrapped across
     // lines inside a blockquote, so emphasis markers and `>` land in the middle
     // of the sentence. A check that only matched the unwrapped form would pass
@@ -146,7 +150,7 @@ describe('the README describes the repository as it is', () => {
       .toLowerCase()
       .replace(/[*_`>#]/g, '')
       .replace(/\s+/g, ' ')
-    expect(flat).toMatch(/no (user interface|web (app|interface))|there is no ui/)
+    expect(flat).toMatch(/interface is one screen|no (user interface|web (app|interface))/)
   })
 })
 
@@ -265,3 +269,32 @@ describe('the documentation gate', () => {
     )
   })
 })
+
+/**
+ * Every screen the web app actually has.
+ *
+ * Derived from the filesystem rather than listed, so adding a page fails this
+ * test and whoever added it has to say so in the prose. The original version of
+ * this gate asserted that `apps/web` did not exist, which was true for exactly
+ * as long as it took somebody to build one — and a gate that can only hold
+ * while nothing happens is not a gate.
+ */
+function screens(): string[] {
+  const root = join(ROOT, 'apps', 'web', 'src', 'app')
+  if (!existsSync(root)) return []
+
+  const found: string[] = []
+  const walk = (directory: string, route: string): void => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        walk(join(directory, entry.name), `${route}/${entry.name}`)
+      } else if (entry.name === 'page.tsx') {
+        found.push(route === '' ? '/' : route)
+      }
+    }
+  }
+  walk(root, '')
+  return found.sort()
+}
+
+const SCREENS_TODAY = ['/', '/workspaces/[workspaceId]/documents/[documentId]']

@@ -21,7 +21,8 @@
     "site:record": "vitest run --config website/capture/vitest.config.ts",
     "docs:sync": "node scripts/sync-docs.mjs",
     "prepare": "git config core.hooksPath .githooks || true",
-    "db:migrate": "tsx packages/db/src/migrate.ts"
+    "db:migrate": "tsx packages/db/src/migrate.ts",
+    "test:e2e": "playwright test"
   },
   "devDependencies": {
     "@chorus/agent": "workspace:*",
@@ -39,7 +40,9 @@
     "@chorus/worker": "workspace:*",
     "@eslint/js": "9.13.0",
     "@hocuspocus/provider": "2.15.2",
+    "@hono/node-server": "^2.1.1",
     "@opentelemetry/sdk-trace-node": "2.11.0",
+    "@playwright/test": "1.49.1",
     "@types/node": "22.7.5",
     "@types/ws": "8.5.13",
     "eslint": "9.13.0",

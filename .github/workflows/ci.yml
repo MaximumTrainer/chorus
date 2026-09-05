@@ -99,6 +99,30 @@ jobs:
       - name: Verify
         run: pnpm verify
 
+      # The browser journeys (DOC-2). Kept in this job rather than given its own
+      # so it reuses the Postgres already standing: the harness creates its own
+      # database inside it, as every other suite does.
+      #
+      # Only Chromium is installed. Three engines would triple the download for
+      # findings that would almost always be about the browsers rather than
+      # about Chorus; a second engine earns its place the first time a real
+      # difference bites.
+      - name: Install a browser
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Browser journeys
+        run: pnpm test:e2e
+
+      # A failed journey is diagnosed from its trace, and a trace that stays on
+      # the runner is a diagnosis nobody can read.
+      - name: Journey traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 7
+
   # NFR-1 AC1: the reference stack stands up on a clean host.
   compose:
     name: reference deployment

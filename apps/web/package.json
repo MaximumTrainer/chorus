@@ -1,0 +1,26 @@
+{
+  "name": "@chorus/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The Next.js UI (architecture.md §6). Talks only to api; holds no secrets beyond the session cookie.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@chorus/ui": "workspace:*",
+    "next": "15.1.3",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@chorus/config": "workspace:*",
+    "@types/node": "22.7.5",
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "typescript": "5.6.3"
+  }
+}

@@ -13,6 +13,14 @@ export default tseslint.config(
       // and one of them is deliberately shaped like a repository that would
       // fail them.
       'packages/indexer/test/fixtures/**',
+      // Next's build output. Generated, minified, and not ours to hold to
+      // anything — linting it produces a thousand findings about code nobody
+      // wrote and hides the handful about code somebody did.
+      '**/.next/**',
+      'apps/web/next-env.d.ts',
+      // Playwright artefacts: traces and reports from a failed run.
+      'test-results/**',
+      'playwright-report/**',
     ],
   },
   js.configs.recommended,
@@ -41,7 +49,14 @@ export default tseslint.config(
     // documentation sync — are command-line programs, not library code: writing
     // to stdout is their interface, and they run in Node rather than in a
     // bundle, so the Node globals are genuinely present.
-    files: ['website/**/*.mjs', 'website/**/*.ts', 'scripts/**/*.mjs'],
+    files: [
+      'website/**/*.mjs',
+      'website/**/*.ts',
+      'scripts/**/*.mjs',
+      // A framework config file is read by the framework's own CLI, in Node,
+      // before any bundle exists.
+      'apps/*/next.config.mjs',
+    ],
     languageOptions: {
       globals: { process: 'readonly', console: 'readonly' },
     },

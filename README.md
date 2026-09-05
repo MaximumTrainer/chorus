@@ -8,10 +8,10 @@
 [How we work](CLAUDE.md) ·
 [Contributing](CONTRIBUTING.md)
 
-> **Status: pre-alpha, Phase 0.** The foundations are real and tested; almost
-> nothing a user would recognise as a product exists yet. **There is no user
-> interface** — `apps/` contains an HTTP API and nothing else. See
-> [Progress](#progress) for exactly how far along it is.
+> **Status: pre-alpha, Phase 1.** The foundations are real and tested; almost
+> nothing a user would recognise as a product exists yet. **The interface is
+> one screen** — a collaborative document editor — and everything else is an
+> HTTP API. See [Progress](#progress) for exactly how far along it is.
 
 ---
 

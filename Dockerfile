@@ -54,6 +54,7 @@ COPY packages/ui/package.json packages/ui/
 COPY apps/api/package.json apps/api/
 COPY apps/worker/package.json apps/worker/
 COPY apps/collab/package.json apps/collab/
+COPY apps/web/package.json apps/web/
 RUN pnpm install --frozen-lockfile --prod=false
 
 # ---------------------------------------------------------------------------

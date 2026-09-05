@@ -68,6 +68,19 @@ export interface AppOptions {
   /** Mail transport. A recording fake in tests; SMTP in a deployment. */
   mailer?: Mailer
   baseUrl?: string
+  /**
+   * Browser origins allowed to call this API with credentials (DOC-2).
+   *
+   * An allow-list, empty by default. Behind a single reverse proxy the web app
+   * and the API share an origin and none of this applies; on separate hosts the
+   * browser will not let the page call the API without being told it may.
+   *
+   * The one-line version of this — reflect whatever `Origin` arrives, or answer
+   * `*` — turns every authenticated route into one any page on the internet can
+   * call with the reader's own session cookie. So a deployment that has not
+   * been told about a web origin allows none.
+   */
+  webOrigins?: readonly string[]
   /** Failed attempts tolerated per window before throttling (WS-1 AC5). */
   maxSignInAttempts?: number
   /** A generic OIDC provider, discovered from its issuer (WS-1 AC3). */
@@ -268,6 +281,42 @@ function sessionResolver(auth: ReturnType<typeof createAuth>) {
 
 export function createApp(options: AppOptions = {}): Hono<AppEnv> {
   const app = new Hono<AppEnv>()
+
+  const webOrigins = new Set(options.webOrigins ?? [])
+
+  // Before everything, including authentication: a preflight carries no
+  // credentials by design, so authenticating it returns 401 and the browser
+  // never sends the real request — a feature that silently does nothing.
+  app.use('*', async (c, next) => {
+    const origin = c.req.header('origin')
+    const allowed = origin !== undefined && webOrigins.has(origin)
+
+    if (allowed) {
+      // By name, never `*`. A wildcard and credentials are mutually exclusive
+      // in the specification precisely because the combination would let any
+      // page use somebody's session.
+      c.header('access-control-allow-origin', origin)
+      c.header('access-control-allow-credentials', 'true')
+      // So a cache does not serve one origin's answer to another.
+      c.header('vary', 'origin')
+    }
+
+    if (c.req.method === 'OPTIONS' && c.req.header('access-control-request-method')) {
+      if (!allowed) return c.body(null, 403)
+      c.header('access-control-allow-methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
+      c.header(
+        'access-control-allow-headers',
+        c.req.header('access-control-request-headers') ?? 'content-type',
+      )
+      // Ten minutes. Long enough that typing does not preflight every
+      // keystroke's worth of requests, short enough that changing the
+      // allow-list is felt the same day.
+      c.header('access-control-max-age', '600')
+      return c.body(null, 204)
+    }
+
+    await next()
+  })
 
   // Every response carries a request id so a user's report maps to a log line,
   // and every request is a span so that line maps to a trace (NFR-5 AC2).

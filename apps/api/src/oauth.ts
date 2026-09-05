@@ -134,12 +134,18 @@ export interface OAuthService {
  * library branches on `error` — our problem+json would be unparseable to it.
  */
 export class OAuthError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-    readonly status = 400,
-  ) {
+  // Declared and assigned rather than written as constructor parameter
+  // properties: Node runs this source by stripping types, and a parameter
+  // property is the one TypeScript construct that emits code instead of being
+  // erased — so it fails to parse wherever this file is imported without a
+  // compiler in front of it.
+  readonly code: string
+  readonly status: number
+
+  constructor(code: string, message: string, status = 400) {
     super(message)
+    this.code = code
+    this.status = status
     this.name = 'OAuthError'
   }
 }

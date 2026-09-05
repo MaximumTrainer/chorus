@@ -35,3 +35,9 @@ Thumbs.db
 # needs a database.
 website/dist/
 website/capture/raw/
+
+# Browser journeys. The harness writes its addresses and seeded ids here for
+# the specs to read; traces are kept only for a failure, and only locally.
+test/e2e/.harness.json
+test-results/
+playwright-report/

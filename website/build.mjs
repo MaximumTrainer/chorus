@@ -440,9 +440,10 @@ const html = `<!doctype html>
   <div class="wrap">
     <h2>What actually works today</h2>
     <p class="sub">
-      Chorus is early. <strong>There is no user interface yet</strong> — <code>apps/</code>
-      contains an HTTP API and nothing else — so rather than show mock-ups of screens that do
-      not exist, everything below is a real transcript, recorded by
+      Chorus is early. <strong>The interface is one screen</strong> — a collaborative
+      document editor — and everything else in <code>apps/</code> is an HTTP API. So rather
+      than show mock-ups of screens that do not exist, everything below is a real transcript,
+      recorded by
       <a href="${REPO}/blob/main/website/capture/record.ts"><code>website/capture</code></a>
       driving the running application over HTTP against a real Postgres. If a response
       changes, this page changes with it.

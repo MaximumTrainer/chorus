@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, existsSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parse } from 'yaml'
@@ -104,13 +104,14 @@ describe('the project website', () => {
     expect(statuses.some((code) => code >= 400), 'show a refusal, not only happy paths').toBe(true)
   })
 
-  it('says plainly that there is no user interface yet', () => {
+  it('says plainly how little of the interface exists', () => {
     // The one claim a reader is most likely to assume and most likely to be
-    // wrong about. `apps/` contains an API and nothing else.
-    expect(existsSync(join(ROOT, 'apps', 'web')), 'if a web app exists, update this page').toBe(
-      false,
+    // wrong about. Counted rather than trusted, so a second screen makes this
+    // page's sentence false loudly rather than quietly.
+    expect(screens(), 'a screen was added or removed — update this page').toEqual(SCREENS_TODAY)
+    expect(html.toLowerCase()).toMatch(
+      /interface is one screen|no (user interface|web (app|interface))/,
     )
-    expect(html.toLowerCase()).toMatch(/no (user interface|web (app|interface))|there is no ui/)
   })
 
   it('points contributors at the rules the project actually enforces', () => {
@@ -142,3 +143,32 @@ describe('the project website', () => {
     expect(steps.some((step) => step.uses?.startsWith('actions/deploy-pages'))).toBe(true)
   })
 })
+
+/**
+ * Every screen the web app actually has.
+ *
+ * Derived from the filesystem rather than listed, so adding a page fails this
+ * test and whoever added it has to say so in the prose. The original version of
+ * this gate asserted that `apps/web` did not exist, which was true for exactly
+ * as long as it took somebody to build one — and a gate that can only hold
+ * while nothing happens is not a gate.
+ */
+function screens(): string[] {
+  const root = join(ROOT, 'apps', 'web', 'src', 'app')
+  if (!existsSync(root)) return []
+
+  const found: string[] = []
+  const walk = (directory: string, route: string): void => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        walk(join(directory, entry.name), `${route}/${entry.name}`)
+      } else if (entry.name === 'page.tsx') {
+        found.push(route === '' ? '/' : route)
+      }
+    }
+  }
+  walk(root, '')
+  return found.sort()
+}
+
+const SCREENS_TODAY = ['/', '/workspaces/[workspaceId]/documents/[documentId]']

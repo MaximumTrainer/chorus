@@ -81,10 +81,14 @@ export interface ArtefactWriter {
  */
 export class ArtefactRefusedError extends Error {
   override readonly name = 'ArtefactRefusedError'
-  constructor(
-    message: string,
-    readonly details: Readonly<Record<string, unknown>> = {},
-  ) {
+  // Assigned in the body rather than declared as a constructor parameter
+  // property: Node runs this package's TypeScript by stripping types, and a
+  // parameter property is the one TypeScript construct that emits code rather
+  // than erasing. The browser-journey harness imports this file directly.
+  readonly details: Readonly<Record<string, unknown>>
+
+  constructor(message: string, details: Readonly<Record<string, unknown>> = {}) {
     super(message)
+    this.details = details
   }
 }

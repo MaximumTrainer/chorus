@@ -1,0 +1,85 @@
+/*
+ * Enough styling for the editor to be usable and for a collaborator's cursor
+ * to be visible. The design system is DOC-2's neighbour, not DOC-2.
+ */
+:root {
+  color-scheme: light dark;
+  --chorus-text: #18181b;
+  --chorus-muted: #71717a;
+  --chorus-line: #e4e4e7;
+  --chorus-bg: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --chorus-text: #fafafa;
+    --chorus-muted: #a1a1aa;
+    --chorus-line: #3f3f46;
+    --chorus-bg: #18181b;
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--chorus-bg);
+  color: var(--chorus-text);
+  font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
+main {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 3rem 1.5rem;
+}
+
+.chorus-document {
+  outline: none;
+  min-height: 60vh;
+}
+
+.chorus-document table {
+  border-collapse: collapse;
+}
+
+.chorus-document td,
+.chorus-document th {
+  border: 1px solid var(--chorus-line);
+  padding: 0.35rem 0.6rem;
+}
+
+.chorus-document pre {
+  background: color-mix(in srgb, var(--chorus-text) 6%, transparent);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+}
+
+/*
+ * Another person's cursor and their name beside it (AC2). Rendered as a caret
+ * with a label rather than a highlight, because a highlight is
+ * indistinguishable from a selection you made yourself.
+ */
+.collaboration-cursor__caret {
+  position: relative;
+  margin-left: -1px;
+  margin-right: -1px;
+  border-left: 1px solid #0d0d0d;
+  border-right: 1px solid #0d0d0d;
+  word-break: normal;
+  pointer-events: none;
+}
+
+.collaboration-cursor__label {
+  position: absolute;
+  top: -1.4em;
+  left: -1px;
+  border-radius: 3px 3px 3px 0;
+  padding: 0.1rem 0.3rem;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 600;
+  line-height: normal;
+  white-space: nowrap;
+  color: #0d0d0d;
+  user-select: none;
+}
