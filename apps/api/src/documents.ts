@@ -4,6 +4,7 @@ import {
   ValidationError,
   applyTemplate,
   bodyFromTemplate,
+  documentToHtml,
   documentToMarkdown,
   missingSections,
   sectionsOf,
@@ -91,6 +92,21 @@ export interface DocumentService {
     actorId: string
     status: DocumentStatus
   }): Promise<DocumentRecord>
+  /**
+   * The document in a format that leaves the building (DOC-7).
+   *
+   * `baseUrl` is required rather than optional: an export is read somewhere
+   * else, and a relative link exported as-is resolves against whatever document
+   * the reader happens to be looking at — which is worse than a visibly broken
+   * one.
+   */
+  exportAs(input: {
+    workspaceId: string
+    documentId: string
+    format: 'markdown' | 'html'
+    baseUrl: string
+    selection?: { from: number; to: number }
+  }): Promise<string>
   exportMarkdown(workspaceId: string, documentId: string): Promise<string>
   readiness(workspaceId: string, documentId: string): Promise<{ ready: boolean; missing: string[] }>
 }
@@ -143,8 +159,8 @@ const toRecord = (row: DocumentRow): DocumentRecord => {
  * what every list, link and search result shows — and a title that lives inside
  * the text is one somebody can delete by pressing backspace in the wrong place.
  */
-function markdownOf(title: string, body: DocumentBody): string {
-  const rendered = documentToMarkdown(body)
+function markdownOf(title: string, body: DocumentBody, baseUrl?: string): string {
+  const rendered = documentToMarkdown(body, baseUrl)
   return rendered ? `# ${title}
 
 ${rendered}
@@ -387,6 +403,23 @@ export function createDocumentService(config: DbConfig): DocumentService {
         },
         actorId,
       )
+    },
+
+    async exportAs({ workspaceId, documentId, format, baseUrl, selection }) {
+      return tx(workspaceId, async (t) => {
+        const row = await load(t, documentId)
+        const body = decodeBody(row.ydoc)
+
+        const rendered =
+          format === 'html'
+            ? documentToHtml(row.title, body, baseUrl)
+            : markdownOf(row.title, body, baseUrl)
+
+        // Sliced after rendering rather than before: a selection is expressed
+        // in the coordinates of what the reader can see, and the reader sees
+        // the rendering.
+        return selection ? rendered.slice(selection.from, selection.to) : rendered
+      })
     },
 
     async exportMarkdown(workspaceId, documentId) {

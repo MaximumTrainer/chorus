@@ -246,6 +246,7 @@ function buildRoutes(
         createDocumentService(config),
         createCollaborationService(config),
         versions,
+        baseUrl,
       ),
       ...versionRoutes(versions),
       ...commentRoutes(createCommentService(config, { notify: (event) => notifier.notify(event) })),

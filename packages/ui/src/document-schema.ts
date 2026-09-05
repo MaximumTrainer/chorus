@@ -2,6 +2,7 @@ import { getSchema, Node, mergeAttributes } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import Heading from '@tiptap/extension-heading'
 import Image from '@tiptap/extension-image'
+import Link from '@tiptap/extension-link'
 import Mention from '@tiptap/extension-mention'
 import Table from '@tiptap/extension-table'
 import TableCell from '@tiptap/extension-table-cell'
@@ -89,6 +90,10 @@ export const documentExtensions = [
   }),
   SectionHeading,
   Image,
+  // Links are their own extension in Tiptap 2, and a document model without
+  // them cannot express a reference to a task or another document — which
+  // DOC-7 has to resolve to an absolute URL on the way out.
+  Link.configure({ openOnClick: false, autolink: false }),
   Mention,
   Table.configure({ resizable: false }),
   TableRow,

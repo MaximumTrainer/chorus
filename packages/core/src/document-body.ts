@@ -27,16 +27,30 @@ interface JsonNode {
  * serialiser that silently omits a node is the same loss as a schema that drops
  * one, arriving later and somewhere else.
  */
-export function documentToMarkdown(json: unknown): string {
+export function documentToMarkdown(json: unknown, baseUrl?: string): string {
   const doc = json as JsonNode
   return (doc.content ?? [])
-    .map((node) => block(node))
+    .map((node) => block(node, 0, baseUrl))
     .filter((chunk) => chunk !== '')
     .join('\n\n')
     .trimEnd()
 }
 
-function inline(node: JsonNode): string {
+/**
+ * Resolves a link or image source against the deployment it came from (DOC-7 AC4).
+ *
+ * A relative path means something only inside the app it came from. Exported
+ * as-is it resolves against whatever document the reader happens to be looking
+ * at, which is worse than a link that is visibly broken.
+ */
+function resolve(url: string, baseUrl: string | undefined): string {
+  if (!baseUrl) return url
+  if (url === '' || /^[a-z][a-z0-9+.-]*:/i.test(url) || url.startsWith('//')) return url
+  if (!url.startsWith('/')) return url
+  return `${baseUrl.replace(/\/+$/, '')}${url}`
+}
+
+function inline(node: JsonNode, baseUrl?: string): string {
   if (node.type === 'text') {
     let out = node.text ?? ''
     for (const mark of node.marks ?? []) {
@@ -44,7 +58,9 @@ function inline(node: JsonNode): string {
       if (mark.type === 'italic') out = `*${out}*`
       if (mark.type === 'code') out = `\`${out}\``
       if (mark.type === 'strike') out = `~~${out}~~`
-      if (mark.type === 'link') out = `[${out}](${String(mark.attrs?.href ?? '')})`
+      if (mark.type === 'link') {
+        out = `[${out}](${resolve(String(mark.attrs?.href ?? ''), baseUrl)})`
+      }
     }
     return out
   }
@@ -57,89 +73,90 @@ function inline(node: JsonNode): string {
   }
 
   if (node.type === 'hardBreak') return '\n'
-  if (node.type === 'image') return image(node)
+  if (node.type === 'image') return image(node, baseUrl)
 
-  return (node.content ?? []).map(inline).join('')
+  return (node.content ?? []).map((child) => inline(child, baseUrl)).join('')
 }
 
-const image = (node: JsonNode): string => {
+const image = (node: JsonNode, baseUrl?: string): string => {
   const { src, alt, title } = node.attrs ?? {}
   const caption = title ? ` "${String(title)}"` : ''
-  return `![${String(alt ?? '')}](${String(src ?? '')}${caption})`
+  return `![${String(alt ?? '')}](${resolve(String(src ?? ''), baseUrl)}${caption})`
 }
 
-const text = (node: JsonNode): string => (node.content ?? []).map(inline).join('')
+const text = (node: JsonNode, baseUrl?: string): string =>
+  (node.content ?? []).map((child) => inline(child, baseUrl)).join('')
 
-function block(node: JsonNode, depth = 0): string {
+function block(node: JsonNode, depth = 0, baseUrl?: string): string {
   const pad = '  '.repeat(depth)
 
   switch (node.type) {
     case 'heading':
-      return `${'#'.repeat(Number(node.attrs?.level ?? 1))} ${text(node)}`
+      return `${'#'.repeat(Number(node.attrs?.level ?? 1))} ${text(node, baseUrl)}`
 
     case 'paragraph':
-      return `${pad}${text(node)}`
+      return `${pad}${text(node, baseUrl)}`
 
     case 'codeBlock':
       // The language is kept: a fenced block without one loses the highlighting
       // and, in a spec, the signal that this is TypeScript rather than pseudocode.
-      return `\`\`\`${String(node.attrs?.language ?? '')}\n${text(node)}\n\`\`\``
+      return `\`\`\`${String(node.attrs?.language ?? '')}\n${text(node, baseUrl)}\n\`\`\``
 
     case 'blockquote':
       return (node.content ?? [])
-        .map((child) => `> ${block(child).replace(/\n/g, '\n> ')}`)
+        .map((child) => `> ${block(child, 0, baseUrl).replace(/\n/g, '\n> ')}`)
         .join('\n>\n')
 
     case 'bulletList':
       return (node.content ?? [])
-        .map((item) => `${pad}- ${listItemBody(item, depth)}`)
+        .map((item) => `${pad}- ${listItemBody(item, depth, baseUrl)}`)
         .join('\n')
 
     case 'orderedList': {
       const start = Number(node.attrs?.start ?? 1)
       return (node.content ?? [])
-        .map((item, index) => `${pad}${start + index}. ${listItemBody(item, depth)}`)
+        .map((item, index) => `${pad}${start + index}. ${listItemBody(item, depth, baseUrl)}`)
         .join('\n')
     }
 
     case 'taskList':
       return (node.content ?? [])
-        .map((item) => `${pad}- [${item.attrs?.checked ? 'x' : ' '}] ${listItemBody(item, depth)}`)
+        .map((item) => `${pad}- [${item.attrs?.checked ? 'x' : ' '}] ${listItemBody(item, depth, baseUrl)}`)
         .join('\n')
 
     case 'table':
-      return table(node)
+      return table(node, baseUrl)
 
     case 'image':
-      return image(node)
+      return image(node, baseUrl)
 
     case 'embed':
       // Rendered as a link rather than omitted. Markdown cannot embed, and a
       // reader who can see the URL can still reach what it points at; a reader
       // given nothing cannot tell there was anything there.
-      return `[${String(node.attrs?.provider ?? 'embed')}](${String(node.attrs?.src ?? '')})`
+      return `[${String(node.attrs?.provider ?? 'embed')}](${resolve(String(node.attrs?.src ?? ''), baseUrl)})`
 
     case 'horizontalRule':
       return '---'
 
     default:
-      return text(node)
+      return text(node, baseUrl)
   }
 }
 
 /** A list item's own content, with any nested list indented beneath it. */
-function listItemBody(item: JsonNode, depth: number): string {
+function listItemBody(item: JsonNode, depth: number, baseUrl?: string): string {
   const [first, ...rest] = item.content ?? []
-  const head = first ? block(first) : ''
-  const nested = rest.map((child) => block(child, depth + 1)).join('\n')
+  const head = first ? block(first, 0, baseUrl) : ''
+  const nested = rest.map((child) => block(child, depth + 1, baseUrl)).join('\n')
   return nested ? `${head}\n${nested}` : head
 }
 
-function table(node: JsonNode): string {
+function table(node: JsonNode, baseUrl?: string): string {
   const rows = (node.content ?? []).map((row) =>
     // A pipe inside a cell would end the cell. Escaped rather than
     // stripped: a table of shell commands is a real thing to write.
-    (row.content ?? []).map((cell) => text(cell).split('|').join('\\|')),
+    (row.content ?? []).map((cell) => text(cell, baseUrl).split('|').join('\\|')),
   )
   if (rows.length === 0) return ''
 

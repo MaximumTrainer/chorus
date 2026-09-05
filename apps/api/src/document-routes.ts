@@ -24,6 +24,8 @@ export function documentRoutes(
   documents: DocumentService,
   collaboration: CollaborationService,
   versions: VersionService,
+  /** Where this deployment lives, so an exported link points at it (DOC-7 AC4). */
+  baseUrl: string,
 ): RouteDefinition[] {
   const parseType = (value: unknown) => {
     if (!isDocumentType(value)) {
@@ -154,14 +156,39 @@ export function documentRoutes(
     route({
       method: 'GET',
       path: '/workspaces/:workspaceId/documents/:documentId/export',
-      summary: 'Export a document as Markdown, without the template guidance.',
+      summary: 'Export a document, or a selection of one, as Markdown or rich text.',
       auth: { kind: 'workspace', role: 'member', scopes: ['read:artefacts'] },
       handler: async (c) => {
-        const markdown = await documents.exportMarkdown(
-          c.req.param('workspaceId'),
-          c.req.param('documentId'),
-        )
-        return c.text(markdown)
+        const format = c.req.query('format') ?? 'markdown'
+        if (format !== 'markdown' && format !== 'html') {
+          // Refused rather than answered in another format. Silently returning
+          // Markdown to a caller that asked for something else produces a file
+          // with the wrong extension and no error anywhere.
+          throw new ValidationError('format must be "markdown" or "html"', { field: 'format' })
+        }
+
+        const from = c.req.query('from')
+        const to = c.req.query('to')
+        const selection =
+          from !== undefined && to !== undefined
+            ? { from: Number(from), to: Number(to) }
+            : undefined
+        if (selection && (!Number.isInteger(selection.from) || !Number.isInteger(selection.to))) {
+          throw new ValidationError('from and to must be whole numbers', { field: 'from' })
+        }
+
+        const rendered = await documents.exportAs({
+          workspaceId: c.req.param('workspaceId'),
+          documentId: c.req.param('documentId'),
+          format,
+          baseUrl,
+          ...(selection ? { selection } : {}),
+        })
+
+        // The content type is how a word processor decides what a paste is.
+        // Sent as text/plain, rich text arrives as visible tags.
+        c.header('content-type', format === 'html' ? 'text/html; charset=utf-8' : 'text/markdown; charset=utf-8')
+        return c.body(rendered)
       },
     }),
 
