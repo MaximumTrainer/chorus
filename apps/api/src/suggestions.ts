@@ -133,9 +133,22 @@ const toSuggestion = (row: SuggestionRow): SuggestionView => ({
   decidedBy: row.decided_by,
 })
 
+/**
+ * Records the document as it was, for a cause the caller names.
+ *
+ * Injected rather than imported so the suggestion service does not have to know
+ * what a version is — it knows only that accepting a batch of edits is a moment
+ * somebody may want to go back to.
+ */
+export type SnapshotTaker = (input: {
+  workspaceId: string
+  documentId: string
+  userId: string
+}) => Promise<unknown>
+
 export function createSuggestionService(
   config: DbConfig,
-  deps: { suggest?: EditSuggester } = {},
+  deps: { suggest?: EditSuggester; snapshot?: SnapshotTaker } = {},
 ): SuggestionService {
   const tx = <T>(workspaceId: string, fn: (t: TenantTx) => Promise<T>, userId?: string) =>
     withTenant(workspaceId, fn, { config, ...(userId ? { userId } : {}) })
@@ -305,6 +318,15 @@ export function createSuggestionService(
               ORDER BY sequence`,
             [setId],
           )
+
+          // Before anything is applied, and only when something will be. The
+          // moment an agent's edits land is exactly the moment somebody wants
+          // to be able to go back to (DOC-5 AC1) — and taking a snapshot for a
+          // bulk *rejection*, which changes nothing, would fill the history
+          // with versions identical to their neighbours.
+          if (deps.snapshot && decision === 'accept' && rows.length > 0) {
+            await deps.snapshot({ workspaceId, documentId: set.document_id, userId })
+          }
 
           // Only the ones still open. "Accept the rest" must not quietly undo a
           // decision somebody already made, and a bulk action that reverses an

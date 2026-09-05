@@ -275,6 +275,12 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
          VALUES ($1, $2, $3, 1, 'seed', 'seeded')`,
         [ulid(), workspaceId, suggestionSetId],
       )
+      await owner.query(
+        `INSERT INTO document_versions
+           (id, workspace_id, document_id, sequence, snapshot, body_md, cause, created_by)
+         VALUES ($1, $2, $3, 1, ''::bytea, '# seed document', 'manual', $4)`,
+        [ulid(), workspaceId, documentId, userId],
+      )
       const threadId = ulid()
       await owner.query(
         `INSERT INTO comment_threads (id, workspace_id, document_id, quote, created_by)
@@ -629,6 +635,16 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
             `INSERT INTO document_templates (id, workspace_id, team_id, type, version, sections)
              VALUES ($1, $2, $3, 'prd', 99, '[]'::jsonb)`,
             [id, workspaceId, team?.id ?? id],
+          )
+          return
+        }
+        case 'document_versions': {
+          const [document] = await tx.query<{ id: string }>(`SELECT id FROM documents LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO document_versions
+               (id, workspace_id, document_id, sequence, snapshot, body_md, cause, created_by)
+             VALUES ($1, $2, $3, 99, ''::bytea, '# seed', 'manual', $4)`,
+            [id, workspaceId, document?.id ?? id, userId],
           )
           return
         }

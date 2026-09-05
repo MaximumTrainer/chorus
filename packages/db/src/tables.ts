@@ -48,6 +48,7 @@ export const TENANT_TABLES = [
   'collaboration_tickets',
   'document_suggestion_sets',
   'document_suggestions',
+  'document_versions',
   'comment_threads',
   'comments',
   'signals',

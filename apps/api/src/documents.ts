@@ -12,6 +12,7 @@ import {
   validateTemplate,
   type DocumentBody,
   type DocumentSection,
+  type DocumentStatus,
   type DocumentType,
   type TemplateSection,
 } from '@chorus/core'
@@ -76,6 +77,19 @@ export interface DocumentService {
     documentId: string
     actorId: string
     sections: ReadonlyArray<{ key: string; content: string }>
+  }): Promise<DocumentRecord>
+  /**
+   * Moves a document between draft, review, approved and archived (DOC-1, DOC-5).
+   *
+   * Approval is the moment a team says "this is what we agreed", which is why
+   * DOC-5 snapshots it: the evidence of a decision has to survive whatever
+   * happens to the document afterwards.
+   */
+  setStatus(input: {
+    workspaceId: string
+    documentId: string
+    actorId: string
+    status: DocumentStatus
   }): Promise<DocumentRecord>
   exportMarkdown(workspaceId: string, documentId: string): Promise<string>
   readiness(workspaceId: string, documentId: string): Promise<{ ready: boolean; missing: string[] }>
@@ -333,6 +347,43 @@ export function createDocumentService(config: DbConfig): DocumentService {
           })
 
           return toRecord(updated)
+        },
+        actorId,
+      )
+    },
+
+    async setStatus({ workspaceId, documentId, actorId, status }) {
+      return tx(
+        workspaceId,
+        async (t) => {
+          const current = await load(t, documentId)
+
+          return mutate(t, {
+            workspaceId,
+            actor: { type: 'user', id: actorId },
+            action: `document.${status}`,
+            targetType: 'document',
+            targetId: documentId,
+            before: { status: current.status },
+            after: { status },
+            apply: async () => {
+              // The approver is recorded on the row, not only in the audit log:
+              // the schema will not accept an approved document without one,
+              // because "approved by nobody" is a state that reads as a
+              // decision and is not.
+              const [row] = await t.query<DocumentRow>(
+                `UPDATE documents
+                    SET status = $2,
+                        approved_by = CASE WHEN $2 = 'approved' THEN $3 ELSE NULL END,
+                        approved_at = CASE WHEN $2 = 'approved' THEN now() ELSE NULL END,
+                        updated_at = now()
+                  WHERE id = $1
+                  RETURNING ${COLUMNS}`,
+                [documentId, status, actorId],
+              )
+              return toRecord(row!)
+            },
+          })
         },
         actorId,
       )

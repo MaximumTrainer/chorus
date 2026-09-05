@@ -4,10 +4,12 @@ import {
   isDocumentType,
   type TemplateSection,
 } from '@chorus/core'
+import { DOCUMENT_STATUSES, type DocumentStatus } from '@chorus/core'
 import { route, type RouteDefinition } from './routes.js'
 import { caller } from './authorisation.js'
 import type { DocumentService } from './documents.js'
 import type { CollaborationService } from './collaboration.js'
+import type { VersionService } from './versions.js'
 
 /**
  * Document routes (DOC-1).
@@ -21,6 +23,7 @@ import type { CollaborationService } from './collaboration.js'
 export function documentRoutes(
   documents: DocumentService,
   collaboration: CollaborationService,
+  versions: VersionService,
 ): RouteDefinition[] {
   const parseType = (value: unknown) => {
     if (!isDocumentType(value)) {
@@ -159,6 +162,44 @@ export function documentRoutes(
           c.req.param('documentId'),
         )
         return c.text(markdown)
+      },
+    }),
+
+    route({
+      method: 'POST',
+      path: '/workspaces/:workspaceId/documents/:documentId/status',
+      summary: 'Move a document between draft, review, approved and archived.',
+      auth: { kind: 'workspace', role: 'member', scopes: ['write:artefacts'] },
+      handler: async (c) => {
+        const body = (await c.req.json().catch(() => ({}))) as { status?: unknown }
+        if (!(DOCUMENT_STATUSES as readonly string[]).includes(body.status as string)) {
+          throw new ValidationError('status must be a known document status', { field: 'status' })
+        }
+        const status = body.status as DocumentStatus
+        const workspaceId = c.req.param('workspaceId')
+        const documentId = c.req.param('documentId')
+
+        const updated = await documents.setStatus({
+          workspaceId,
+          documentId,
+          actorId: caller(c).userId,
+          status,
+        })
+
+        // Approval is snapshotted (DOC-5 AC1): it is the moment a team says
+        // "this is what we agreed", and the evidence of that has to survive
+        // whatever happens to the document next.
+        if (status === 'approved') {
+          await versions.snapshot({
+            workspaceId,
+            documentId,
+            userId: caller(c).userId,
+            cause: 'approval',
+            label: 'Approved',
+          })
+        }
+
+        return c.json(updated)
       },
     }),
 

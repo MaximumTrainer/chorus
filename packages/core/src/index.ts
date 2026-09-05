@@ -184,3 +184,5 @@ export {
 export type { DocumentBody } from './document-body.js'
 export { locateAnchor } from './anchors.js'
 export type { Anchor, AnchorLocation } from './anchors.js'
+export { blocksOf, diffBlocks, DIFF_KINDS } from './diff.js'
+export type { DiffKind, DiffLine } from './diff.js'

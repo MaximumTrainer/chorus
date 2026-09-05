@@ -32,6 +32,8 @@ import { createCollaborationService } from './collaboration.js'
 import { createDocumentService } from './documents.js'
 import { createSuggestionService, type EditSuggester } from './suggestions.js'
 import { createCommentService } from './comments.js'
+import { createVersionService } from './versions.js'
+import { versionRoutes } from './version-routes.js'
 import { commentRoutes } from './comment-routes.js'
 import { suggestionRoutes } from './suggestion-routes.js'
 import { documentRoutes } from './document-routes.js'
@@ -223,6 +225,9 @@ function buildRoutes(
   // One notifier, shared. Two would mean two sets of delivery preferences and
   // two places to change how anything reaches anybody.
   const notifier = createNotifier(config, { baseUrl, ...(mailer ? { mail: mailer } : {}) })
+  // One version service, shared: a snapshot taken when suggestions are
+  // accepted and one taken on approval must land in the same history.
+  const versions = createVersionService(config)
   const workspaces = createWorkspaceService(config)
   const teams = createTeamService(config)
   const tokens = createApiTokenService(config)
@@ -237,10 +242,18 @@ function buildRoutes(
       ...repositoryRoutes(repositories),
       ...runRoutes(config, resumeRun),
       ...taskRoutes(createTaskService(config)),
-      ...documentRoutes(createDocumentService(config), createCollaborationService(config)),
+      ...documentRoutes(
+        createDocumentService(config),
+        createCollaborationService(config),
+        versions,
+      ),
+      ...versionRoutes(versions),
       ...commentRoutes(createCommentService(config, { notify: (event) => notifier.notify(event) })),
       ...suggestionRoutes(
-        createSuggestionService(config, suggestEdits ? { suggest: suggestEdits } : {}),
+        createSuggestionService(config, {
+          ...(suggestEdits ? { suggest: suggestEdits } : {}),
+          snapshot: (input) => versions.snapshot({ ...input, cause: 'suggestions_accepted' }),
+        }),
       ),
       ...sessionRoutes(createSessionService(config)),
       // Pointers retrieve through the one retrieval function, so a pointer can
