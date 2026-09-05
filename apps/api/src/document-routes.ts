@@ -7,6 +7,7 @@ import {
 import { route, type RouteDefinition } from './routes.js'
 import { caller } from './authorisation.js'
 import type { DocumentService } from './documents.js'
+import type { CollaborationService } from './collaboration.js'
 
 /**
  * Document routes (DOC-1).
@@ -17,7 +18,10 @@ import type { DocumentService } from './documents.js'
  * `admin`. Gating creation would make the tool harder to use than the document
  * it replaces.
  */
-export function documentRoutes(documents: DocumentService): RouteDefinition[] {
+export function documentRoutes(
+  documents: DocumentService,
+  collaboration: CollaborationService,
+): RouteDefinition[] {
   const parseType = (value: unknown) => {
     if (!isDocumentType(value)) {
       // Refused rather than treated as freeform: silently accepting an unknown
@@ -156,6 +160,27 @@ export function documentRoutes(documents: DocumentService): RouteDefinition[] {
         )
         return c.text(markdown)
       },
+    }),
+
+    route({
+      method: 'POST',
+      path: '/workspaces/:workspaceId/documents/:documentId/collaboration-ticket',
+      summary: 'Obtain a short-lived ticket for the document’s realtime channel.',
+      // `member` and `write:artefacts`: the channel is read *and* write, and a
+      // ticket that opened a read-only socket would be a different feature
+      // pretending to be this one. The collaboration server asks no permission
+      // question of its own — it trusts this decision, which is why the
+      // decision is made here, once, where every other one about documents is.
+      auth: { kind: 'workspace', role: 'member', scopes: ['write:artefacts'] },
+      handler: async (c) =>
+        c.json(
+          await collaboration.issue({
+            workspaceId: c.req.param('workspaceId'),
+            documentId: c.req.param('documentId'),
+            userId: caller(c).userId,
+          }),
+          201,
+        ),
     }),
 
     route({

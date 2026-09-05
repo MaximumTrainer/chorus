@@ -45,6 +45,7 @@ export const TENANT_TABLES = [
   'chat_sessions',
   'messages',
   'quick_actions',
+  'collaboration_tickets',
   'signals',
   'webhook_deliveries',
   'audit_events',

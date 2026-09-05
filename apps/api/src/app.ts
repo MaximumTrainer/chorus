@@ -28,6 +28,7 @@ import { createTaskService } from './tasks.js'
 import { taskRoutes } from './task-routes.js'
 import { createPointerService } from './pointers.js'
 import { pointerRoutes } from './pointer-routes.js'
+import { createCollaborationService } from './collaboration.js'
 import { createDocumentService } from './documents.js'
 import { documentRoutes } from './document-routes.js'
 import { createSessionService } from './sessions.js'
@@ -206,7 +207,7 @@ function buildRoutes(
       ...repositoryRoutes(repositories),
       ...runRoutes(config, resumeRun),
       ...taskRoutes(createTaskService(config)),
-      ...documentRoutes(createDocumentService(config)),
+      ...documentRoutes(createDocumentService(config), createCollaborationService(config)),
       ...sessionRoutes(createSessionService(config)),
       // Pointers retrieve through the one retrieval function, so a pointer can
       // never surface code the person could not open (BRAIN-4 AC2).

@@ -1,6 +1,6 @@
-# One image, two entrypoints (architecture.md §6, NFR-1).
+# One image, three entrypoints (architecture.md §6, NFR-1).
 #
-# `api` and `worker` are separate *processes* that scale independently, but they
+# `api`, `worker` and `collab` are separate *processes* that scale independently, but they
 # share a dependency tree and a build. Two Dockerfiles would mean two builds of
 # the same monorepo and two chances for them to drift onto different commits —
 # and a worker running different code from the API that enqueued to it is a
@@ -52,6 +52,7 @@ COPY packages/notifications/package.json packages/notifications/
 COPY packages/testing/package.json packages/testing/
 COPY apps/api/package.json apps/api/
 COPY apps/worker/package.json apps/worker/
+COPY apps/collab/package.json apps/collab/
 RUN pnpm install --frozen-lockfile --prod=false
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,30 @@
+{
+  "name": "@chorus/collab",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The Hocuspocus collaboration server (architecture.md §5.1, DOC-2). Owns the CRDT channel: authorisation on connect and on membership change, and persistence of document state.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "start": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "@chorus/core": "workspace:*",
+    "@chorus/db": "workspace:*",
+    "@chorus/telemetry": "workspace:*",
+    "@hocuspocus/server": "2.15.2",
+    "yjs": "13.6.20"
+  },
+  "devDependencies": {
+    "@chorus/config": "workspace:*",
+    "@chorus/testing": "workspace:*",
+    "@hocuspocus/provider": "2.15.2",
+    "@types/node": "22.7.5",
+    "typescript": "5.6.3",
+    "vitest": "2.1.3",
+    "ws": "8.18.0"
+  }
+}

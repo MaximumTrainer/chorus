@@ -201,6 +201,42 @@ services:
       retries: 6
       start_period: 20s
 
+  # The CRDT channel (DOC-2). Its own process because a WebSocket holding a
+  # document in memory for every open editor has a different lifetime and
+  # memory profile from a request handler; sharing one would let the number of
+  # open documents decide the API's replica count.
+  collab:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["node_modules/.bin/tsx", "apps/collab/src/main.ts"]
+    environment:
+      CHORUS_COLLAB_PORT: "1234"
+      CHORUS_DB_HOST: postgres
+      CHORUS_DB_PORT: "5432"
+      CHORUS_DB_NAME: ${CHORUS_DB_NAME:-chorus}
+      CHORUS_DB_APP_USER: ${CHORUS_DB_APP_USER:-chorus_app}
+      CHORUS_DB_APP_PASSWORD: ${CHORUS_DB_APP_PASSWORD:-chorus-dev-secret}
+      CHORUS_DB_OWNER_USER: ${CHORUS_DB_OWNER_USER:-chorus}
+      CHORUS_DB_OWNER_PASSWORD: ${CHORUS_DB_OWNER_PASSWORD:-chorus-dev-secret}
+    ports:
+      - "${CHORUS_COLLAB_PORT:-1234}:1234"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      # Hocuspocus answers plain HTTP on the same port, so a reachable port is
+      # a genuine signal rather than a liveness check that only proves the
+      # process has not exited.
+      test: ["CMD", "node", "-e", "require('node:http').get('http://127.0.0.1:1234/',r=>process.exit(r.statusCode?0:1)).on('error',()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
 volumes:
   postgres-data:
   redis-data:

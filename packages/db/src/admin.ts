@@ -257,6 +257,12 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
         [ulid(), workspaceId, teamId],
       )
       await owner.query(
+        `INSERT INTO collaboration_tickets
+           (id, workspace_id, document_id, user_id, token_hash, expires_at)
+         VALUES ($1, $2, $3, $4, $5, now() + interval '1 minute')`,
+        [ulid(), workspaceId, documentId, userId, `seed-${workspaceId}`],
+      )
+      await owner.query(
         `INSERT INTO code_pointers
            (id, workspace_id, task_id, repository_id, path, line_start, line_end, source)
          VALUES ($1, $2, $3, $4, 'src/seed.ts', 1, 1, 'generated')`,
@@ -599,6 +605,16 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
             `INSERT INTO document_templates (id, workspace_id, team_id, type, version, sections)
              VALUES ($1, $2, $3, 'prd', 99, '[]'::jsonb)`,
             [id, workspaceId, team?.id ?? id],
+          )
+          return
+        }
+        case 'collaboration_tickets': {
+          const [document] = await tx.query<{ id: string }>(`SELECT id FROM documents LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO collaboration_tickets
+               (id, workspace_id, document_id, user_id, token_hash, expires_at)
+             VALUES ($1, $2, $3, $4, $5, now() + interval '1 minute')`,
+            [id, workspaceId, document?.id ?? id, userId, `seed-${id}`],
           )
           return
         }
