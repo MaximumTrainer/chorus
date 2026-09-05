@@ -1,0 +1,30 @@
+# DOC-3 — prompt-to-edit, arriving as suggestions.
+#
+# No retrieve step: the passage is the input, and the instruction is about the
+# text in front of the person rather than about the workspace. Adding retrieval
+# would put material into the prompt that the author did not ask to be
+# considered, and the first surprising rewrite is the one that costs their
+# trust in the feature.
+#
+# No emit step either: a suggestion is not an artefact. It is a proposal held
+# beside the document until somebody accepts it, which is the whole requirement.
+name: suggest-edits
+version: 1
+
+inputs:
+  instruction: What the author asked for, in their own words
+  passage: The text they selected, exactly as it stands
+
+outputs:
+  - suggestions
+
+model: balanced
+
+tools: []
+
+checkpoints: {}
+
+steps:
+  - id: propose
+    type: model
+    prompt: document/suggest

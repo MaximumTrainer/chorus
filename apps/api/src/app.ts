@@ -30,6 +30,8 @@ import { createPointerService } from './pointers.js'
 import { pointerRoutes } from './pointer-routes.js'
 import { createCollaborationService } from './collaboration.js'
 import { createDocumentService } from './documents.js'
+import { createSuggestionService, type EditSuggester } from './suggestions.js'
+import { suggestionRoutes } from './suggestion-routes.js'
 import { documentRoutes } from './document-routes.js'
 import { createSessionService } from './sessions.js'
 import { sessionRoutes } from './session-routes.js'
@@ -93,6 +95,15 @@ export interface AppOptions {
    * tie a browser to however long the rest of it takes.
    */
   resumeRun?: RunResumer
+  /**
+   * How a set of suggested edits is produced (DOC-3).
+   *
+   * Injected for the same reason as `resumeRun`: in a deployment this enqueues
+   * and a worker fills the set in, so a route never ties a browser to a model
+   * call. A test passes one that runs inline — the same code, a different
+   * transport.
+   */
+  suggestEdits?: EditSuggester
   /**
    * The model provider. Injected so a test never reaches a real one
    * (CLAUDE.md §4).
@@ -202,6 +213,7 @@ function buildRoutes(
   resumeRun?: RunResumer,
   mailer?: Mailer,
   baseUrl = 'http://localhost:3000',
+  suggestEdits?: EditSuggester,
 ): {
   table: readonly RouteDefinition[]
   deps: AuthorisationDeps
@@ -221,6 +233,9 @@ function buildRoutes(
       ...runRoutes(config, resumeRun),
       ...taskRoutes(createTaskService(config)),
       ...documentRoutes(createDocumentService(config), createCollaborationService(config)),
+      ...suggestionRoutes(
+        createSuggestionService(config, suggestEdits ? { suggest: suggestEdits } : {}),
+      ),
       ...sessionRoutes(createSessionService(config)),
       // Pointers retrieve through the one retrieval function, so a pointer can
       // never surface code the person could not open (BRAIN-4 AC2).
@@ -455,6 +470,7 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
           options.resumeRun,
           options.mailer,
           options.baseUrl,
+          options.suggestEdits,
         )
       : undefined
 

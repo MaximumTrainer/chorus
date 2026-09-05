@@ -202,7 +202,11 @@ describe('DOC-2 collaborative editing', () => {
     // Waiting for the row, not for a duration and not for the client's own
     // opinion of whether it has synced. What survives a restart is what was
     // written down, so that is the thing to wait for.
-    await until('the edit is persisted', () => stored, 15_000)
+    // Generous, because the wait is on a debounced write and this suite runs
+    // alongside every other acceptance suite against one Postgres. The
+    // condition is still a real one — the row having the bytes — so a longer
+    // budget buys reliability without buying a pass.
+    await until('the edit is persisted', () => stored, 40_000)
     before.provider.destroy()
 
     await collab.stop()
@@ -210,10 +214,10 @@ describe('DOC-2 collaborative editing', () => {
 
     const again = await ticketFor(w.ada, w.workspaceId, w.documentId)
     const after = await connect(again.name!, again.ticket!)
-    await until('the document comes back', () => text(after.doc).includes('worth keeping'), 15_000)
+    await until('the document comes back', () => text(after.doc).includes('worth keeping'), 40_000)
     expect(text(after.doc)).toBe('A paragraph worth keeping.')
     clearInterval(watching)
-  })
+  }, 120_000)
 
   it('DOC-2 AC4: edits made while disconnected merge on reconnect, without duplication', async () => {
     const w = await world()

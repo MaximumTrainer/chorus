@@ -1,0 +1,21 @@
+{
+  "input": {
+    "instruction": "Fix the grammar",
+    "passage": "Finance reconcile by hand. It takes a day a week."
+  },
+  "context": [],
+  "model": {
+    "chunks": [
+      "{\"suggestions\":[{\"original\":\"Finance reconcile by hand.\",",
+      "\"replacement\":\"Finance reconciles by hand.\",\"reason\":\"Subject and verb disagree.\"}]}"
+    ]
+  },
+  "expect": {
+    "kind": "output",
+    "step": "propose",
+    "contains": [
+      "Finance reconciles by hand.",
+      "Subject and verb disagree."
+    ]
+  }
+}

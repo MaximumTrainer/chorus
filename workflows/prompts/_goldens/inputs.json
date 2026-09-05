@@ -7,5 +7,9 @@
     "topic": "Finance cannot split a single payment across two invoices",
     "documentType": "prd",
     "gather": "{\n  \"fragments\": [\n    {\n      \"path\": \"src/invoices.ts\",\n      \"lines\": \"1-12\",\n      \"text\": \"export function parseInvoice(payment: Payment): Invoice { return settleInFull(payment) }\"\n    }\n  ]\n}"
+  },
+  "document/suggest": {
+    "instruction": "Fix the grammar",
+    "passage": "Finance reconcile by hand. It takes a day a week."
   }
 }

@@ -258,3 +258,57 @@ export function sectionsOf(body: DocumentBody): Record<string, string> {
 
   return found
 }
+
+/**
+ * How many times a run of text appears in a body (DOC-3).
+ *
+ * Counted across every text node, because "does this suggestion still apply"
+ * has three answers and only one of them is yes: once (apply it), never (the
+ * text has changed underneath it), or more than once (there is no way to know
+ * which the model meant). Treating the last as "the first one" is how an edit
+ * lands in the wrong paragraph.
+ */
+export function countText(body: DocumentBody, needle: string): number {
+  if (needle === '') return 0
+
+  let seen = 0
+  const walk = (node: JsonNode): void => {
+    if (node.type === 'text' && node.text) {
+      let at = node.text.indexOf(needle)
+      while (at !== -1) {
+        seen += 1
+        at = node.text.indexOf(needle, at + needle.length)
+      }
+    }
+    for (const child of node.content ?? []) walk(child)
+  }
+  for (const node of body.content) walk(node)
+  return seen
+}
+
+/**
+ * Replaces one run of text, or refuses.
+ *
+ * Refuses unless the text appears exactly once. A suggestion that no longer
+ * matches is stale, and a suggestion that matches twice is ambiguous — both are
+ * cases where applying something is worse than applying nothing, because the
+ * person accepting believes they know what they agreed to.
+ */
+export function replaceText(
+  body: DocumentBody,
+  original: string,
+  replacement: string,
+): DocumentBody | undefined {
+  if (countText(body, original) !== 1) return undefined
+
+  let done = false
+  const rewrite = (node: JsonNode): JsonNode => {
+    if (!done && node.type === 'text' && node.text?.includes(original)) {
+      done = true
+      return { ...node, text: node.text.replace(original, replacement) }
+    }
+    return node.content ? { ...node, content: node.content.map(rewrite) } : node
+  }
+
+  return { type: 'doc', content: body.content.map(rewrite) }
+}

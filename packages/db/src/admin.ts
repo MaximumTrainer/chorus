@@ -262,6 +262,19 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
          VALUES ($1, $2, $3, $4, $5, now() + interval '1 minute')`,
         [ulid(), workspaceId, documentId, userId, `seed-${workspaceId}`],
       )
+      const suggestionSetId = ulid()
+      await owner.query(
+        `INSERT INTO document_suggestion_sets
+           (id, workspace_id, document_id, created_by, instruction)
+         VALUES ($1, $2, $3, $4, 'seed instruction')`,
+        [suggestionSetId, workspaceId, documentId, userId],
+      )
+      await owner.query(
+        `INSERT INTO document_suggestions
+           (id, workspace_id, set_id, sequence, original_text, replacement_text)
+         VALUES ($1, $2, $3, 1, 'seed', 'seeded')`,
+        [ulid(), workspaceId, suggestionSetId],
+      )
       await owner.query(
         `INSERT INTO code_pointers
            (id, workspace_id, task_id, repository_id, path, line_start, line_end, source)
@@ -605,6 +618,28 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
             `INSERT INTO document_templates (id, workspace_id, team_id, type, version, sections)
              VALUES ($1, $2, $3, 'prd', 99, '[]'::jsonb)`,
             [id, workspaceId, team?.id ?? id],
+          )
+          return
+        }
+        case 'document_suggestion_sets': {
+          const [document] = await tx.query<{ id: string }>(`SELECT id FROM documents LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO document_suggestion_sets
+               (id, workspace_id, document_id, created_by, instruction)
+             VALUES ($1, $2, $3, $4, 'seed')`,
+            [id, workspaceId, document?.id ?? id, userId],
+          )
+          return
+        }
+        case 'document_suggestions': {
+          const [set] = await tx.query<{ id: string }>(
+            `SELECT id FROM document_suggestion_sets LIMIT 1`,
+          )
+          await tx.execute(
+            `INSERT INTO document_suggestions
+               (id, workspace_id, set_id, sequence, original_text, replacement_text)
+             VALUES ($1, $2, $3, 99, 'a', 'b')`,
+            [id, workspaceId, set?.id ?? id],
           )
           return
         }

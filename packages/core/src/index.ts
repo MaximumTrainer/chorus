@@ -174,7 +174,9 @@ export type {
 } from './artefacts.js'
 export {
   bodyFromTemplate,
+  countText,
   documentToMarkdown,
+  replaceText,
   sectionHeading,
   sectionsOf,
   withSection,

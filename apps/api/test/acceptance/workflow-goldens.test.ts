@@ -34,13 +34,18 @@ interface Golden {
   readonly context: ReadonlyArray<{ path: string; text: string }>
   /** What the model is scripted to say, as it would stream it. */
   readonly model: { chunks: string[] }
-  readonly expect: {
-    kind: 'document' | 'task'
-    title: string
-    type?: string
-    sections?: Record<string, string>
-    acceptanceCriteria?: string[]
-  }
+  readonly expect:
+    | {
+        kind: 'document' | 'task'
+        title: string
+        type?: string
+        sections?: Record<string, string>
+        acceptanceCriteria?: string[]
+      }
+    // Not every workflow writes something. `suggest-edits` proposes, and a
+    // proposal is deliberately not an artefact (DOC-3) — so its golden records
+    // the step output it produced, which is the thing its callers consume.
+    | { kind: 'output'; step: string; contains: string[] }
 }
 
 describe('AGENT-1 AC6 built-in workflow goldens', () => {
@@ -170,7 +175,17 @@ describe('AGENT-1 AC6 built-in workflow goldens', () => {
         expect(asked!.prompt).toContain(fragment.path)
       }
 
-      if (golden.expect.kind === 'document') {
+      if (golden.expect.kind === 'output') {
+        const [step] = await db.admin.query<{ output: unknown }>(
+          `SELECT output FROM run_steps WHERE run_id = $1 AND step_id = $2`,
+          [record.id, golden.expect.step],
+        )
+        const produced =
+          typeof step?.output === 'string' ? step.output : JSON.stringify(step?.output)
+        for (const fragment of golden.expect.contains) {
+          expect(produced).toContain(fragment)
+        }
+      } else if (golden.expect.kind === 'document') {
         const [row] = await db.admin.query<{ id: string; title: string; type: string }>(
           `SELECT id, title, type FROM documents WHERE workspace_id = $1`,
           [workspaceId],
