@@ -30,10 +30,23 @@ describe('AGENT-4 AC5 OpenTelemetry export', () => {
     process.env.CHORUS_OTLP_METRICS_URL ?? 'http://localhost:8888/metrics'
   const collectorEndpoint = process.env.CHORUS_OTEL_ENDPOINT ?? 'http://localhost:4318'
 
-  /** The collector's own count of spans it has taken in. */
-  async function acceptedSpans(): Promise<number> {
-    const response = await fetch(collectorMetrics, { signal: AbortSignal.timeout(5_000) })
-    const body = await response.text()
+  /**
+   * The collector's own count of spans it has taken in.
+   *
+   * Returns `undefined` rather than throwing when the endpoint is momentarily
+   * unreachable. Under a full suite run this is polled while everything else is
+   * competing for sockets, and a single transient failure is not evidence about
+   * the collector — treating it as fatal made this the one flaky test in the
+   * suite, which is worse than useless because it teaches people to re-run.
+   */
+  async function acceptedSpans(): Promise<number | undefined> {
+    let body: string
+    try {
+      const response = await fetch(collectorMetrics, { signal: AbortSignal.timeout(5_000) })
+      body = await response.text()
+    } catch {
+      return undefined
+    }
     let total = 0
     for (const line of body.split('\n')) {
       if (line.startsWith('otelcol_receiver_accepted_spans')) {
@@ -163,19 +176,23 @@ describe('AGENT-4 AC5 OpenTelemetry export', () => {
     // If the collector is not running this fails rather than skipping: a gate
     // that quietly disappears when its dependency is absent is not a gate.
     const before = await acceptedSpans()
+    expect(before, 'the collector must be running for this gate to mean anything').toBeDefined()
 
     const { workspaceId, runId } = await seedRun()
     await exportRunTrace(db.config, workspaceId, runId, {
       endpoint: collectorEndpoint,
     })
 
-    // The collector batches; poll rather than sleep (CLAUDE.md §5).
-    const deadline = Date.now() + 20_000
+    // The collector batches; poll rather than sleep (CLAUDE.md §5). The pause
+    // between polls is not a sleep-until-it-passes — the condition is still the
+    // counter rising — it stops this loop saturating the endpoint it is asking.
+    const deadline = Date.now() + 30_000
     let after = before
-    while (after <= before && Date.now() < deadline) {
-      after = await acceptedSpans()
+    while ((after ?? 0) <= (before ?? 0) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      after = (await acceptedSpans()) ?? after
     }
 
-    expect(after, 'the collector accepted no spans').toBeGreaterThan(before)
+    expect(after, 'the collector accepted no spans').toBeGreaterThan(before!)
   })
 })

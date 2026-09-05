@@ -229,6 +229,22 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
          VALUES ($1, $2, 'task', $3, 'document', $3)`,
         [ulid(), workspaceId, taskId],
       )
+      const sessionId = ulid()
+      await owner.query(
+        `INSERT INTO chat_sessions (id, workspace_id, team_id, entry_point, created_by)
+         VALUES ($1, $2, $3, 'idea', $4)`,
+        [sessionId, workspaceId, teamId, userId],
+      )
+      await owner.query(
+        `INSERT INTO messages (id, workspace_id, session_id, seq, role, author_user_id)
+         VALUES ($1, $2, $3, 1, 'user', $4)`,
+        [ulid(), workspaceId, sessionId, userId],
+      )
+      await owner.query(
+        `INSERT INTO quick_actions (id, workspace_id, team_id, key, label, prompt)
+         VALUES ($1, $2, $3, 'seed_action', 'Seed', 'A prompt')`,
+        [ulid(), workspaceId, teamId],
+      )
       const documentId = ulid()
       await owner.query(
         `INSERT INTO documents (id, workspace_id, team_id, type, title, created_by)
@@ -541,6 +557,33 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
             [id, workspaceId],
           )
           return
+        case 'chat_sessions': {
+          const [team] = await tx.query<{ id: string }>(`SELECT id FROM teams LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO chat_sessions (id, workspace_id, team_id, entry_point, created_by)
+             VALUES ($1, $2, $3, 'idea', $4)`,
+            [id, workspaceId, team?.id ?? id, userId],
+          )
+          return
+        }
+        case 'messages': {
+          const [session] = await tx.query<{ id: string }>(`SELECT id FROM chat_sessions LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO messages (id, workspace_id, session_id, seq, role)
+             VALUES ($1, $2, $3, 99, 'user')`,
+            [id, workspaceId, session?.id ?? id],
+          )
+          return
+        }
+        case 'quick_actions': {
+          const [team] = await tx.query<{ id: string }>(`SELECT id FROM teams LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO quick_actions (id, workspace_id, team_id, key, label, prompt)
+             VALUES ($1, $2, $3, 'seeded', 'x', 'p')`,
+            [id, workspaceId, team?.id ?? id],
+          )
+          return
+        }
         case 'documents': {
           const [team] = await tx.query<{ id: string }>(`SELECT id FROM teams LIMIT 1`)
           await tx.execute(
