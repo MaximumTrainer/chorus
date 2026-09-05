@@ -164,6 +164,24 @@ jobs:
           echo "--- no service exited"
           docker compose -f deploy/docker-compose.yml ps --format '{{.Service}} {{.State}}'             | grep -Ev '^(migrate) ' | grep -q 'exited' && { echo "a service exited"; exit 1; } || true
 
+      # NFR-1 AC5: "services restart without data loss". Every run of this job
+      # until now began with empty volumes, so the migrator was only ever
+      # exercised against a database it had never seen — and it re-ran every
+      # migration on every start, which failed the moment anything restarted.
+      # The restart is the assertion; the smoke afterwards is what makes it one.
+      - name: Restart against the existing volumes
+        run: |
+          set -euo pipefail
+          docker compose -f deploy/docker-compose.yml down          # volumes deliberately kept
+          docker compose -f deploy/docker-compose.yml up --detach --wait --wait-timeout 300
+
+          echo "--- the migrator applied nothing the second time, and did not fail"
+          docker compose -f deploy/docker-compose.yml logs --no-color migrate | tail -20
+          docker compose -f deploy/docker-compose.yml logs --no-color migrate | grep -q '"count":0'
+
+          echo "--- and the system still works"
+          curl --fail --silent --show-error http://localhost:3000/readyz | grep -q '"status":"ready"'
+
       - name: Report service health
         if: always()
         run: docker compose -f deploy/docker-compose.yml ps

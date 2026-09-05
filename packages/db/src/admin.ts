@@ -1,4 +1,5 @@
 import { readdirSync, readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { ulid } from '@chorus/core'
 import { configFromEnv, createManagedPool, type DbConfig, type TenantTx } from './client.js'
@@ -13,9 +14,17 @@ import { configFromEnv, createManagedPool, type DbConfig, type TenantTx } from '
 
 export const MIGRATIONS_DIR = join(import.meta.dirname, '..', 'migrations')
 
+/** A single owner connection, inside a transaction. */
+export interface OwnerTx {
+  query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>
+  execute(sql: string, params?: unknown[]): Promise<void>
+}
+
 export interface AdminConnection {
   query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>
   execute(sql: string, params?: unknown[]): Promise<void>
+  /** Run `fn` on one owner connection in a transaction, rolling back on failure. */
+  withOwnerTransaction<T>(fn: (tx: OwnerTx) => Promise<T>): Promise<T>
   /** Insert one row into every tenant table for a workspace. */
   seedWorkspace(workspaceId: string): Promise<void>
   /** Attempt to insert a row belonging to `workspaceId` through a tenant transaction. */
@@ -62,6 +71,35 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
 
     async execute(sql, params = []) {
       await owner.query(sql, params)
+    },
+
+    async withOwnerTransaction(fn) {
+      // One connection for the whole unit of work. `execute` above takes
+      // whichever pooled connection is free, so a BEGIN issued through it can
+      // land on a different backend from the statements it was meant to wrap —
+      // a transaction that silently is not one.
+      const client = await owner.connect()
+      try {
+        await client.query('BEGIN')
+        const result = await fn({
+          async query<T>(sql: string, params: unknown[] = []): Promise<T[]> {
+            const r = await client.query(sql, params)
+            return r.rows as T[]
+          },
+          async execute(sql: string, params: unknown[] = []): Promise<void> {
+            await client.query(sql, params)
+          },
+        })
+        await client.query('COMMIT')
+        return result
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => {
+          /* the original error is the one worth reporting */
+        })
+        throw error
+      } finally {
+        client.release()
+      }
     },
 
     async seedWorkspace(workspaceId) {
@@ -783,16 +821,119 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
   }
 }
 
-/** Apply every migration in order. Forward-only, by filename. */
-export async function applyMigrations(admin: AdminConnection): Promise<string[]> {
-  const files = readdirSync(MIGRATIONS_DIR)
+/** Does this database already hold a schema, ledger aside? */
+async function hasApplicationTables(admin: AdminConnection): Promise<boolean> {
+  const [row] = await admin.query<{ count: string }>(
+    `SELECT count(*) FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name <> 'schema_migrations'`,
+  )
+  return Number(row!.count) > 0
+}
+
+/**
+ * Apply the migrations this database has not seen. Forward-only, by filename.
+ *
+ * Returns the files applied by *this* call, so a restart against an existing
+ * volume returns nothing and says so, rather than failing on the first
+ * `CREATE TABLE` (NFR-1 AC5). The migrator runs on every `docker compose up`,
+ * which makes "forward-only" mean forward from wherever this database already
+ * is — and that needs a record of where that is.
+ */
+export async function applyMigrations(
+  admin: AdminConnection,
+  options: { dir?: string; baseline?: boolean } = {},
+): Promise<string[]> {
+  const dir = options.dir ?? MIGRATIONS_DIR
+  const files = readdirSync(dir)
     .filter((name) => name.endsWith('.sql'))
     .sort()
 
   const config = configFromEnv()
 
+  // The ledger is the first thing to exist, and it describes itself: created
+  // here rather than in a migration, because a migration recording that
+  // migrations have been applied has to run before the table it writes to.
+  await admin.execute(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      filename   text PRIMARY KEY,
+      checksum   text NOT NULL,
+      applied_at timestamptz NOT NULL DEFAULT now()
+    )
+  `)
+
+  const recorded = new Map(
+    (
+      await admin.query<{ filename: string; checksum: string }>(
+        `SELECT filename, checksum FROM schema_migrations`,
+      )
+    ).map((row) => [row.filename, row.checksum]),
+  )
+
+  // A schema with no ledger was migrated by the runner that had none. Running
+  // the migrations at it would collide with its own tables; adopting them
+  // silently would record files as applied that this database may never have
+  // seen — a deployment upgraded across two releases has the older release's
+  // schema and the newer release's files. So it stops, and the operator says
+  // which of the two this is.
+  if (recorded.size === 0 && files.length > 0 && (await hasApplicationTables(admin))) {
+    if (!options.baseline) {
+      throw new Error(
+        `this database has a schema but no schema_migrations ledger, so it was migrated ` +
+          `before the ledger existed. Adopt it once with \`pnpm db:migrate --baseline\` ` +
+          `(or CHORUS_DB_BASELINE=1), which records the ${files.length} current migrations ` +
+          `as applied without running them. Only do this if its schema is up to date — ` +
+          `if it is not, migrate a fresh database instead.`,
+      )
+    }
+
+    await admin.withOwnerTransaction(async (tx) => {
+      for (const file of files) {
+        const checksum = createHash('sha256')
+          .update(readFileSync(join(dir, file), 'utf8'))
+          .digest('hex')
+        await tx.execute(
+          `INSERT INTO schema_migrations (filename, checksum) VALUES ($1, $2)
+             ON CONFLICT (filename) DO NOTHING`,
+          [file, checksum],
+        )
+        recorded.set(file, checksum)
+      }
+    })
+  }
+
+  const applied: string[] = []
+
   for (const file of files) {
-    await admin.execute(readFileSync(join(MIGRATIONS_DIR, file), 'utf8'))
+    const sql = readFileSync(join(dir, file), 'utf8')
+    const checksum = createHash('sha256').update(sql).digest('hex')
+    const previous = recorded.get(file)
+
+    if (previous !== undefined) {
+      // An edited migration is refused rather than skipped. Skipping it leaves
+      // two deployments claiming the same schema version with different
+      // schemas, and nothing anywhere says which one a bug report came from.
+      if (previous !== checksum) {
+        throw new Error(
+          `migration ${file} changed after it was applied ` +
+            `(recorded ${previous.slice(0, 12)}, found ${checksum.slice(0, 12)}). ` +
+            `Migrations are forward-only: add a new migration instead of editing this one.`,
+        )
+      }
+      continue
+    }
+
+    // The migration and the record of it, or neither. Written apart, a crash
+    // between them leaves the ledger lying in one direction or the other, and
+    // the next start either re-runs applied DDL or skips DDL that never ran.
+    await admin.withOwnerTransaction(async (tx) => {
+      await tx.execute(sql)
+      await tx.execute(`INSERT INTO schema_migrations (filename, checksum) VALUES ($1, $2)`, [
+        file,
+        checksum,
+      ])
+    })
+
+    applied.push(file)
   }
 
   // The application role is created after the schema exists so it can be
@@ -820,7 +961,7 @@ export async function applyMigrations(admin: AdminConnection): Promise<string[]>
   )
   await admin.execute(`SELECT set_config('chorus.app_role', '${config.appUser}', false)`)
 
-  return files
+  return applied
 }
 
 /** Drop and recreate the public schema. Test setup only. */
