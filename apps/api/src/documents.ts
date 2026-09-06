@@ -72,6 +72,8 @@ export interface DocumentService {
     actorId: string
   }): Promise<DocumentRecord>
   get(workspaceId: string, documentId: string): Promise<DocumentRecord>
+  /** Every live document belonging to one team, newest first (WS-3 AC3). */
+  listByTeam(workspaceId: string, teamId: string): Promise<readonly DocumentRecord[]>
   /** Writes content into sections, addressed by key. */
   updateSections(input: {
     workspaceId: string
@@ -301,6 +303,25 @@ export function createDocumentService(config: DbConfig): DocumentService {
 
     async get(workspaceId, documentId) {
       return tx(workspaceId, async (t) => toRecord(await load(t, documentId)))
+    },
+
+    async listByTeam(workspaceId, teamId) {
+      // The team is a predicate, not a boundary: RLS has already confined this
+      // to the workspace, and `team_id` narrows within it (WS-3 AC3). Ordered
+      // newest first, and the id breaks a tie — two documents created in the
+      // same millisecond otherwise come back in whatever order the heap gives,
+      // which makes a list flicker between requests for no reason a reader can
+      // see.
+      return tx(workspaceId, async (t) =>
+        (
+          await t.query<DocumentRow>(
+            `SELECT ${COLUMNS} FROM documents
+              WHERE team_id = $1 AND deleted_at IS NULL
+              ORDER BY created_at DESC, id DESC`,
+            [teamId],
+          )
+        ).map(toRecord),
+      )
     },
 
     async updateSections({ workspaceId, documentId, actorId, sections }) {

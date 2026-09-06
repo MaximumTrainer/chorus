@@ -1146,7 +1146,8 @@ POST       /sessions                        create a session
 POST       /sessions/{id}/messages          SSE stream of the agent turn
 GET        /sessions/{id}
 
-GET|POST|PATCH /documents
+GET|POST       /workspaces/{id}/teams/{teamId}/documents     listing and creation are team-scoped (WS-3 AC3)
+GET|PATCH      /documents/{id}                               a document is addressed by id once you have one
 GET|POST       /documents/{id}/versions  /documents/{id}/comments
 POST           /documents/{id}/decompose  /documents/{id}/export  /documents/{id}/approve
 

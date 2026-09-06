@@ -114,6 +114,17 @@ export function documentRoutes(
 
     route({
       method: 'GET',
+      path: '/workspaces/:workspaceId/teams/:teamId/documents',
+      summary: 'List a team’s documents.',
+      auth: { kind: 'workspace', role: 'member', scopes: ['read:artefacts'] },
+      handler: async (c) =>
+        c.json(
+          await documents.listByTeam(c.req.param('workspaceId'), c.req.param('teamId')),
+        ),
+    }),
+
+    route({
+      method: 'GET',
       path: '/workspaces/:workspaceId/documents/:documentId',
       summary: 'Read a document, its sections and the template version it used.',
       auth: { kind: 'workspace', role: 'member', scopes: ['read:artefacts'] },
