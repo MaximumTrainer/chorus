@@ -345,11 +345,10 @@ describe('DOC-6 decomposition', () => {
       chunks: [
         JSON.stringify({
           nodes: [
-            // Named for the symbol, because TASK-3's confidence floor is
-            // strict enough that a longer title does not clear it — see #160.
-            // A pointer only appears when the match is unambiguous, which is
-            // the behaviour this asserts rather than a property of this title.
-            { key: 'fix', title: 'parseInvoice', tags: [], sectionKeys: [], children: [] },
+            // A title as somebody would actually write it. It used to find
+            // nothing, because the lexical search required every term and the
+            // code contains no "fix" (#160).
+            { key: 'fix', title: 'Fix parseInvoice so it balances', tags: [], sectionKeys: [], children: [] },
             {
               key: 'board',
               title: 'Write the quarterly board update',
@@ -368,7 +367,7 @@ describe('DOC-6 decomposition', () => {
     // Then the coding task carries a pointer that resolves to a real file at a
     // real commit
     const tasks = await tasksIn(w)
-    const coding = tasks.find((task) => task.title === 'parseInvoice')!
+    const coding = tasks.find((task) => task.title === 'Fix parseInvoice so it balances')!
     const pointers = (await (
       await w.ada.get(`/workspaces/${w.workspaceId}/tasks/${coding.id}/pointers`)
     ).json()) as Array<{ path: string; commitSha: string | null; staleAt: string | null }>

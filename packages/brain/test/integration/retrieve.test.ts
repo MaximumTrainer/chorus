@@ -226,6 +226,43 @@ describe('BRAIN-4 retrieval', () => {
     expect(bundle.fragments[0]!.path).toBe('src/a.ts')
   })
 
+  it('BRAIN-4 AC1: a rare identifier is found inside an ordinary sentence', async () => {
+    const w = await world()
+    await addChunk(w, { path: 'src/a.ts', text: 'function reconcileLedgerEntries() {}' })
+    await addChunk(w, { path: 'src/b.ts', text: 'a function about invoices and money' })
+
+    // How anybody actually asks: a sentence with a symbol in it. The lexical
+    // half used to require *every* term, so one ordinary word the code did not
+    // contain — "fix", "update", "the" — reduced a precise query to no match at
+    // all, and the caller saw an empty result rather than a weak one (#160).
+    const bundle = await retriever.retrieve({
+      workspaceId: w.workspaceId,
+      teamId: w.teamId,
+      userId: w.insiderId,
+      query: 'Fix reconcileLedgerEntries so it balances',
+    })
+
+    expect(bundle.fragments[0]!.path).toBe('src/a.ts')
+  })
+
+  it('BRAIN-4 AC6: a question sharing no terms with the corpus still finds nothing', async () => {
+    const w = await world()
+    await addChunk(w, { path: 'src/a.ts', text: 'function reconcileLedgerEntries() {}' })
+
+    // The other half of the same change, and the one that matters more.
+    // Matching *any* term rather than all of them is only safe while an
+    // unrelated question still comes back empty — otherwise every query gets
+    // its least-bad guess, which is what the confidence floor exists to stop.
+    const bundle = await retriever.retrieve({
+      workspaceId: w.workspaceId,
+      teamId: w.teamId,
+      userId: w.insiderId,
+      query: 'quantum chromodynamics lattice gauge solver',
+    })
+
+    expect(bundle.fragments).toEqual([])
+  })
+
   it('BRAIN-4 AC1: a paraphrase finds the right chunk without sharing its words', async () => {
     const w = await world()
     await addChunk(w, { path: 'src/auth.ts', text: 'validate the session cookie and reject expired tokens' })

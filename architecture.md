@@ -603,6 +603,8 @@ retrieve(q: {
 
 Algorithm: run lexical (`tsvector` + trigram) and vector (HNSW) search in parallel per kind → **reciprocal rank fusion** → apply permission filter → take top *k* → expand `expand` hops in the entity graph from matched entities → assemble a `ContextBundle` of cited fragments with stable citation ids.
 
+The lexical half matches **any** term rather than all of them, ranked by `ts_rank` (#160). Requiring every term is right for a search box and wrong for the questions this system asks: a task is called "Fix parseInvoice so it balances", and demanding the code also contain "fix", "so" and "balances" turns a precise query into no match at all — which the caller cannot distinguish from "nothing here is relevant". What keeps the wider net honest is unchanged: the distance ceiling on the vector half, and the confidence floor above it, so a question sharing no terms with the corpus still returns nothing.
+
 **Permission filtering is not optional and not post-hoc in the UI.** It is applied inside `retrieve` as a SQL predicate combining RLS, team membership, and per-signal `permissions.scopeIds` intersected with the user's known external identities. A signal whose source restricts it (a private channel, a restricted page, a sensitivity-labelled message) is invisible to a user lacking that scope, including when an agent is acting on that user's behalf.
 
 Bundles are persisted on the `message` or `run` that used them, which is what makes the "Context used" panel exact rather than reconstructed (CHAT-3).
