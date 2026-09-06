@@ -158,7 +158,8 @@ export interface ExecutorDeps {
   readonly onEvent?: (
     event:
       | { readonly kind: 'token'; readonly text: string }
-      | { readonly kind: 'tool_call'; readonly step: string; readonly tool: string; readonly output: unknown },
+      | { readonly kind: 'tool_call'; readonly step: string; readonly tool: string; readonly output: unknown }
+      | { readonly kind: 'context'; readonly step: string; readonly bundleId: string; readonly fragments: number },
   ) => void
 }
 
@@ -1180,6 +1181,15 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
             considered: bundle.considered,
             returned: bundle.fragments.length,
           },
+        })
+        // The bundle id reaches the reader while the turn is still running, so
+        // the "Context used" panel can be opened against what this turn read
+        // rather than against whatever retrieval would return later (CHAT-3).
+        deps.onEvent?.({
+          kind: 'context',
+          step: step.id,
+          bundleId: bundle.id,
+          fragments: bundle.fragments.length,
         })
 
         return { kind: 'output', output: bundle }

@@ -1145,6 +1145,7 @@ DELETE     /workspaces/{id}/grants/{grantId}             revoked with immediate 
 POST       /workspaces/{id}/teams/{teamId}/sessions   create a session, through one of the three doors
 POST       /workspaces/{id}/sessions/{sessionId}/messages   SSE stream of the agent turn
 GET        /workspaces/{id}/sessions/{sessionId}      the session and its transcript
+GET        /workspaces/{id}/context-bundles/{bundleId}   the “Context used” panel, read from the stored bundle (CHAT-3 AC1)
 
 GET|POST       /workspaces/{id}/teams/{teamId}/documents     listing and creation are team-scoped (WS-3 AC3)
 GET|PATCH      /documents/{id}                               a document is addressed by id once you have one

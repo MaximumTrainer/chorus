@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { AnyTool, WorkflowDefinition } from '@chorus/core'
+import type { AnyTool, Retriever, WorkflowDefinition } from '@chorus/core'
 import type { DbConfig } from '@chorus/db'
 import { createExecutor, createToolRegistry } from '@chorus/agent'
 import type { ModelProvider, ModelRef } from '@chorus/llm'
@@ -26,11 +26,14 @@ import type { ModelProvider, ModelRef } from '@chorus/llm'
 export type TurnEvent =
   | { readonly kind: 'token'; readonly text: string }
   | { readonly kind: 'tool_call'; readonly step: string; readonly tool: string; readonly summary: string }
+  | { readonly kind: 'context'; readonly bundleId: string; readonly fragments: number }
 
 export interface TurnResult {
   readonly runId: string
   /** The whole answer, for persistence — the stream is not the record. */
   readonly text: string
+  /** What grounded it, recorded on the message so the panel is exact (CHAT-3). */
+  readonly bundleId?: string
 }
 
 export interface TurnRunner {
@@ -67,6 +70,8 @@ export function createTurnRunner(
     readonly modelFor: (tier: string) => ModelRef
     readonly definition: WorkflowDefinition
     readonly tools?: readonly TurnTool[]
+    /** Where a `retrieve` step gets the turn's grounding (CHAT-3, BRAIN-4). */
+    readonly retriever?: Retriever
   },
 ): TurnRunner {
   const summaries = new Map(deps.tools?.map((tool) => [tool.name, tool.summarise]) ?? [])
@@ -88,15 +93,22 @@ export function createTurnRunner(
 
   return {
     async run(input, onEvent) {
+      let bundleId: string | undefined
       // A fresh executor per turn, because the event sink belongs to this
       // reader's connection and not to the process.
       const executor = createExecutor(config, {
         registry: createToolRegistry(tools),
         models: deps.models,
         modelFor: deps.modelFor,
+        ...(deps.retriever ? { retriever: deps.retriever } : {}),
         onEvent: (event) => {
           if (event.kind === 'token') {
             onEvent({ kind: 'token', text: event.text })
+            return
+          }
+          if (event.kind === 'context') {
+            bundleId = event.bundleId
+            onEvent({ kind: 'context', bundleId: event.bundleId, fragments: event.fragments })
             return
           }
           const summarise = summaries.get(event.tool)
@@ -128,7 +140,11 @@ export function createTurnRunner(
       // the frames we happened to send. The stream is what a reader saw; the
       // run is what happened, and persisting the former would record something
       // different from the trace the moment a frame is dropped or retried.
-      return { runId: run.id, text: typeof outcome.output === 'string' ? outcome.output : '' }
+      return {
+        runId: run.id,
+        text: typeof outcome.output === 'string' ? outcome.output : '',
+        ...(bundleId ? { bundleId } : {}),
+      }
     },
   }
 }

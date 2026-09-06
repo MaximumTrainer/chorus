@@ -58,6 +58,14 @@ export interface SessionMessage {
   readonly authorUserId: string | null
   /** The run that produced an agent message, so a reply links to its trace. */
   readonly runId: string | null
+  /**
+   * What grounded this message (CHAT-3 AC1).
+   *
+   * The bundle's id rather than a copy of its fragments: a copy is a second
+   * version of the same fact, and the two disagree the first time one is
+   * written and the other is not. The panel reads the bundle.
+   */
+  readonly contextUsed: Record<string, unknown> | null
   readonly createdAt: string
 }
 
@@ -100,6 +108,7 @@ export interface SessionService {
     content: Record<string, unknown>
     authorUserId?: string
     runId?: string
+    contextUsed?: Record<string, unknown>
   }): Promise<SessionMessage>
   get(workspaceId: string, sessionId: string): Promise<SessionRecord>
   sources(
@@ -152,9 +161,10 @@ export function createSessionService(config: DbConfig): SessionService {
       content: Record<string, unknown>
       author_user_id: string | null
       run_id: string | null
+      context_used: Record<string, unknown> | null
       created_at: Date
     }>(
-      `SELECT seq, role, content, author_user_id, run_id, created_at FROM messages
+      `SELECT seq, role, content, author_user_id, run_id, context_used, created_at FROM messages
         WHERE session_id = $1 ORDER BY seq`,
       [sessionId],
     )
@@ -172,6 +182,7 @@ export function createSessionService(config: DbConfig): SessionService {
         content: message.content,
         authorUserId: message.author_user_id,
         runId: message.run_id,
+        contextUsed: message.context_used,
         createdAt: message.created_at.toISOString(),
       })),
     }
@@ -189,8 +200,8 @@ export function createSessionService(config: DbConfig): SessionService {
         )
         const [row] = await t.query<{ seq: number; created_at: Date }>(
           `INSERT INTO messages
-             (id, workspace_id, session_id, seq, role, author_user_id, run_id, content)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+             (id, workspace_id, session_id, seq, role, author_user_id, run_id, content, context_used)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb)
            RETURNING seq, created_at`,
           [
             ulid(),
@@ -201,6 +212,7 @@ export function createSessionService(config: DbConfig): SessionService {
             input.authorUserId ?? null,
             input.runId ?? null,
             JSON.stringify(input.content),
+            input.contextUsed ? JSON.stringify(input.contextUsed) : null,
           ],
         )
         return {
@@ -209,6 +221,7 @@ export function createSessionService(config: DbConfig): SessionService {
           content: input.content,
           authorUserId: input.authorUserId ?? null,
           runId: input.runId ?? null,
+          contextUsed: input.contextUsed ?? null,
           createdAt: row!.created_at.toISOString(),
         }
       })

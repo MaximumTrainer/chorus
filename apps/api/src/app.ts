@@ -12,6 +12,7 @@ import {
 } from './routes.js'
 import { createAuth, type Mailer, type OidcConfig } from './auth.js'
 import type { TurnRunner } from './chat-turn.js'
+import type { Retriever } from '@chorus/core'
 import { createWorkspaceService } from './workspaces.js'
 import { workspaceRoutes } from './workspace-routes.js'
 import { createTeamService } from './teams.js'
@@ -118,6 +119,13 @@ export interface AppOptions {
    * say so instead of accepting a message that will never be answered.
    */
   turn?: TurnRunner
+  /**
+   * Where a grounded surface reads a stored context bundle (CHAT-3).
+   *
+   * Passed in rather than built here because building one needs an embedding
+   * model, and the panel only ever *loads* what a run already persisted.
+   */
+  retriever?: Retriever
   /**
    * The model provider. Injected so a test never reaches a real one
    * (CLAUDE.md §4).
@@ -229,6 +237,7 @@ function buildRoutes(
   baseUrl = 'http://localhost:3000',
   suggestEdits?: EditSuggester,
   turn?: TurnRunner,
+  retriever?: Retriever,
 ): {
   table: readonly RouteDefinition[]
   deps: AuthorisationDeps
@@ -267,7 +276,7 @@ function buildRoutes(
           snapshot: (input) => versions.snapshot({ ...input, cause: 'suggestions_accepted' }),
         }),
       ),
-      ...sessionRoutes(createSessionService(config), turn),
+      ...sessionRoutes(createSessionService(config), turn, retriever),
       // Pointers retrieve through the one retrieval function, so a pointer can
       // never surface code the person could not open (BRAIN-4 AC2).
       ...(models
@@ -503,6 +512,7 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
           options.baseUrl,
           options.suggestEdits,
           options.turn,
+          options.retriever,
         )
       : undefined
 

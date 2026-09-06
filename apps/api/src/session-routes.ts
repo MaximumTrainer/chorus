@@ -3,6 +3,7 @@ import { route, type RouteDefinition } from './routes.js'
 import { caller } from './authorisation.js'
 import { isEntryPoint, type QuickAction, type SessionService } from './sessions.js'
 import { TurnFailed, type TurnEvent, type TurnRunner } from './chat-turn.js'
+import { NotFoundError, type Retriever } from '@chorus/core'
 
 /**
  * Session routes (CHAT-1).
@@ -14,8 +15,36 @@ import { TurnFailed, type TurnEvent, type TurnRunner } from './chat-turn.js'
 export function sessionRoutes(
   sessions: SessionService,
   turn?: TurnRunner,
+  retriever?: Retriever,
 ): RouteDefinition[] {
   return [
+    ...(retriever
+      ? [
+          route({
+            method: 'GET',
+            path: '/workspaces/:workspaceId/context-bundles/:bundleId',
+            summary: 'The context a turn was grounded in — the “Context used” panel.',
+            auth: { kind: 'workspace', role: 'member', scopes: ['read:artefacts'] },
+            handler: async (c) => {
+              // Read from the stored bundle, never re-retrieved. A panel that
+              // ran retrieval again would agree with the turn almost always,
+              // and disagree exactly when somebody is working out why an
+              // answer was wrong — after the index moved on (CHAT-3 AC1).
+              const bundle = await retriever.load(
+                c.req.param('workspaceId'),
+                c.req.param('bundleId'),
+              )
+              if (!bundle) {
+                throw new NotFoundError('No such context bundle', {
+                  bundleId: c.req.param('bundleId'),
+                })
+              }
+              return c.json(bundle)
+            },
+          }),
+        ]
+      : []),
+
     route({
       method: 'POST',
       path: '/workspaces/:workspaceId/sessions/:sessionId/messages',
@@ -79,6 +108,10 @@ data: ${JSON.stringify(data)}
                 role: 'assistant',
                 content: { text: result.text },
                 runId: result.runId,
+                // The bundle's id, not a copy of its fragments: a copy is a
+                // second version of the same fact, and the two disagree the
+                // first time one is written and the other is not (CHAT-3 AC1).
+                ...(result.bundleId ? { contextUsed: { bundleId: result.bundleId } } : {}),
               })
 
               send('message', message)
