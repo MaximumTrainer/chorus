@@ -212,6 +212,60 @@ describe('CHAT-3 grounded turns', () => {
     })
   })
 
+  it('CHAT-3 AC4: a source the asker cannot see is absent from the bundle, the panel and the prompt', async () => {
+    // Given a repository belonging to a team the asker is not in, and a chunk
+    // in it that would match their question
+    const w = await world()
+    await addChunk(w, { path: 'src/invoice.ts', text: 'export function parseInvoice() {}' })
+
+    const otherTeamId = ulid()
+    await db.admin.execute(
+      `INSERT INTO teams (id, workspace_id, name, slug) VALUES ($1, $2, 'Platform', $3)`,
+      [otherTeamId, w.workspaceId, `platform-${otherTeamId.slice(-6).toLowerCase()}`],
+    )
+    const [integration] = await db.admin.query<{ id: string }>(
+      `SELECT id FROM integrations WHERE workspace_id = $1 LIMIT 1`,
+      [w.workspaceId],
+    )
+    const secretRepoId = ulid()
+    await db.admin.execute(
+      `INSERT INTO repositories (id, workspace_id, team_id, integration_id, provider, full_name)
+       VALUES ($1, $2, $3, $4, 'github', $5)`,
+      [secretRepoId, w.workspaceId, otherTeamId, integration!.id, `acme/secret-${secretRepoId.slice(-6)}`],
+    )
+    const secretFileId = ulid()
+    await db.admin.execute(
+      `INSERT INTO code_files (id, workspace_id, repository_id, path, lang, content_hash)
+       VALUES ($1, $2, $3, 'src/secret.ts', 'ts', $4)`,
+      [secretFileId, w.workspaceId, secretRepoId, ulid()],
+    )
+    const secret = 'export function parseInvoice() { /* the acquisition price is 4.2m */ }'
+    await db.admin.execute(
+      `INSERT INTO code_chunks
+         (id, workspace_id, repository_id, file_id, text, line_start, line_end, symbol_name, embedding)
+       VALUES ($1, $2, $3, $4, $5, 1, 9, 'parseInvoice', $6::vector)`,
+      [ulid(), w.workspaceId, secretRepoId, secretFileId, secret, `[${models.embedText(secret).join(',')}]`],
+    )
+    models.script({ chunks: ['Only what you can see.'] })
+
+    // When a turn runs that would otherwise retrieve it
+    const events = await turn(w, 'What does parseInvoice do?')
+
+    // Then it is absent from the bundle
+    const bundleId = events.find((event) => event.event === 'context')!.data.bundleId as string
+    const bundle = (await (
+      await w.ada.get(`/workspaces/${w.workspaceId}/context-bundles/${bundleId}`)
+    ).json()) as { fragments: Array<{ path: string }> }
+    expect(bundle.fragments.map((fragment) => fragment.path)).toEqual(['src/invoice.ts'])
+
+    // and absent from what the model was sent — which is the clause worth
+    // asserting separately. A fragment hidden from the panel but present in
+    // the prompt is the worst of both: the answer is shaped by something the
+    // reader is told was not used, and cannot argue with.
+    const prompts = models.requests().map((request) => request.prompt)
+    expect(prompts.some((prompt) => prompt.includes('acquisition price'))).toBe(false)
+  })
+
   it('CHAT-3 AC2: the charter is in the prompt whatever retrieval found', async () => {
     // Given a team with a charter and nothing indexed at all
     const w = await world()
