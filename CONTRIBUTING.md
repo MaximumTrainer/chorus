@@ -27,7 +27,14 @@ Docs: none — pure extraction, no recorded decision changed.
 
 That is the point of it. "No documentation needed" becomes a claim recorded in history that a reviewer can read and disagree with, rather than an omission nobody can see. It is the same reasoning as the `reason` a public route carries in the route table.
 
-`pnpm verify` runs exactly what CI runs — typecheck, lint, the unit/integration/contract suites, and the non-functional suites. If it passes locally and fails in CI, that divergence is itself a bug (NFR-12 AC4).
+`pnpm verify` runs typecheck, lint, the unit/integration/contract suites, and the non-functional suites. If it passes locally and fails in CI, that divergence is itself a bug (NFR-12 AC4).
+
+**It does not run the browser journeys.** CI runs `pnpm test:e2e` as a separate step, and `pre-push` does not, so a change can pass the gate on your machine and fail on the remote. That gap is real and has caught at least one change: the journeys execute TypeScript under Node's strip-only mode, where syntax the rest of the build accepts — a constructor parameter property, for one — is a `SyntaxError` at import. If you touch anything the journeys import, run them:
+
+```bash
+pnpm exec playwright install --with-deps chromium   # once
+pnpm test:e2e
+```
 
 To bring up the reference infrastructure:
 

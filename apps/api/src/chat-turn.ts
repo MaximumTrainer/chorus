@@ -133,13 +133,21 @@ export function createTurnRunner(
   }
 }
 
-/** A turn that ended without an answer, carrying the run it belongs to. */
+/**
+ * A turn that ended without an answer, carrying the run it belongs to.
+ *
+ * The field is declared and assigned rather than written as a constructor
+ * parameter property. Parameter properties need a transform, not just type
+ * stripping, and the browser journeys run under Node's strip-only mode — where
+ * one is a `SyntaxError` at import, before a single test runs. `pnpm verify`
+ * does not run those journeys, so CI was the first thing that could notice.
+ */
 export class TurnFailed extends Error {
-  constructor(
-    message: string,
-    readonly runId: string,
-  ) {
+  readonly runId: string
+
+  constructor(message: string, runId: string) {
     super(message)
     this.name = 'TurnFailed'
+    this.runId = runId
   }
 }
