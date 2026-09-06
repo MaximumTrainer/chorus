@@ -33,6 +33,8 @@ export interface ProposalRecord {
   readonly id: string
   readonly teamId: string
   readonly sessionId: string | null
+  /** The document this tree was decomposed from, when there was one (DOC-6). */
+  readonly sourceDocumentId: string | null
   readonly tree: ProposalTree
   readonly confirmedTree: ProposalTree | null
   readonly status: ProposalStatus
@@ -47,6 +49,7 @@ export interface ProposalService {
     teamId: string
     sessionId?: string
     runId?: string
+    sourceDocumentId?: string
     tree: unknown
   }): Promise<ProposalRecord>
   get(workspaceId: string, proposalId: string): Promise<ProposalRecord>
@@ -117,6 +120,7 @@ interface ProposalRow {
   id: string
   team_id: string
   session_id: string | null
+  source_document_id: string | null
   tree: ProposalTree
   confirmed_tree: ProposalTree | null
   status: ProposalStatus
@@ -128,7 +132,7 @@ export function createProposalService(config: DbConfig): ProposalService {
   const tx = <T>(workspaceId: string, fn: (t: TenantTx) => Promise<T>, userId?: string): Promise<T> =>
     withTenant(workspaceId, fn, { config, ...(userId ? { userId } : {}) })
 
-  const COLUMNS = `id, team_id, session_id, tree, confirmed_tree, status, feedback, created_at`
+  const COLUMNS = `id, team_id, session_id, source_document_id, tree, confirmed_tree, status, feedback, created_at`
 
   const load = async (t: TenantTx, proposalId: string): Promise<ProposalRow> => {
     const [row] = await t.query<ProposalRow>(
@@ -151,6 +155,7 @@ export function createProposalService(config: DbConfig): ProposalService {
     id: row.id,
     teamId: row.team_id,
     sessionId: row.session_id,
+    sourceDocumentId: row.source_document_id,
     tree: row.tree,
     confirmedTree: row.confirmed_tree,
     status: row.status,
@@ -165,14 +170,16 @@ export function createProposalService(config: DbConfig): ProposalService {
       return tx(input.workspaceId, async (t) => {
         const id = ulid()
         await t.execute(
-          `INSERT INTO structure_proposals (id, workspace_id, team_id, session_id, run_id, tree)
-           VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
+          `INSERT INTO structure_proposals
+             (id, workspace_id, team_id, session_id, run_id, source_document_id, tree)
+           VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
           [
             id,
             input.workspaceId,
             input.teamId,
             input.sessionId ?? null,
             input.runId ?? null,
+            input.sourceDocumentId ?? null,
             JSON.stringify(tree),
           ],
         )

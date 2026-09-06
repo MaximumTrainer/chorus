@@ -6,6 +6,7 @@ import {
 } from '@chorus/core'
 import { DOCUMENT_STATUSES, type DocumentStatus } from '@chorus/core'
 import { route, type RouteDefinition } from './routes.js'
+import type { Decomposer } from './decompose.js'
 import { caller } from './authorisation.js'
 import type { DocumentService } from './documents.js'
 import type { CollaborationService } from './collaboration.js'
@@ -26,6 +27,8 @@ export function documentRoutes(
   versions: VersionService,
   /** Where this deployment lives, so an exported link points at it (DOC-7 AC4). */
   baseUrl: string,
+  /** How a document becomes a proposed task tree (DOC-6). */
+  decompose?: Decomposer,
 ): RouteDefinition[] {
   const parseType = (value: unknown) => {
     if (!isDocumentType(value)) {
@@ -52,6 +55,26 @@ export function documentRoutes(
   }
 
   return [
+    ...(decompose
+      ? [
+          route({
+            method: 'POST',
+            path: '/workspaces/:workspaceId/documents/:documentId/decompose',
+            summary: 'Decompose a document into a proposed task tree.',
+            auth: { kind: 'workspace', role: 'member', scopes: ['write:artefacts'] },
+            handler: async (c) =>
+              c.json(
+                await decompose.decompose({
+                  workspaceId: c.req.param('workspaceId'),
+                  documentId: c.req.param('documentId'),
+                  actorId: caller(c).userId,
+                }),
+                201,
+              ),
+          }),
+        ]
+      : []),
+
     route({
       method: 'GET',
       path: '/workspaces/:workspaceId/teams/:teamId/templates/:type',

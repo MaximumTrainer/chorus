@@ -1,0 +1,32 @@
+{
+  "input": {
+    "document": "Finance cannot split a single payment across two invoices. Requirements: a payment may be applied across invoices at the point it is recorded; the reconciliation queue must be empty at the end of a working day.",
+    "documentType": "prd"
+  },
+  "context": [
+    {
+      "path": "src/invoices.ts",
+      "text": "// Finance cannot split a single payment across two invoices: parseInvoice\n// settles each payment in full against the first invoice it matches.\nexport function parseInvoice(payment: Payment): Invoice { return settleInFull(payment) }"
+    },
+    {
+      "path": "src/reconcile.ts",
+      "text": "// A payment that could not split across two invoices is left on the\n// reconciliation queue for two people to settle by hand.\nexport function reconcile(invoices: Invoice[]) { return invoices.filter((i) => !i.settled) }"
+    }
+  ],
+  "model": {
+    "chunks": [
+      "{\"nodes\": [{\"key\": \"split-payments\", \"title\": \"Apply one payment across several invoices\", \"summary\": \"parseInvoice settles the first match in full.\", \"size\": \"L\", \"tags\": [\"billing\"], \"sectionKeys\": [\"requirements\"], \"children\": [",
+      "{\"key\": \"allocate\", \"title\": \"Allocate a payment across invoices at capture\", \"size\": \"M\", \"tags\": [\"billing\"], \"sectionKeys\": [\"requirements\"], \"acceptanceCriteria\": [\"A payment covering two invoices settles both\"], \"children\": []}]}]}"
+    ]
+  },
+  "expect": {
+    "kind": "output",
+    "step": "propose",
+    "contains": [
+      "Apply one payment across several invoices",
+      "Allocate a payment across invoices at capture",
+      "A payment covering two invoices settles both",
+      "\"sectionKeys\": [\"requirements\"]"
+    ]
+  }
+}

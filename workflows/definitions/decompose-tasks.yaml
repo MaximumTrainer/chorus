@@ -1,0 +1,38 @@
+# architecture.md §11.3 — decompose-tasks.
+#
+# The hinge between Shape and Deliver (DOC-6): a document becomes a proposed
+# task tree, grounded in the codebase it will be built in.
+#
+# No checkpoint step, deliberately. The gate for this workflow is the
+# *proposal* — it lands in `proposed` state and a person accepts, edits or
+# rejects it (CHAT-5) — so pausing the run as well would ask the same question
+# twice, once about a tree nobody can see yet. A team that does not want to be
+# asked sets `before_create_artefacts` to `auto`, and the proposal materialises
+# on arrival.
+name: decompose-tasks
+version: 1
+
+inputs:
+  document: The document to decompose, as text
+  documentType: The kind of document it is
+
+outputs:
+  - structure_proposal
+
+# Decomposition is the judgement the whole gate exists to collect, and a cheap
+# tree costs more in review than it saves in tokens.
+model: balanced
+
+tools: []
+
+checkpoints: {}
+
+steps:
+  - id: gather
+    type: retrieve
+    query: '{{input.document}}'
+    limit: 12
+
+  - id: propose
+    type: model
+    prompt: document/decompose

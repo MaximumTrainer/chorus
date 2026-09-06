@@ -12,6 +12,7 @@ import {
 } from './routes.js'
 import { createAuth, type Mailer, type OidcConfig } from './auth.js'
 import type { TurnRunner } from './chat-turn.js'
+import type { Decomposer } from './decompose.js'
 import { createProposalService } from './proposals.js'
 import { proposalRoutes } from './proposal-routes.js'
 import type { Retriever } from '@chorus/core'
@@ -121,6 +122,8 @@ export interface AppOptions {
    * say so instead of accepting a message that will never be answered.
    */
   turn?: TurnRunner
+  /** How a document becomes a proposed task tree (DOC-6). */
+  decompose?: Decomposer
   /**
    * Where a grounded surface reads a stored context bundle (CHAT-3).
    *
@@ -240,6 +243,7 @@ function buildRoutes(
   suggestEdits?: EditSuggester,
   turn?: TurnRunner,
   retriever?: Retriever,
+  decompose?: Decomposer,
 ): {
   table: readonly RouteDefinition[]
   deps: AuthorisationDeps
@@ -269,6 +273,7 @@ function buildRoutes(
         createCollaborationService(config),
         versions,
         baseUrl,
+        decompose,
       ),
       ...versionRoutes(versions),
       ...commentRoutes(createCommentService(config, { notify: (event) => notifier.notify(event) })),
@@ -516,6 +521,7 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
           options.suggestEdits,
           options.turn,
           options.retriever,
+          options.decompose,
         )
       : undefined
 

@@ -11,5 +11,10 @@
   "document/suggest": {
     "instruction": "Fix the grammar",
     "passage": "Finance reconcile by hand. It takes a day a week."
+  },
+  "document/decompose": {
+    "document": "# Invoice splitting\n\n## problem\n\nFinance cannot split a single payment across two invoices.\n\n## requirements\n\nA payment may be applied across invoices at the point it is recorded. The reconciliation queue is empty at the end of a working day.",
+    "documentType": "prd",
+    "gather": "{\n  \"fragments\": [\n    {\n      \"path\": \"src/invoices.ts\",\n      \"lines\": \"1-12\",\n      \"text\": \"export function parseInvoice(payment: Payment): Invoice { return settleInFull(payment) }\"\n    }\n  ]\n}"
   }
 }
