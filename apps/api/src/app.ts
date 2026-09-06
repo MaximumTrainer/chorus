@@ -12,6 +12,8 @@ import {
 } from './routes.js'
 import { createAuth, type Mailer, type OidcConfig } from './auth.js'
 import type { TurnRunner } from './chat-turn.js'
+import { createProposalService } from './proposals.js'
+import { proposalRoutes } from './proposal-routes.js'
 import type { Retriever } from '@chorus/core'
 import { createWorkspaceService } from './workspaces.js'
 import { workspaceRoutes } from './workspace-routes.js'
@@ -277,6 +279,7 @@ function buildRoutes(
         }),
       ),
       ...sessionRoutes(createSessionService(config), turn, retriever),
+      ...proposalRoutes(createProposalService(config)),
       // Pointers retrieve through the one retrieval function, so a pointer can
       // never surface code the person could not open (BRAIN-4 AC2).
       ...(models

@@ -319,6 +319,17 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
          VALUES ($1, $2, $3, 1, ''::bytea, '# seed document', 'manual', $4)`,
         [ulid(), workspaceId, documentId, userId],
       )
+      const proposalId = ulid()
+      await owner.query(
+        `INSERT INTO structure_proposals (id, workspace_id, team_id, session_id, tree, status)
+         VALUES ($1, $2, $3, NULL, '{"nodes":[]}'::jsonb, 'proposed')`,
+        [proposalId, workspaceId, teamId],
+      )
+      await owner.query(
+        `INSERT INTO structure_proposal_tasks (workspace_id, proposal_id, task_id, node_key)
+         VALUES ($1, $2, $3, 'seed')`,
+        [workspaceId, proposalId, taskId],
+      )
       const threadId = ulid()
       await owner.query(
         `INSERT INTO comment_threads (id, workspace_id, document_id, quote, created_by)
@@ -683,6 +694,27 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
                (id, workspace_id, document_id, sequence, snapshot, body_md, cause, created_by)
              VALUES ($1, $2, $3, 99, ''::bytea, '# seed', 'manual', $4)`,
             [id, workspaceId, document?.id ?? id, userId],
+          )
+          return
+        }
+        case 'structure_proposals': {
+          const [team] = await tx.query<{ id: string }>(`SELECT id FROM teams LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO structure_proposals (id, workspace_id, team_id, tree)
+             VALUES ($1, $2, $3, '{"nodes":[]}'::jsonb)`,
+            [id, workspaceId, team?.id ?? id],
+          )
+          return
+        }
+        case 'structure_proposal_tasks': {
+          const [proposal] = await tx.query<{ id: string }>(
+            `SELECT id FROM structure_proposals LIMIT 1`,
+          )
+          const [task] = await tx.query<{ id: string }>(`SELECT id FROM tasks LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO structure_proposal_tasks (workspace_id, proposal_id, task_id, node_key)
+             VALUES ($1, $2, $3, 'seed')`,
+            [workspaceId, proposal?.id ?? id, task?.id ?? id],
           )
           return
         }
