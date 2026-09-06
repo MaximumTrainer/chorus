@@ -1142,9 +1142,9 @@ GET|POST   /workspaces/{id}/tokens                       personal API tokens; pl
 DELETE     /workspaces/{id}/tokens/{tokenId}             revoked with immediate effect
 GET        /workspaces/{id}/grants                       OAuth grants this person has given
 DELETE     /workspaces/{id}/grants/{grantId}             revoked with immediate effect
-POST       /sessions                        create a session
-POST       /sessions/{id}/messages          SSE stream of the agent turn
-GET        /sessions/{id}
+POST       /workspaces/{id}/teams/{teamId}/sessions   create a session, through one of the three doors
+POST       /workspaces/{id}/sessions/{sessionId}/messages   SSE stream of the agent turn
+GET        /workspaces/{id}/sessions/{sessionId}      the session and its transcript
 
 GET|POST       /workspaces/{id}/teams/{teamId}/documents     listing and creation are team-scoped (WS-3 AC3)
 GET|PATCH      /documents/{id}                               a document is addressed by id once you have one

@@ -74,6 +74,14 @@ export interface RunOutcome {
   readonly stepsExecuted: number
   readonly stepsSkipped: number
   readonly error?: string
+  /**
+   * What the last step that produced anything returned (CHAT-2).
+   *
+   * A caller that runs a workflow to get an answer needs the answer, and
+   * reading it back out of `run_steps` would mean every such caller knowing
+   * the runtime's tables.
+   */
+  readonly output?: unknown
 }
 
 export interface ExecutorDeps {
@@ -138,6 +146,20 @@ export interface ExecutorDeps {
    * a deployment has told it nothing about money.
    */
   readonly priceFor?: (model: ModelRef, usage: { inputTokens: number; outputTokens: number }) => number
+  /**
+   * Live events for a caller streaming this run (CHAT-2).
+   *
+   * Distinct from `run_events`, which is the durable record written for the
+   * trace. This is the part a reader watches happen: tokens as the model
+   * produces them, and a tool call at the moment it returns. A trace read
+   * afterwards cannot make an answer feel like a collaborator rather than a
+   * form submission, and a stream is no use as a record.
+   */
+  readonly onEvent?: (
+    event:
+      | { readonly kind: 'token'; readonly text: string }
+      | { readonly kind: 'tool_call'; readonly step: string; readonly tool: string; readonly output: unknown },
+  ) => void
 }
 
 /** The narrow slice of a prompt registry the executor needs. */
@@ -485,6 +507,8 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
       )
 
       const outputs: Record<string, unknown> = {}
+      // The answer, for a caller that ran this to get one (CHAT-2).
+      let lastOutput: unknown
       for (const [stepId, row] of done) {
         if (row.status === 'succeeded') outputs[stepId] = row.output
       }
@@ -824,6 +848,7 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
         if (outcome.kind === 'failed') return endRun('failed', outcome.message)
 
         outputs[step.id] = outcome.output
+        lastOutput = outcome.output
         if (outcome.kind === 'cached') skipped += 1
         else executed += 1
 
@@ -842,7 +867,13 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
           runId,
         ]),
       )
-      return { runId, status: 'succeeded', stepsExecuted: executed, stepsSkipped: skipped }
+      return {
+        runId,
+        status: 'succeeded',
+        stepsExecuted: executed,
+        stepsSkipped: skipped,
+        output: lastOutput,
+      }
     },
   }
 
@@ -956,6 +987,9 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
           step: step.id,
           tool: step.tool,
         })
+        // Announced after it ran, not before: "searching the codebase" that
+        // turns out to have failed is a notice that misleads the reader.
+        deps.onEvent?.({ kind: 'tool_call', step: step.id, tool: step.tool, output: result })
         return { kind: 'output', output: result }
       }
 
@@ -1000,7 +1034,10 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
           messages: [{ role: 'user', content }],
           context: { workspaceId, teamId, runId, purpose: 'chat' },
         })) {
-          if (event.type === 'token') text += event.text
+          if (event.type === 'token') {
+            text += event.text
+            deps.onEvent?.({ kind: 'token', text: event.text })
+          }
           // Usage arrives with `done` precisely so a stream cannot end without
           // reporting what it cost — a gap here is unreconstructable later.
           if (event.type === 'done') usage = event.usage

@@ -54,6 +54,10 @@ export interface SessionMessage {
   readonly seq: number
   readonly role: string
   readonly content: Record<string, unknown>
+  /** Who wrote it. Null for the agent, which is not a user (CHAT-2 AC6). */
+  readonly authorUserId: string | null
+  /** The run that produced an agent message, so a reply links to its trace. */
+  readonly runId: string | null
   readonly createdAt: string
 }
 
@@ -82,6 +86,21 @@ export interface StartSession {
 
 export interface SessionService {
   start(input: StartSession): Promise<SessionRecord>
+  /**
+   * Adds one message to a session, numbering it (CHAT-2).
+   *
+   * The sequence is allocated inside the same transaction as the insert, so
+   * two people posting at once cannot both claim the same position in a
+   * transcript people quote from.
+   */
+  append(input: {
+    workspaceId: string
+    sessionId: string
+    role: 'user' | 'assistant'
+    content: Record<string, unknown>
+    authorUserId?: string
+    runId?: string
+  }): Promise<SessionMessage>
   get(workspaceId: string, sessionId: string): Promise<SessionRecord>
   sources(
     workspaceId: string,
@@ -131,9 +150,11 @@ export function createSessionService(config: DbConfig): SessionService {
       seq: number
       role: string
       content: Record<string, unknown>
+      author_user_id: string | null
+      run_id: string | null
       created_at: Date
     }>(
-      `SELECT seq, role, content, created_at FROM messages
+      `SELECT seq, role, content, author_user_id, run_id, created_at FROM messages
         WHERE session_id = $1 ORDER BY seq`,
       [sessionId],
     )
@@ -149,12 +170,50 @@ export function createSessionService(config: DbConfig): SessionService {
         seq: message.seq,
         role: message.role,
         content: message.content,
+        authorUserId: message.author_user_id,
+        runId: message.run_id,
         createdAt: message.created_at.toISOString(),
       })),
     }
   }
 
   return {
+    async append(input) {
+      return tx(input.workspaceId, async (t) => {
+        // Allocated from the table rather than counted by the caller. Two
+        // people posting at once would otherwise both read "3" and both write
+        // it, and a transcript with two message threes cannot be quoted from.
+        const [next] = await t.query<{ seq: number }>(
+          `SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM messages WHERE session_id = $1`,
+          [input.sessionId],
+        )
+        const [row] = await t.query<{ seq: number; created_at: Date }>(
+          `INSERT INTO messages
+             (id, workspace_id, session_id, seq, role, author_user_id, run_id, content)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+           RETURNING seq, created_at`,
+          [
+            ulid(),
+            input.workspaceId,
+            input.sessionId,
+            next!.seq,
+            input.role,
+            input.authorUserId ?? null,
+            input.runId ?? null,
+            JSON.stringify(input.content),
+          ],
+        )
+        return {
+          seq: row!.seq,
+          role: input.role,
+          content: input.content,
+          authorUserId: input.authorUserId ?? null,
+          runId: input.runId ?? null,
+          createdAt: row!.created_at.toISOString(),
+        }
+      })
+    },
+
     async start(input) {
       return tx(
         input.workspaceId,

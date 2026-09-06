@@ -11,6 +11,7 @@ import {
   type ReadinessResult,
 } from './routes.js'
 import { createAuth, type Mailer, type OidcConfig } from './auth.js'
+import type { TurnRunner } from './chat-turn.js'
 import { createWorkspaceService } from './workspaces.js'
 import { workspaceRoutes } from './workspace-routes.js'
 import { createTeamService } from './teams.js'
@@ -108,6 +109,15 @@ export interface AppOptions {
    * transport.
    */
   suggestEdits?: EditSuggester
+  /**
+   * How a chat turn is executed and streamed (CHAT-2).
+   *
+   * Injected for the same reason as `resumeRun` and `suggestEdits`: the API
+   * forwards what a run publishes rather than executing it. Absent, the turn
+   * route refuses rather than pretending — a deployment with no runner should
+   * say so instead of accepting a message that will never be answered.
+   */
+  turn?: TurnRunner
   /**
    * The model provider. Injected so a test never reaches a real one
    * (CLAUDE.md §4).
@@ -218,6 +228,7 @@ function buildRoutes(
   mailer?: Mailer,
   baseUrl = 'http://localhost:3000',
   suggestEdits?: EditSuggester,
+  turn?: TurnRunner,
 ): {
   table: readonly RouteDefinition[]
   deps: AuthorisationDeps
@@ -256,7 +267,7 @@ function buildRoutes(
           snapshot: (input) => versions.snapshot({ ...input, cause: 'suggestions_accepted' }),
         }),
       ),
-      ...sessionRoutes(createSessionService(config)),
+      ...sessionRoutes(createSessionService(config), turn),
       // Pointers retrieve through the one retrieval function, so a pointer can
       // never surface code the person could not open (BRAIN-4 AC2).
       ...(models
@@ -491,6 +502,7 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
           options.mailer,
           options.baseUrl,
           options.suggestEdits,
+          options.turn,
         )
       : undefined
 

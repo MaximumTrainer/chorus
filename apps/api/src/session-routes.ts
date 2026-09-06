@@ -2,6 +2,7 @@ import { ValidationError } from '@chorus/core'
 import { route, type RouteDefinition } from './routes.js'
 import { caller } from './authorisation.js'
 import { isEntryPoint, type QuickAction, type SessionService } from './sessions.js'
+import { TurnFailed, type TurnEvent, type TurnRunner } from './chat-turn.js'
 
 /**
  * Session routes (CHAT-1).
@@ -10,8 +11,102 @@ import { isEntryPoint, type QuickAction, type SessionService } from './sessions.
  * of three named doors is to lower the cost of beginning. Configuring the quick
  * actions is `admin`, because it decides how everybody on the team starts work.
  */
-export function sessionRoutes(sessions: SessionService): RouteDefinition[] {
+export function sessionRoutes(
+  sessions: SessionService,
+  turn?: TurnRunner,
+): RouteDefinition[] {
   return [
+    route({
+      method: 'POST',
+      path: '/workspaces/:workspaceId/sessions/:sessionId/messages',
+      summary: 'Post a message and stream the agent’s turn.',
+      auth: { kind: 'workspace', role: 'member', scopes: ['write:artefacts'] },
+      handler: async (c) => {
+        const body = (await c.req.json().catch(() => ({}))) as { text?: unknown }
+        if (typeof body.text !== 'string' || body.text.trim() === '') {
+          throw new ValidationError('text is required', { field: 'text' })
+        }
+        if (!turn) {
+          throw new ValidationError('this deployment cannot run turns', { field: 'turn' })
+        }
+
+        const workspaceId = c.req.param('workspaceId')
+        const sessionId = c.req.param('sessionId')
+        const actorId = caller(c).userId
+        // Read before the stream opens, so an unknown session is a 404 with a
+        // problem document rather than an error frame inside a 200.
+        const session = await sessions.get(workspaceId, sessionId)
+
+        // Recorded before the turn runs. If the model fails, what the person
+        // typed is still there — losing their words because our provider broke
+        // is the least forgivable outcome available here.
+        await sessions.append({
+          workspaceId,
+          sessionId,
+          role: 'user',
+          content: { text: body.text },
+          authorUserId: actorId,
+        })
+
+        const encoder = new TextEncoder()
+        const stream = new ReadableStream({
+          async start(controller) {
+            let id = 0
+            const send = (event: string, data: unknown): void => {
+              // The id is per turn and monotonic, which is what makes
+              // resumption possible at all (CHAT-2 AC4).
+              controller.enqueue(
+                encoder.encode(`id: ${++id}
+event: ${event}
+data: ${JSON.stringify(data)}
+
+`),
+              )
+            }
+
+            try {
+              const result = await turn.run(
+                { workspaceId, sessionId, teamId: session.teamId, actorId, text: body.text as string },
+                (event: TurnEvent) => send(event.kind, event),
+              )
+
+              // Persisted before `done` is sent: a reader told the turn is
+              // finished will reload, and a transcript that has not caught up
+              // by then looks like the answer was lost.
+              const message = await sessions.append({
+                workspaceId,
+                sessionId,
+                role: 'assistant',
+                content: { text: result.text },
+                runId: result.runId,
+              })
+
+              send('message', message)
+              send('done', { runId: result.runId })
+            } catch (error) {
+              // A stream that stops without saying why leaves a reader waiting
+              // forever. The run id goes with it where there is one, so the
+              // trace explaining the failure is reachable.
+              send('error', {
+                message: error instanceof Error ? error.message : String(error),
+                ...(error instanceof TurnFailed ? { runId: error.runId } : {}),
+              })
+            } finally {
+              controller.close()
+            }
+          },
+        })
+
+        return new Response(stream, {
+          headers: {
+            'content-type': 'text/event-stream',
+            'cache-control': 'no-cache',
+            connection: 'keep-alive',
+          },
+        })
+      },
+    }),
+
     route({
       method: 'POST',
       path: '/workspaces/:workspaceId/teams/:teamId/sessions',
