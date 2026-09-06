@@ -185,7 +185,12 @@ describe('AGENT-4 run traces', () => {
     }
   })
 
-  it('AGENT-4 AC2: a model call names the model, the provider and the prompt it used', async () => {
+  // Two requirements, one assertion. NFR-11 AC2 asks that versions are pinned
+  // for observability and AGENT-4 AC2 that a run is reproducible; both are this
+  // fact. Named for both because `pnpm test --grep NFR-11` must run everything
+  // that proves NFR-11 (CLAUDE.md §5) — a criterion proven only under another
+  // requirement's id is a criterion the catalogue cannot find.
+  it('AGENT-4 AC2 / NFR-11 AC2: a model call names the model, the provider and the prompt it used', async () => {
     const { ada, workspaceId, runId } = await completedRun()
     const { events } = await trace(ada, workspaceId, runId)
 

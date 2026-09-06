@@ -36,7 +36,7 @@ You are shaping work for {{team}}.
  * visible in a diff. Making it a file with a recorded hash is what turns a
  * prompt change into a reviewable change (NFR-11 AC2).
  */
-describe('NFR-2 AC4 prompt registry', () => {
+describe('NFR-2 AC4 / NFR-11 AC2 prompt registry', () => {
   it('NFR-2 AC4: a prompt carries an id, a version and a body', () => {
     const prompt = parsePrompt('decompose-tasks/propose.md', valid)
     expect(prompt.id).toBe('decompose-tasks/propose')
