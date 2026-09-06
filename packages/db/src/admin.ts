@@ -853,6 +853,16 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
   }
 }
 
+/**
+ * The lock two migrators contend for (#157).
+ *
+ * A fixed key, because the thing being serialised is "migrating this database"
+ * and there is only one of those. Advisory rather than a table lock: it is held
+ * for the length of a transaction, it is released if the process dies, and it
+ * costs nothing when nobody else is running — which is almost always.
+ */
+const MIGRATION_LOCK_KEY = 4_207_360_001
+
 /** Does this database already hold a schema, ledger aside? */
 async function hasApplicationTables(admin: AdminConnection): Promise<boolean> {
   const [row] = await admin.query<{ count: string }>(
@@ -885,13 +895,18 @@ export async function applyMigrations(
   // The ledger is the first thing to exist, and it describes itself: created
   // here rather than in a migration, because a migration recording that
   // migrations have been applied has to run before the table it writes to.
-  await admin.execute(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      filename   text PRIMARY KEY,
-      checksum   text NOT NULL,
-      applied_at timestamptz NOT NULL DEFAULT now()
-    )
-  `)
+  // Under the lock as well: two `CREATE TABLE IF NOT EXISTS` racing still
+  // collide in `pg_type`, which is a confusing way for a deployment to fail.
+  await admin.withOwnerTransaction(async (tx) => {
+    await tx.execute(`SELECT pg_advisory_xact_lock($1)`, [MIGRATION_LOCK_KEY])
+    await tx.execute(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        filename   text PRIMARY KEY,
+        checksum   text NOT NULL,
+        applied_at timestamptz NOT NULL DEFAULT now()
+      )
+    `)
+  })
 
   const recorded = new Map(
     (
@@ -957,15 +972,31 @@ export async function applyMigrations(
     // The migration and the record of it, or neither. Written apart, a crash
     // between them leaves the ledger lying in one direction or the other, and
     // the next start either re-runs applied DDL or skips DDL that never ran.
-    await admin.withOwnerTransaction(async (tx) => {
+    const didApply = await admin.withOwnerTransaction(async (tx) => {
+      await tx.execute(`SELECT pg_advisory_xact_lock($1)`, [MIGRATION_LOCK_KEY])
+
+      // Re-read inside the lock. The check above happened before it, so a
+      // second migrator that was waiting here would otherwise apply DDL the
+      // first has already applied — which is the whole of #157. Holding the
+      // lock without re-reading serialises the collision rather than
+      // preventing it.
+      const [already] = await tx.query<{ filename: string }>(
+        `SELECT filename FROM schema_migrations WHERE filename = $1`,
+        [file],
+      )
+      if (already) return false
+
       await tx.execute(sql)
       await tx.execute(`INSERT INTO schema_migrations (filename, checksum) VALUES ($1, $2)`, [
         file,
         checksum,
       ])
+      return true
     })
 
-    applied.push(file)
+    // Only what *this* call did. Two migrators both reporting they applied a
+    // migration would make a deployment log say it happened twice.
+    if (didApply) applied.push(file)
   }
 
   // The application role is created after the schema exists so it can be
@@ -978,19 +1009,28 @@ export async function applyMigrations(
   // check-then-act where both see "not exists" and one gets a unique-violation
   // on `pg_authid`. That is a flake in CI and a failed boot when two API
   // replicas start together.
-  await admin.execute(`
-    DO $$
-    BEGIN
-      CREATE ROLE ${config.appUser} LOGIN PASSWORD '${config.appPassword}';
-    EXCEPTION
-      WHEN duplicate_object THEN NULL;
-    END
-    $$;
-  `)
-  await admin.execute(`GRANT USAGE ON SCHEMA public TO ${config.appUser}`)
-  await admin.execute(
-    `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${config.appUser}`,
-  )
+  //
+  // Under the same lock as the migrations (#157). Catching the duplicate keeps
+  // two *different* databases from colliding on the role, but two migrators of
+  // the *same* database also update the same catalog tuples — the schema's ACL
+  // and `pg_authid` — and Postgres answers that with `tuple concurrently
+  // updated`, which is not an error either of them can sensibly retry.
+  await admin.withOwnerTransaction(async (tx) => {
+    await tx.execute(`SELECT pg_advisory_xact_lock($1)`, [MIGRATION_LOCK_KEY])
+    await tx.execute(`
+      DO $$
+      BEGIN
+        CREATE ROLE ${config.appUser} LOGIN PASSWORD '${config.appPassword}';
+      EXCEPTION
+        WHEN duplicate_object THEN NULL;
+      END
+      $$;
+    `)
+    await tx.execute(`GRANT USAGE ON SCHEMA public TO ${config.appUser}`)
+    await tx.execute(
+      `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${config.appUser}`,
+    )
+  })
   await admin.execute(`SELECT set_config('chorus.app_role', '${config.appUser}', false)`)
 
   return applied

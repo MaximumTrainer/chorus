@@ -78,11 +78,29 @@ disagree about what they are.
   against the same volumes, and smokes it again. The restart is the assertion;
   without it this defect would return unseen.
 
-## What is deliberately not decided
+## Addendum: concurrent migrators are now handled (#157)
 
-**Concurrent migrators.** Two migrators racing can both see a file as unapplied
-and both run it; one loses on the ledger's primary key or on the DDL itself.
-That race existed before this change and is unchanged by it — the migrator is a
-one-shot that runs before `api`, precisely so it does not happen. An advisory
-lock would close it and is a few lines, but nothing today demands it, and
-`CLAUDE.md` §11 says not to build ahead of the tests. Filed rather than fixed.
+The original version left this open, on the grounds that the migrator is a
+one-shot running before `api`. It is closed now, because the cost of being
+wrong is a failed deployment and the fix is small.
+
+Each migration, the ledger's creation, and the role-and-grant block run under
+`pg_advisory_xact_lock` on a fixed key. Advisory locks are scoped to the
+database — verified, not assumed: the lock's `database` field carries the
+current database's OID — so migrators of *different* databases never contend,
+which matters because the test suite creates one database per file.
+
+The lock alone is not enough, and this is the part worth remembering. The
+ledger check happened *before* the lock, so a second migrator that waited would
+acquire it and then apply DDL the first had already applied: holding a lock
+without re-reading serialises the collision rather than preventing it. The
+ledger is therefore re-read inside the locked transaction, and only the
+migrator that actually applied a file reports it, so two of them cannot both
+claim the work in a deployment log.
+
+The role and `GRANT` block needed the same treatment for a different reason.
+Catching `duplicate_object` handles two databases racing for a cluster-wide
+role, but two migrators of the *same* database update the same schema ACL and
+`pg_authid` tuples, and Postgres answers that with `tuple concurrently
+updated` — an error neither can sensibly retry. It surfaced on the second run
+of the new test, having passed on the first.

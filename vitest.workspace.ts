@@ -22,6 +22,10 @@ export default defineWorkspace([
     // Exactly one seam: route + database, worker + queue, connector + cassette.
     test: {
       name: 'integration',
+      // Drops databases an interrupted run left behind, before this one starts
+      // (#158). They are invisible until the suites that enumerate the
+      // catalogue slow to a timeout on something unrelated.
+      globalSetup: ['./test/support/sweep-test-databases.ts'],
       include: ['packages/*/test/integration/**/*.test.ts', 'apps/*/test/integration/**/*.test.ts'],
       environment: 'node',
       testTimeout: 30_000,
@@ -36,6 +40,10 @@ export default defineWorkspace([
     // A plugin interface, exercised from recorded cassettes.
     test: {
       name: 'contract',
+      // Drops databases an interrupted run left behind, before this one starts
+      // (#158). They are invisible until the suites that enumerate the
+      // catalogue slow to a timeout on something unrelated.
+      globalSetup: ['./test/support/sweep-test-databases.ts'],
       include: ['packages/*/test/contract/**/*.test.ts', 'apps/*/test/contract/**/*.test.ts'],
       environment: 'node',
       testTimeout: 30_000,
@@ -46,6 +54,10 @@ export default defineWorkspace([
     // The product as a user or an agent sees it.
     test: {
       name: 'acceptance',
+      // Drops databases an interrupted run left behind, before this one starts
+      // (#158). They are invisible until the suites that enumerate the
+      // catalogue slow to a timeout on something unrelated.
+      globalSetup: ['./test/support/sweep-test-databases.ts'],
       include: ['apps/*/test/acceptance/**/*.test.ts', 'test/acceptance/**/*.test.ts'],
       environment: 'node',
       testTimeout: 120_000,
@@ -71,6 +83,9 @@ export default defineWorkspace([
     test: {
       name: 'nfr',
       include: ['test/nfr/**/*.test.ts'],
+      // The tenancy and permission suites enumerate the catalogue, so they are
+      // the ones a pile of abandoned databases slows to a timeout (#158).
+      globalSetup: ['./test/support/sweep-test-databases.ts'],
       environment: 'node',
       testTimeout: 120_000,
       hookTimeout: 120_000,

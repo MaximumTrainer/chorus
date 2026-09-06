@@ -177,6 +177,46 @@ SELECT 1 / 0;`,
     })
   })
 
+  it('NFR-1 AC5: two migrators racing apply each migration exactly once', async () => {
+    // Given a database nobody has migrated
+    const fresh = mkdtempSync(join(tmpdir(), 'chorus-migrations-'))
+    tempDirs.push(fresh)
+    writeFileSync(
+      join(fresh, '9100_race.sql'),
+      `CREATE TABLE migration_race_probe (id text PRIMARY KEY);`,
+      'utf8',
+    )
+
+    // When two migrators run at the same time — a Helm job with two replicas,
+    // or a compose stack somebody started twice
+    const both = await Promise.allSettled([
+      applyMigrations(db.admin, { dir: fresh }),
+      applyMigrations(db.admin, { dir: fresh }),
+    ])
+
+    // Then both succeed. One of them waited; neither collided with the other's
+    // `CREATE TABLE`, and neither exited non-zero — a migrator that fails is a
+    // deployment that fails, however harmless the underlying duplicate was.
+    for (const outcome of both) {
+      expect(outcome.status, outcome.status === 'rejected' ? String(outcome.reason) : '').toBe(
+        'fulfilled',
+      )
+    }
+
+    // and the migration was applied exactly once
+    const [ledger] = await db.admin.query<{ count: string }>(
+      `SELECT count(*) FROM schema_migrations WHERE filename = '9100_race.sql'`,
+    )
+    expect(Number(ledger!.count)).toBe(1)
+
+    // Exactly one of them reports having done the work, so a deployment log
+    // says which run applied what rather than both claiming it.
+    const applied = both
+      .filter((o): o is PromiseFulfilledResult<string[]> => o.status === 'fulfilled')
+      .map((o) => o.value.length)
+    expect(applied.sort()).toEqual([0, 1])
+  })
+
   it('NFR-1 AC5: a migration added later is applied on the next run, and only it', async () => {
     // Given a directory whose first migration has already been applied
     const dir = migrationsIn({
