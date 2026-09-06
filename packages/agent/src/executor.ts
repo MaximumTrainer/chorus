@@ -5,6 +5,7 @@ import {
   NotFoundError,
   ValidationError,
   redactBody,
+  scrubSecrets,
   resolveCheckpointPolicy,
   ulid,
   type CheckpointKind,
@@ -905,6 +906,25 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
     return row?.role ?? 'member'
   }
 
+  /**
+   * The team's charter, or nothing if it has not written one (WS-3 AC2).
+   *
+   * Read per model call rather than captured when the run starts: a run can sit
+   * at a checkpoint for hours, and the charter a step is judged against should
+   * be the one in force when it ran, not the one that was in force when
+   * somebody clicked go.
+   */
+  async function charterFor(workspaceId: string, teamId: string): Promise<string | undefined> {
+    const [row] = await tx(workspaceId, (t) =>
+      t.query<{ charter: string | null }>(
+        `SELECT charter FROM teams WHERE workspace_id = $1 AND id = $2 AND deleted_at IS NULL`,
+        [workspaceId, teamId],
+      ),
+    )
+    const charter = row?.charter?.trim()
+    return charter ? charter : undefined
+  }
+
   async function executeStep(input: {
     step: WorkflowStep
     definition: WorkflowDefinition
@@ -954,9 +974,22 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
         // was started with forces every workflow to carry a step whose only
         // job is to copy the request somewhere the prompt can see it.
         const visible = { ...startedWith, ...outputs }
-        const content = template
+        const body = template
           ? renderTemplate(step.prompt, template.body, visible)
           : renderPrompt(step.prompt, visible)
+
+        // WS-3 AC2: the charter is context every agent turn works from, so it
+        // is injected here rather than left for each workflow to remember —
+        // a constraint that applies only to the prompts whose authors thought
+        // of it is not a constraint.
+        //
+        // First, because §10 assembles the stable prefix ahead of the volatile
+        // context so a provider can cache it: a charter appended after the part
+        // that changes every call is a prefix that caches nothing. A team with
+        // no charter contributes nothing at all, rather than a heading standing
+        // over an empty section.
+        const charter = await charterFor(workspaceId, teamId)
+        const content = charter ? `# Team charter\n\n${charter}\n\n---\n\n${body}` : body
 
         const startedAt = Date.now()
         let text = ''
@@ -1049,6 +1082,21 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
             // writes next year, or by a backup restored somewhere else.
             ...prefixed('prompt', redactBody(redaction, content)),
             ...prefixed('response', redactBody(redaction, text)),
+            // WS-3 AC2: what the model was *told*, not only what it said.
+            //
+            // Recorded beside the structural record rather than inside the
+            // prompt body, and so it survives the workspace's redaction level
+            // like the template's id and version do. That is deliberate and it
+            // is narrow: a charter is configuration an admin wrote and every
+            // member can already read through the API, not the customer content
+            // §11.6 exists to keep out of traces. Without it, the default level
+            // — `structural`, a hash — makes "why did the agent do that?"
+            // unanswerable for the one input that applies to every turn.
+            //
+            // Credential-scrubbed all the same: §11.6's second rule is not
+            // negotiable by the first, and free text an admin typed is exactly
+            // where a key gets pasted by accident.
+            ...(charter === undefined ? {} : { teamCharter: scrubSecrets(charter) }),
           },
           template
             ? { id: step.prompt, version: template.version, hash: template.hash }
