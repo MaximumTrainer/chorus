@@ -284,7 +284,24 @@ function buildRoutes(
         }),
       ),
       ...sessionRoutes(createSessionService(config), turn, retriever),
-      ...proposalRoutes(createProposalService(config)),
+      // Pointers attach at materialisation whichever path confirmed the
+      // proposal, so a task created by an `auto` policy and one accepted by a
+      // person carry the same evidence (DOC-6 AC3).
+      ...proposalRoutes(
+        createProposalService(config, {
+          ...(models
+            ? {
+                pointers: createPointerService(
+                  config,
+                  createRetriever(config, {
+                    models,
+                    embeddingModel: { provider: 'unconfigured', model: 'unconfigured' },
+                  }),
+                ),
+              }
+            : {}),
+        }),
+      ),
       // Pointers retrieve through the one retrieval function, so a pointer can
       // never surface code the person could not open (BRAIN-4 AC2).
       ...(models

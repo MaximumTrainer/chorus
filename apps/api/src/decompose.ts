@@ -19,6 +19,7 @@ import type { ModelProvider, ModelRef } from '@chorus/llm'
 import type { Retriever } from '@chorus/core'
 import { createDocumentService } from './documents.js'
 import { createProposalService } from './proposals.js'
+import { createPointerService } from './pointers.js'
 import type { ProposalRecord } from './proposals.js'
 
 /**
@@ -34,12 +35,18 @@ import type { ProposalRecord } from './proposals.js'
  * explicitly said it does not want to be asked.
  */
 
+/** A node this document has already produced a task for (DOC-6 AC4). */
+export interface RecognisedNode {
+  readonly nodeKey: string
+  readonly taskId: string
+}
+
 export interface Decomposer {
   decompose(input: {
     workspaceId: string
     documentId: string
     actorId: string
-  }): Promise<ProposalRecord & { runId: string }>
+  }): Promise<ProposalRecord & { runId: string; existing: readonly RecognisedNode[] }>
 }
 
 export function createDecomposer(
@@ -54,7 +61,9 @@ export function createDecomposer(
   const workflows = builtInWorkflows()
 
   const documents = createDocumentService(config)
-  const proposals = createProposalService(config)
+  const proposals = createProposalService(config, {
+    ...(deps.retriever ? { pointers: createPointerService(config, deps.retriever) } : {}),
+  })
 
   const executor = createExecutor(config, {
     registry: createToolRegistry([]),
@@ -97,19 +106,29 @@ export function createDecomposer(
         )
       }
 
+      // What this document has already produced. A model reading an extended
+      // document proposes the work it proposed last time plus the new part —
+      // which is correct of it, and would double the board if taken literally.
+      // The person who asked for one new task would spend the afternoon
+      // deleting the rest.
+      const existing = await alreadyMaterialised(config, workspaceId, documentId)
+      const known = new Map(existing.map((entry) => [entry.nodeKey, entry.taskId]))
+      const fresh = { nodes: pruneKnown((tree as { nodes: unknown[] }).nodes, known) }
+      const recognised = existing.filter((entry) => mentions(tree, entry.nodeKey))
+
       const proposed = await proposals.propose({
         workspaceId,
         teamId: document.teamId,
         runId: run.id,
         sourceDocumentId: documentId,
-        tree,
+        tree: fresh,
       })
 
       // The team's standing answer to "should somebody look at this first?".
       const policy = await policyFor(config, workspaceId, document.teamId, definition.name)
       await recordDecision(config, workspaceId, run.id, policy)
 
-      if (policy.mode !== 'auto') return { ...proposed, runId: run.id }
+      if (policy.mode !== 'auto') return { ...proposed, runId: run.id, existing: recognised }
 
       // `auto` means the tree lands as tasks without anybody being asked. The
       // decision is already in the trace above, because "nobody was asked" is
@@ -120,7 +139,7 @@ export function createDecomposer(
         proposalId: proposed.id,
         actorId,
       })
-      return { ...confirmed, runId: run.id }
+      return { ...confirmed, runId: run.id, existing: recognised }
     },
   }
 }
@@ -227,4 +246,60 @@ async function recordDecision(
     },
     { config },
   )
+}
+
+/**
+ * The nodes this document has already turned into tasks (DOC-6 AC4).
+ *
+ * Keyed by the node key the model chose, which is stable for the same work
+ * described the same way. It is not a perfect identity — a model that renames
+ * a key proposes the work again — so this is a duplicate *reducer*, and the
+ * confirmation gate is still what stops anything wrong from landing.
+ */
+async function alreadyMaterialised(
+  config: DbConfig,
+  workspaceId: string,
+  documentId: string,
+): Promise<RecognisedNode[]> {
+  const rows = await withTenant(
+    workspaceId,
+    (t) =>
+      t.query<{ node_key: string; task_id: string }>(
+        `SELECT spt.node_key, spt.task_id
+           FROM structure_proposal_tasks spt
+           JOIN structure_proposals sp ON sp.id = spt.proposal_id
+           JOIN tasks task ON task.id = spt.task_id AND task.deleted_at IS NULL
+          WHERE sp.source_document_id = $1`,
+        [documentId],
+      ),
+    { config },
+  )
+  return rows.map((row) => ({ nodeKey: row.node_key, taskId: row.task_id }))
+}
+
+/**
+ * The tree with the already-built parts removed.
+ *
+ * A recognised node's *children* are kept and lifted into its place rather
+ * than dropped with it: an extended document usually adds work under a heading
+ * that already exists, and discarding the subtree would silently lose exactly
+ * the new work this run was asked to find.
+ */
+function pruneKnown(nodes: readonly unknown[], known: Map<string, string>): unknown[] {
+  const kept: unknown[] = []
+  for (const raw of nodes) {
+    const node = raw as { key?: unknown; children?: unknown[] }
+    const children = pruneKnown(Array.isArray(node.children) ? node.children : [], known)
+    if (typeof node.key === 'string' && known.has(node.key)) {
+      kept.push(...children)
+      continue
+    }
+    kept.push({ ...node, children })
+  }
+  return kept
+}
+
+/** Whether a proposed tree mentions a node key at all. */
+function mentions(tree: unknown, key: string): boolean {
+  return JSON.stringify(tree).includes(`"${key}"`)
 }

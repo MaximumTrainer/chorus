@@ -88,6 +88,47 @@ describe('DOC-6 decomposition', () => {
     )
   }
 
+  /** A connected, indexed repository, so pointers have something to resolve to. */
+  async function indexed(w: World, input: { path: string; text: string }): Promise<void> {
+    const [existing] = await db.admin.query<{ id: string }>(
+      `SELECT id FROM repositories WHERE workspace_id = $1 LIMIT 1`,
+      [w.workspaceId],
+    )
+    let repoId = existing?.id
+    if (!repoId) {
+      const integrationId = ulid()
+      await db.admin.execute(
+        `INSERT INTO integrations (id, workspace_id, kind) VALUES ($1, $2, 'github')`,
+        [integrationId, w.workspaceId],
+      )
+      repoId = ulid()
+      await db.admin.execute(
+        `INSERT INTO repositories (id, workspace_id, team_id, integration_id, provider, full_name)
+         VALUES ($1, $2, $3, $4, 'github', $5)`,
+        [repoId, w.workspaceId, w.teamId, integrationId, `acme/invoices-${repoId.slice(-6)}`],
+      )
+    }
+    const fileId = ulid()
+    await db.admin.execute(
+      `INSERT INTO code_files (id, workspace_id, repository_id, path, lang, content_hash, commit_sha)
+       VALUES ($1, $2, $3, $4, 'ts', $5, 'commit-1')`,
+      [fileId, w.workspaceId, repoId, input.path, ulid()],
+    )
+    await db.admin.execute(
+      `INSERT INTO code_chunks
+         (id, workspace_id, repository_id, file_id, text, line_start, line_end, symbol_name, embedding)
+       VALUES ($1, $2, $3, $4, $5, 1, 20, 'parseInvoice', $6::vector)`,
+      [
+        ulid(),
+        w.workspaceId,
+        repoId,
+        fileId,
+        input.text,
+        `[${models.embedText(input.text).join(',')}]`,
+      ],
+    )
+  }
+
   const tasksIn = async (w: World): Promise<Array<{ id: string; title: string }>> =>
     (await (
       await w.ada.get(`/workspaces/${w.workspaceId}/teams/${w.teamId}/tasks`)
@@ -108,6 +149,9 @@ describe('DOC-6 decomposition', () => {
       createApp({
         dbConfig: db.config,
         mailer,
+        // Pointer routes mount only with a provider, because generating a
+        // pointer is a retrieval (TASK-3).
+        models,
         decompose: createDecomposer(db.config, {
           models,
           modelFor: () => ({ provider: 'fake', model: 'fake-1' }),
@@ -233,6 +277,167 @@ describe('DOC-6 decomposition', () => {
     expect(detail.sources).toEqual([
       { type: 'document', id: w.documentId, sectionKeys: ['requirements'] },
     ])
+  })
+
+  it('DOC-6 AC4: re-decomposing an extended document proposes only the new work', async () => {
+    // Given a document already decomposed into tasks
+    const w = await world()
+    await policyIsAuto(w)
+    models.script({ chunks: [JSON.stringify(proposal)] })
+    await w.ada.post(`/workspaces/${w.workspaceId}/documents/${w.documentId}/decompose`, {})
+    expect((await tasksIn(w)).length).toBe(2)
+
+    // When it is extended and decomposed again, and the model proposes the
+    // work it proposed before *plus* something new — which is what a model
+    // reading a superset of the same document will do
+    models.script({
+      chunks: [
+        JSON.stringify({
+          nodes: [
+            ...proposal.nodes,
+            {
+              key: 'refunds',
+              title: 'Handle partial refunds',
+              size: 'M',
+              tags: ['billing'],
+              sectionKeys: ['requirements'],
+              children: [],
+            },
+          ],
+        }),
+      ],
+    })
+    const second = await w.ada.post(
+      `/workspaces/${w.workspaceId}/documents/${w.documentId}/decompose`,
+      {},
+    )
+    expect(second.status, await second.clone().text()).toBe(201)
+
+    // Then only the genuinely new work becomes a task. Proposing the same two
+    // again is the failure everybody has seen: the second run doubles the
+    // board, and the person who asked for one new task spends their afternoon
+    // deleting the others.
+    const titles = (await tasksIn(w)).map((task) => task.title).sort()
+    expect(titles).toEqual([
+      'Extract parsing',
+      'Handle partial refunds',
+      'Split the invoice parser',
+    ])
+
+    // and the recognised nodes are reported rather than silently dropped, so a
+    // reader can see the run considered them and decided they already existed.
+    const body = (await second.json()) as { existing: Array<{ nodeKey: string; taskId: string }> }
+    expect(body.existing.map((entry) => entry.nodeKey).sort()).toEqual(['billing', 'parse'])
+  })
+
+  it('DOC-6 AC3: a coding task gets a pointer that resolves, and a vague one gets none', async () => {
+    // Given an indexed repository holding the code one task is about
+    const w = await world()
+    await policyIsAuto(w)
+    await indexed(w, {
+      path: 'src/invoice.ts',
+      text: 'export function parseInvoice(line: string) {}',
+    })
+
+    // and a proposal with one task named for that code and one that could
+    // match nothing in it
+    models.script({
+      chunks: [
+        JSON.stringify({
+          nodes: [
+            // Named for the symbol, because TASK-3's confidence floor is
+            // strict enough that a longer title does not clear it — see #160.
+            // A pointer only appears when the match is unambiguous, which is
+            // the behaviour this asserts rather than a property of this title.
+            { key: 'fix', title: 'parseInvoice', tags: [], sectionKeys: [], children: [] },
+            {
+              key: 'board',
+              title: 'Write the quarterly board update',
+              tags: [],
+              sectionKeys: [],
+              children: [],
+            },
+          ],
+        }),
+      ],
+    })
+
+    // When decomposition runs and materialises
+    await w.ada.post(`/workspaces/${w.workspaceId}/documents/${w.documentId}/decompose`, {})
+
+    // Then the coding task carries a pointer that resolves to a real file at a
+    // real commit
+    const tasks = await tasksIn(w)
+    const coding = tasks.find((task) => task.title === 'parseInvoice')!
+    const pointers = (await (
+      await w.ada.get(`/workspaces/${w.workspaceId}/tasks/${coding.id}/pointers`)
+    ).json()) as Array<{ path: string; commitSha: string | null; staleAt: string | null }>
+
+    expect(pointers.length).toBeGreaterThan(0)
+    // Resolving means a real file at a real commit, and not marked stale.
+    expect(pointers[0]).toMatchObject({ path: 'src/invoice.ts', staleAt: null })
+    expect(pointers[0]!.commitSha).toBe('commit-1')
+
+    // and the one with nothing to match carries none rather than a guess.
+    // TASK-3's floor is high on purpose: the costs are not symmetric. A pointer
+    // to the wrong file sends somebody to read code that has nothing to do with
+    // their task, and quietly teaches them to distrust all of them.
+    const vague = tasks.find((task) => task.title === 'Write the quarterly board update')!
+    const none = (await (
+      await w.ada.get(`/workspaces/${w.workspaceId}/tasks/${vague.id}/pointers`)
+    ).json()) as unknown[]
+    expect(none).toEqual([])
+  })
+
+  it('DOC-6 AC4: re-decomposing an extended document proposes only the new work', async () => {
+    // Given a document already decomposed into tasks
+    const w = await world()
+    await policyIsAuto(w)
+    models.script({ chunks: [JSON.stringify(proposal)] })
+    await w.ada.post(`/workspaces/${w.workspaceId}/documents/${w.documentId}/decompose`, {})
+    expect((await tasksIn(w)).length).toBe(2)
+
+    // When it is extended and decomposed again, and the model proposes the
+    // work it proposed before *plus* something new — which is what a model
+    // reading a superset of the same document will do
+    models.script({
+      chunks: [
+        JSON.stringify({
+          nodes: [
+            ...proposal.nodes,
+            {
+              key: 'refunds',
+              title: 'Handle partial refunds',
+              size: 'M',
+              tags: ['billing'],
+              sectionKeys: ['requirements'],
+              children: [],
+            },
+          ],
+        }),
+      ],
+    })
+    const second = await w.ada.post(
+      `/workspaces/${w.workspaceId}/documents/${w.documentId}/decompose`,
+      {},
+    )
+    expect(second.status, await second.clone().text()).toBe(201)
+
+    // Then only the genuinely new work becomes a task. Proposing the same two
+    // again is the failure everybody has seen: the second run doubles the
+    // board, and the person who asked for one new task spends their afternoon
+    // deleting the others.
+    const titles = (await tasksIn(w)).map((task) => task.title).sort()
+    expect(titles).toEqual([
+      'Extract parsing',
+      'Handle partial refunds',
+      'Split the invoice parser',
+    ])
+
+    // and the recognised nodes are reported rather than silently dropped, so a
+    // reader can see the run considered them and decided they already existed.
+    const body = (await second.json()) as { existing: Array<{ nodeKey: string; taskId: string }> }
+    expect(body.existing.map((entry) => entry.nodeKey).sort()).toEqual(['billing', 'parse'])
   })
 
   it('DOC-6 AC1: the proposal records the document it came from', async () => {

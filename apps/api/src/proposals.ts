@@ -141,7 +141,28 @@ interface ProposalRow {
   created_at: Date
 }
 
-export function createProposalService(config: DbConfig): ProposalService {
+export function createProposalService(
+  config: DbConfig,
+  deps: {
+    /**
+     * Attaches code pointers to a materialised task (DOC-6 AC3).
+     *
+     * Optional: a deployment with no model provider has no retrieval, and a
+     * proposal must still be confirmable without one. Absent, tasks are
+     * created with no pointers, which is the same answer TASK-3 gives when
+     * nothing matches confidently — "no pointer beats a wrong one".
+     */
+    pointers?: {
+      generate(input: {
+        workspaceId: string
+        taskId: string
+        teamId: string
+        userId: string
+        query: string
+      }): Promise<unknown>
+    }
+  } = {},
+): ProposalService {
   const tx = <T>(workspaceId: string, fn: (t: TenantTx) => Promise<T>, userId?: string): Promise<T> =>
     withTenant(workspaceId, fn, { config, ...(userId ? { userId } : {}) })
 
@@ -219,10 +240,18 @@ export function createProposalService(config: DbConfig): ProposalService {
     },
 
     async confirm(input) {
-      return tx(
+      // Collected inside the transaction and used after it commits: pointer
+      // generation is a retrieval per task, and holding materialisation open
+      // across it would make an all-or-nothing guarantee depend on how long
+      // the index takes.
+      const materialisedTasks: Array<{ id: string; query: string }> = []
+      let materialisedTeamId = ''
+
+      const materialised = await tx(
         input.workspaceId,
         async (t) => {
           const row = await load(t, input.proposalId)
+          materialisedTeamId = row.team_id
 
           // A retried request is the ordinary case, not the exotic one: a
           // dropped response and a refresh both look exactly like this. So the
@@ -304,6 +333,13 @@ export function createProposalService(config: DbConfig): ProposalService {
               [input.workspaceId, input.proposalId, id, node.key],
             )
             created.push({ id, key: node.key })
+            materialisedTasks.push({
+              id,
+              // Title and summary together: a title alone is often too short to
+              // retrieve on, and the summary is where the document's own words
+              // survive.
+              query: [node.title, node.summary].filter(Boolean).join('. '),
+            })
             for (const child of node.children ?? []) await write(child, id)
           }
 
@@ -329,6 +365,29 @@ export function createProposalService(config: DbConfig): ProposalService {
         },
         input.actorId,
       )
+
+      // After the transaction, deliberately. Pointer generation is a retrieval
+      // per task; holding the materialisation open across it would make the
+      // all-or-nothing guarantee depend on how long the index takes, and a
+      // task without a pointer is still a correct task.
+      if (deps.pointers) {
+        for (const task of materialisedTasks) {
+          await deps.pointers
+            .generate({
+              workspaceId: input.workspaceId,
+              taskId: task.id,
+              teamId: materialisedTeamId,
+              userId: input.actorId,
+              query: task.query,
+            })
+            // A pointer that could not be generated is not a reason to fail a
+            // confirmation the person already made. TASK-3's own rule is that
+            // no pointer beats a wrong one, and none beats a lost tree.
+            .catch(() => undefined)
+        }
+      }
+
+      return materialised
     },
 
     async reject(input) {

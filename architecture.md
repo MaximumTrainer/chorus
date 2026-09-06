@@ -716,10 +716,16 @@ The classifier prompt is a **versioned file** (`workflows/prompts/routing/classi
 |---|---|---|---|
 | `shape-idea` | chat turn in a session | retrieve → decide (ask / draft / propose structure) → stream reply | `before_create_artefacts: ask` |
 | `draft-document` | chat command, quick action, extension PRD request | retrieve → outline → section-by-section generation with citations → emit Document | none (lands as `draft`) |
-| `decompose-tasks` | "break into tasks", document approval, capture | retrieve (doc, code, existing tasks) → propose tree with tags, criteria, pointers → find duplicates → emit StructureProposal | `before_create_artefacts: ask` |
+| `decompose-tasks` | "break into tasks", document approval, capture | retrieve (doc, code) → propose tree with tags, criteria and section keys → recognise what this document already produced → StructureProposal | `before_create_artefacts` decides: `ask` leaves it proposed, `auto` materialises it |
 | `refine-task` | task panel prompt | retrieve → rewrite fields → emit diff | none |
 | `triage-feedback` | capture submit, chat-surface reaction, feedback signal | classify (bug / request / question) → find duplicates → draft task or link → emit | `auto` for single-element fixes, `ask` otherwise |
 | `find-duplicates` | subroutine or task action | embedding + entity overlap over tasks and tracker issues → rank → suggest | none |
+
+**`decompose-tasks` has no checkpoint step, deliberately.** Its gate is the proposal itself: it lands in `proposed` state and a person accepts, edits or rejects it (CHAT-5), so pausing the run as well would ask the same question twice — the second time about a tree nobody can see yet. A team that has set `before_create_artefacts` to `auto` gets the tree materialised on arrival, and the decision is written to the run's trace either way, because "was anybody asked?" is the question somebody has when they find tasks they did not expect.
+
+**Re-decomposition recognises what a document has already produced** (DOC-6 AC4), by the node key the model chose, against `structure_proposal_tasks`. A recognised node's children are lifted into its place rather than dropped with it: an extended document usually adds work under a heading that already exists. Node keys are not an identity — a model that renames one proposes the work again — so this reduces duplicates rather than preventing them, and the confirmation gate remains what stops anything wrong from landing.
+
+**Pointers are attached when a proposal materialises**, through TASK-3's generator, so a task created by an `auto` policy and one a person accepted carry the same evidence and pass the same confidence floor. Generation runs after the materialising transaction commits: it is a retrieval per task, and holding the transaction open across it would make "all or nothing" depend on how long the index takes.
 | `implement-task` | Build → Run coding agent; Agent-tag auto-launch; MCP `start_coding_job` | assemble brief → run adapter in sandbox → collect → open PR → emit CodingJob | `before_coding_job: ask`; `before_external_write` for the PR |
 | `build-prototype` | Build → Prototype | prototype brief → `implement-task` variant → preview discovery → emit Prototype | as above |
 | `gap-spec` | two repositories linked + a capture | index both → align recorded flow to screens → diff against production components and design system → emit Gap-Spec → decompose | `before_create_artefacts: ask` |
