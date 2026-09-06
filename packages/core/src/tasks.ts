@@ -138,6 +138,19 @@ export const UpdateTaskSchema = z.object({
 })
 export type UpdateTask = z.infer<typeof UpdateTaskSchema>
 
+/**
+ * Where a task came from, at the granularity that makes it checkable (DOC-6 AC2).
+ *
+ * The document alone answers a question a reviewer already had. The sections
+ * are what let them verify the task against the words that produced it, and
+ * what lets a later edit to one flag the task as possibly stale.
+ */
+export interface TaskSource {
+  readonly type: 'document'
+  readonly id: string
+  readonly sectionKeys: readonly string[]
+}
+
 export interface TaskRecord {
   readonly id: string
   readonly key: string
@@ -155,6 +168,11 @@ export interface TaskRecord {
   readonly createdBy: string
   readonly createdAt: string
   readonly updatedAt: string
+  /**
+   * Present when a task is read on its own. Left off list responses, where it
+   * would cost a query per row to answer a question nobody asked of a list.
+   */
+  readonly sources?: readonly TaskSource[]
 }
 
 /** What happens to a parent's children when it is deleted (AC4). */

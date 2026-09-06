@@ -385,7 +385,26 @@ export function createTaskService(config: DbConfig): TaskService {
     },
 
     async get(workspaceId, taskId) {
-      return tx(workspaceId, async (t) => toRecord(await load(t, taskId)))
+      return tx(workspaceId, async (t) => {
+        const record = toRecord(await load(t, taskId))
+        // Read here and not in `listForTeam`: one query per row would be the
+        // cost of answering a question nobody asks of a list.
+        const links = await t.query<{ to_id: string; detail: { sectionKeys?: string[] } }>(
+          `SELECT to_id, detail FROM artefact_links
+            WHERE from_type = 'task' AND from_id = $1 AND to_type = 'document'
+              AND relation = 'derived_from'
+            ORDER BY created_at`,
+          [taskId],
+        )
+        return {
+          ...record,
+          sources: links.map((link) => ({
+            type: 'document' as const,
+            id: link.to_id,
+            sectionKeys: link.detail?.sectionKeys ?? [],
+          })),
+        }
+      })
     },
 
     async listForTeam(workspaceId, teamId, filters = {}) {

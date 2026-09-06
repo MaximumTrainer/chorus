@@ -188,6 +188,53 @@ describe('DOC-6 decomposition', () => {
     expect(decision!.payload).toMatchObject({ mode: 'auto', decidedBy: 'policy' })
   })
 
+  it('DOC-6 AC5: a task carries the acceptance criteria its section stated', async () => {
+    // Given a document whose section states testable behaviour, and a team
+    // that materialises without being asked
+    const w = await world()
+    await policyIsAuto(w)
+    models.script({ chunks: [JSON.stringify(proposal)] })
+
+    // When it is decomposed
+    await w.ada.post(`/workspaces/${w.workspaceId}/documents/${w.documentId}/decompose`, {})
+
+    // Then the created task carries the criteria rather than an empty
+    // checklist. An empty one reads as "nobody has decided what done means
+    // yet", which is a different and much weaker claim than the document made.
+    const created = (await tasksIn(w)).find((task) => task.title === 'Extract parsing')!
+    const detail = (await (
+      await w.ada.get(`/workspaces/${w.workspaceId}/tasks/${created.id}`)
+    ).json()) as { acceptanceCriteria: Array<{ text: string }> }
+
+    expect(detail.acceptanceCriteria.map((criterion) => criterion.text)).toEqual([
+      'A malformed invoice is rejected with a reason',
+    ])
+  })
+
+  it('DOC-6 AC2: a created task links back to the document and the section it came from', async () => {
+    // Given the same decomposition
+    const w = await world()
+    await policyIsAuto(w)
+    models.script({ chunks: [JSON.stringify(proposal)] })
+    await w.ada.post(`/workspaces/${w.workspaceId}/documents/${w.documentId}/decompose`, {})
+
+    // When a created task is inspected
+    const created = (await tasksIn(w)).find((task) => task.title === 'Extract parsing')!
+    const detail = (await (
+      await w.ada.get(`/workspaces/${w.workspaceId}/tasks/${created.id}`)
+    ).json()) as {
+      sources: Array<{ type: string; id: string; sectionKeys: string[] }>
+    }
+
+    // Then it names the document *and* the section. The document alone answers
+    // "roughly where did this come from?", which is the answer a reviewer
+    // already had; the section is what makes it checkable, and what lets a
+    // later edit to that section flag this task as possibly stale.
+    expect(detail.sources).toEqual([
+      { type: 'document', id: w.documentId, sectionKeys: ['requirements'] },
+    ])
+  })
+
   it('DOC-6 AC1: the proposal records the document it came from', async () => {
     // Given a decomposed document
     const w = await world()

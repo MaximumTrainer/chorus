@@ -20,6 +20,10 @@ export interface ProposalNode {
   readonly type?: string
   readonly tags?: readonly string[]
   readonly size?: string
+  /** The document sections this node came from (DOC-6 AC2). */
+  readonly sectionKeys?: readonly string[]
+  /** Testable behaviour the source stated, not invented here (DOC-6 AC5). */
+  readonly acceptanceCriteria?: readonly string[]
   readonly children?: readonly ProposalNode[]
 }
 
@@ -108,6 +112,15 @@ export function parseTree(value: unknown): ProposalTree {
       ...(typeof candidate.size === 'string' ? { size: candidate.size } : {}),
       tags: Array.isArray(candidate.tags)
         ? candidate.tags.filter((tag): tag is string => typeof tag === 'string')
+        : [],
+      // Carried through rather than dropped. The prompt asks for both, and a
+      // parser that quietly discarded them would make the prompt a request
+      // nobody could tell was being ignored.
+      sectionKeys: Array.isArray(candidate.sectionKeys)
+        ? candidate.sectionKeys.filter((key): key is string => typeof key === 'string')
+        : [],
+      acceptanceCriteria: Array.isArray(candidate.acceptanceCriteria)
+        ? candidate.acceptanceCriteria.filter((text): text is string => typeof text === 'string')
         : [],
       children: children.map((child) => node(child, depth + 1)),
     }
@@ -241,8 +254,9 @@ export function createProposalService(config: DbConfig): ProposalService {
             const id = ulid()
             await t.execute(
               `INSERT INTO tasks
-                 (id, workspace_id, team_id, parent_id, key, title, description, tags, size, created_by)
-               VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10)`,
+                 (id, workspace_id, team_id, parent_id, key, title, description,
+                  acceptance_criteria, tags, size, created_by)
+               VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11)`,
               [
                 id,
                 input.workspaceId,
@@ -255,11 +269,35 @@ export function createProposalService(config: DbConfig): ProposalService {
                     ? { type: 'doc', content: [{ type: 'paragraph', text: node.summary }] }
                     : {},
                 ),
+                // The criteria the source actually stated (DOC-6 AC5). An empty
+                // checklist reads as "nobody has decided what done means",
+                // which is a weaker claim than the document made.
+                JSON.stringify(
+                  (node.acceptanceCriteria ?? []).map((text) => ({ id: ulid(), text, done: false })),
+                ),
                 node.tags ?? [],
                 node.size ?? null,
                 input.actorId,
               ],
             )
+
+            // Where this task came from, at section granularity (DOC-6 AC2).
+            // The document alone answers a question the reviewer already had.
+            if (row.source_document_id) {
+              await t.execute(
+                `INSERT INTO artefact_links
+                   (id, workspace_id, from_type, from_id, to_type, to_id, relation, detail, created_by)
+                 VALUES ($1, $2, 'task', $3, 'document', $4, 'derived_from', $5::jsonb, $6)`,
+                [
+                  ulid(),
+                  input.workspaceId,
+                  id,
+                  row.source_document_id,
+                  JSON.stringify({ sectionKeys: node.sectionKeys ?? [] }),
+                  input.actorId,
+                ],
+              )
+            }
             await t.execute(
               `INSERT INTO structure_proposal_tasks (workspace_id, proposal_id, task_id, node_key)
                VALUES ($1, $2, $3, $4)`,
