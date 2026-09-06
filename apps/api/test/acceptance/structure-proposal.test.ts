@@ -232,6 +232,66 @@ describe('CHAT-5 structure proposals', () => {
     expect(read.status).toBe('proposed')
   })
 
+  it('CHAT-5 AC3: what gets created is what the person edited, and the original is kept', async () => {
+    // Given a proposal the person edits before accepting: one node retitled,
+    // one re-parented to the root, and one deleted
+    const w = await world()
+    const proposalId = await proposed(w)
+
+    const edited = {
+      nodes: [
+        {
+          key: 'root',
+          title: 'Split the invoice parser (phase one)',
+          summary: 'It does three jobs.',
+          tags: ['billing'],
+          size: 'L',
+          children: [
+            {
+              key: 'parse',
+              title: 'Extract parsing into its own module',
+              tags: ['billing'],
+              size: 'M',
+              children: [],
+            },
+          ],
+        },
+      ],
+    }
+
+    // When they confirm
+    const confirmed = await w.ada.post(
+      `/workspaces/${w.workspaceId}/proposals/${proposalId}/confirm`,
+      { tree: edited },
+    )
+    expect(confirmed.status, await confirmed.clone().text()).toBe(200)
+
+    // Then the created tasks are the edited tree exactly — the retitle applied,
+    // and the node they deleted absent. Creating what was proposed rather than
+    // what was accepted would make the edit a suggestion the system ignored,
+    // which is worse than not offering the edit at all.
+    const titles = (await tasksIn(w)).map((task) => task.title).sort()
+    expect(titles).toEqual([
+      'Extract parsing into its own module',
+      'Split the invoice parser (phase one)',
+    ])
+
+    // and both sides are kept, because a diff needs both. The proposal says
+    // what the agent suggested; the confirmation says what a person actually
+    // wanted, and the gap between them is the only evidence of how good the
+    // suggestions are.
+    const read = (await (
+      await w.ada.get(`/workspaces/${w.workspaceId}/proposals/${proposalId}`)
+    ).json()) as {
+      status: string
+      tree: { nodes: Array<{ children: unknown[] }> }
+      confirmedTree: { nodes: Array<{ title: string }> } | null
+    }
+    expect(read.status).toBe('edited_and_confirmed')
+    expect(read.tree.nodes[0]!.children).toHaveLength(2)
+    expect(read.confirmedTree!.nodes[0]!.title).toBe('Split the invoice parser (phase one)')
+  })
+
   it('CHAT-5 AC4: rejection records the feedback and creates nothing', async () => {
     // Given a proposal
     const w = await world()
