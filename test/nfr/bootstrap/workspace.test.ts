@@ -27,11 +27,28 @@ describe('NFR-12 workspace bootstrap', () => {
   })
 
   it('NFR-12 AC4: verify runs typecheck, lint, every test layer and the non-functional suites', () => {
-    const { scripts } = readJson('package.json')
+    const { scripts } = readJson('package.json') as { scripts: Record<string, string> }
     expect(scripts.verify).toBeDefined()
-    for (const step of ['typecheck', 'lint', 'test:acceptance', 'test:nfr']) {
-      expect(scripts[step], `missing script: ${step}`).toBeDefined()
-      expect(scripts.verify, `verify must run ${step}`).toContain(step)
+
+    // Everything `verify` reaches, one level of indirection deep. Asserting on
+    // the *names* in `verify` would pin the wiring rather than the property:
+    // when the unit, integration, contract and acceptance projects were folded
+    // into one covered run, a name check failed while every layer still ran.
+    // What NFR-12 AC4 actually promises is that no layer is missing.
+    const reached = [scripts.verify!]
+      .flatMap((command) => [command, ...command.split('&&').map((part) => part.trim())])
+      .flatMap((part) => {
+        const name = part.replace(/^pnpm\s+(run\s+)?/, '')
+        return scripts[name] ? [part, scripts[name]!] : [part]
+      })
+      .join(' ; ')
+
+    expect(reached, 'verify must typecheck').toContain('typecheck')
+    expect(reached, 'verify must lint').toContain('lint')
+    expect(reached, 'verify must run the non-functional suites').toContain('test:nfr')
+
+    for (const project of ['unit', 'integration', 'contract', 'acceptance']) {
+      expect(reached, `verify must run the ${project} layer`).toContain(`--project ${project}`)
     }
   })
 

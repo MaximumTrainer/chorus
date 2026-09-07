@@ -21,6 +21,75 @@ env:
   CI: "true"
 
 jobs:
+  # The commit hooks, applied on the remote.
+  #
+  # `.githooks` runs on a contributor's machine, and `--no-verify` is one
+  # keystroke — so every check there that can be repeated cheaply is repeated
+  # here, where nobody can skip it. NFR-12 AC4 asks that local and CI reject the
+  # same changes; a gate only one of them enforces does not satisfy that.
+  #
+  # Lint and the test suites are not repeated: `verify` below already runs them
+  # over the whole repository, and running them twice would only take longer to
+  # say the same thing.
+  hooks:
+    name: hooks (secrets, commit messages)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Enough history to read the messages of the commits being pushed.
+          # A shallow clone has none, and the gate would silently check nothing.
+          fetch-depth: 50
+
+      # The same scanner `pre-commit` runs, over every tracked file rather than
+      # the staged ones. Seconds, and it catches a bypassed hook and anything
+      # committed before the hook existed.
+      - name: Scan for credentials
+        run: node scripts/pre-commit.mjs --all
+
+      # The documentation gate, applied to the messages that actually arrived.
+      # `commit-msg` is bypassable in the same way, and a source change with no
+      # documentation and no stated reason is exactly what it exists to stop.
+      - name: Check commit messages
+        env:
+          BEFORE: ${{ github.event.before }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+
+          # The range being pushed, or the pull request's commits. A new branch
+          # reports an all-zero `before`, and a force-push can report a commit
+          # this checkout does not have — in both cases fall back to the tip,
+          # which is the change under review either way.
+          range="HEAD~1..HEAD"
+          if [ -n "${BASE:-}" ] && git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            range="$BASE..HEAD"
+          elif [ -n "${BEFORE:-}" ] \
+            && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] \
+            && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            range="$BEFORE..HEAD"
+          fi
+
+          echo "checking $range"
+          failed=0
+          for sha in $(git rev-list "$range"); do
+            message=$(mktemp)
+            git log -1 --format=%B "$sha" > "$message"
+
+            # The hook reads the index when a commit is being made, and there is
+            # no index for one that already exists — so it is handed the files
+            # that commit changed instead.
+            files=$(git diff-tree --no-commit-id --name-only -r "$sha" --diff-filter=ACMR)
+
+            if ! CHORUS_COMMIT_FILES="$files" .githooks/commit-msg "$message"; then
+              echo "::error::$(git log -1 --format='%h %s' "$sha") — refused by the commit-msg gate"
+              failed=1
+            fi
+            rm -f "$message"
+          done
+          exit $failed
+
   # NFR-12 AC1: a fresh clone reaches a working system with one command.
   # NFR-12 AC4: this runs exactly what a contributor runs locally.
   verify:

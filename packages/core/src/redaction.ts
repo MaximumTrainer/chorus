@@ -64,7 +64,33 @@ export function isRedactionLevel(value: unknown): value is RedactionLevel {
  * exported and read by people who were never meant to see it. The asymmetry is
  * the whole design.
  */
-const SECRET_PATTERNS: readonly RegExp[] = [
+/**
+ * The patterns precise enough to act on outside a trace.
+ *
+ * A recognisable prefix and a long opaque body: these say "credential" and
+ * almost nothing else says them. The rest of `SECRET_PATTERNS` — a field that
+ * names itself, an `Authorization:` header — is right for scrubbing, where a
+ * false positive costs a few characters, and wrong for a gate that refuses
+ * work: `password: input.password` is ordinary code, and this repository
+ * contains 76 such lines. A gate that fires on them is one people learn to
+ * bypass, and a bypassed gate protects nothing.
+ *
+ * The pre-commit scanner uses exactly this subset; `test/nfr/pre-commit.test.ts`
+ * pins the two equal, so a pattern added here is classified deliberately rather
+ * than by whoever edits one list.
+ */
+export const HIGH_CONFIDENCE_SECRET_PATTERNS: readonly RegExp[] = [
+  /\b(?:sk|pk|rk|api|key|tok)[-_](?:live|test|prod|proj)?[-_]?[A-Za-z0-9]{16,}\b/gi,
+  /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g,
+  /\bglpat-[A-Za-z0-9_-]{16,}\b/g,
+  /\bxox[abposr]-[A-Za-z0-9-]{10,}\b/g,
+  /\bAKIA[0-9A-Z]{16}\b/g,
+  /\baws_secret_access_key\s*[=:]\s*\S+/gi,
+  /-----BEGIN[^-]*PRIVATE KEY-----[\s\S]*?-----END[^-]*PRIVATE KEY-----/g,
+  /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g,
+]
+
+export const SECRET_PATTERNS: readonly RegExp[] = [
   // Provider-style keys: a recognisable prefix followed by a long opaque body.
   /\b(?:sk|pk|rk|api|key|tok)[-_](?:live|test|prod|proj)?[-_]?[A-Za-z0-9]{16,}\b/gi,
   // GitHub and GitLab tokens.
@@ -81,7 +107,8 @@ const SECRET_PATTERNS: readonly RegExp[] = [
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g,
   // Authorization headers, however they were quoted.
   /\b(?:authorization|proxy-authorization)\s*[=:]\s*["']?(?:bearer|basic|token)\s+\S+/gi,
-  // A field that names itself. Catches `password: hunter2` and its cousins.
+  // A field that names itself. Catches `password: hunter2` — pre-commit-allow: that
+  // example is this pattern's documentation, and is what it must match.
   /\b(?:password|passwd|secret|client_secret|private_key|access_token|refresh_token)\s*[=:]\s*["']?[^\s"',}]{4,}/gi,
 ]
 

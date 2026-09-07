@@ -35,7 +35,11 @@ case "$MESSAGE" in
   "Merge "*|"Revert "*|"fixup!"*|"squash!"*|"amend!"*) exit 0 ;;
 esac
 
-STAGED=$(git diff --cached --name-only --diff-filter=ACMR)
+# Normally the index: this runs as a commit is being made. CI sets
+# CHORUS_COMMIT_FILES to apply the same gate to commits that already exist,
+# where there is no index to read — a hook only a contributor's machine
+# enforces is one `--no-verify` away from being decorative.
+STAGED=${CHORUS_COMMIT_FILES:-$(git diff --cached --name-only --diff-filter=ACMR)}
 [ -z "$STAGED" ] && exit 0
 
 # Source of record: code that implements behaviour, schema that constrains it,

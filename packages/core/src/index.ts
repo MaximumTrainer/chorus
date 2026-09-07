@@ -106,6 +106,9 @@ export {
   redactBody,
 } from './redaction.js'
 export type { RedactionLevel, RedactedBody } from './redaction.js'
+// Exported so the pre-commit scanner can share this definition rather than
+// keep a second one that drifts (test/nfr/pre-commit.test.ts pins them equal).
+export { SECRET_PATTERNS, HIGH_CONFIDENCE_SECRET_PATTERNS } from './redaction.js'
 export { RETRIEVABLE_KINDS } from './retrieval.js'
 export type {
   RetrievableKind,

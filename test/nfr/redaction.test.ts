@@ -38,7 +38,7 @@ import {
 const join = (...parts: readonly string[]): string => parts.join('')
 
 const PEM_KEY = join(
-  '-----BEGIN RSA PRIVATE KEY-----',
+  '-----BEGIN RSA PRIVATE KEY-----',  // pre-commit-allow: the label is the shape under test
   '\nMIIEowIBAAKCAQEA\n',
   '-----END RSA PRIVATE KEY-----',
 )
@@ -50,15 +50,15 @@ const secrets: ReadonlyArray<readonly [string, string]> = [
   ['a GitLab token', `set CI_TOKEN=${join('glpat', '-ux1RQFsN6TzT', '_1abcDEF')}`],
   ['a Slack bot token', join('xoxb', '-2345678901-2345678901234', '-AbCdEfGhIjKlMnOpQrStUvWx')],
   ['an AWS access key id', `${join('AKIA', 'IOSFODNN7', 'EXAMPLE')} is the id`],
-  ['an AWS secret', `aws_secret_access_key = ${join('wJalrXUtnFEMI/K7MDENG', '/bPxRfiCYEXAMPLEKEY')}`],
-  ['a bearer header', `Authorization: Bearer ${join('eyJhbGciOiJIUzI1NiJ9', '.payload.signature')}`],
+  ['an AWS secret', `aws_secret_access_key = ${join('wJalrXUtnFEMI/K7MDENG', '/bPxRfiCYEXAMPLEKEY')}`],  // pre-commit-allow: the label is the shape under test
+  ['a bearer header', `Authorization: Bearer ${join('eyJhbGciOiJIUzI1NiJ9', '.payload.signature')}`],  // pre-commit-allow: the label is the shape under test
   [
     'a JWT on its own',
     `token ${join('eyJhbGciOiJIUzI1NiJ9', '.eyJzdWIiOiIxMjM0NX0', '.dBjftJeZ4CVPmB92K27u')}`,
   ],
-  ['a labelled password', 'the config has password: hunter2correcthorse'],
-  ['a labelled client secret', 'client_secret="s3cr3t-value-here"'],
-  ['a refresh token', `refresh_token: ${join('1//0eXaMpLe', 'ReFrEsHtOkEn')}`],
+  ['a labelled password', 'the config has password: hunter2correcthorse'],  // pre-commit-allow: the label is the shape under test
+  ['a labelled client secret', 'client_secret="s3cr3t-value-here"'],  // pre-commit-allow: the label is the shape under test
+  ['a refresh token', `refresh_token: ${join('1//0eXaMpLe', 'ReFrEsHtOkEn')}`],  // pre-commit-allow: the label is the shape under test
   ['a PEM private key', PEM_KEY],
 ]
 

@@ -15,7 +15,18 @@ pnpm verify
 ```
 <!-- /quick-start -->
 
-`pnpm install` also points git at `.githooks`, which installs two gates.
+`pnpm install` also points git at `.githooks`, which installs three gates.
+
+**`pre-commit`** checks the staged change, in the order of how hard each failure is to undo: credential-shaped content (a commit is permanent — it survives `--amend` and lives in every clone made afterwards), then lint on the staged files, then the unit tests related to them. It is written to finish in seconds; the full suite is `pre-push`'s job. See [ADR-0017](docs/adr/0017-pre-commit-hygiene-and-a-coverage-floor.md).
+
+If something only *looks* like a credential — an example in a comment, a recorded cassette — say so on that line, and the scanner leaves it alone:
+
+```ts
+const shown = "ghp_..."                     // pre-commit-allow: documentation example
+"_note": "pre-commit-allow-next: a fake"    // for JSON and YAML, which take no trailing comment
+```
+
+Each form covers one line only. CI re-runs the secret scan over every tracked file and re-applies the commit-message gate to the commits it receives, because a hook runs on your machine and `--no-verify` is one keystroke.
 
 **`pre-push`** runs `pnpm verify`. That safeguard exists because a commit was once pushed with a failing gate: it had been run, but its exit code was not read.
 
@@ -27,7 +38,7 @@ Docs: none — pure extraction, no recorded decision changed.
 
 That is the point of it. "No documentation needed" becomes a claim recorded in history that a reviewer can read and disagree with, rather than an omission nobody can see. It is the same reasoning as the `reason` a public route carries in the route table.
 
-`pnpm verify` runs typecheck, lint, the unit/integration/contract suites, and the non-functional suites. If it passes locally and fails in CI, that divergence is itself a bug (NFR-12 AC4).
+`pnpm verify` runs typecheck, lint, the unit/integration/contract/acceptance suites **with coverage**, and the non-functional suites. The coverage floor is a floor, not a target: it catches a change that adds code nothing exercises, and it is deliberately a few points under where the repository sits. Do not write tests to raise it — CLAUDE.md §7 explains why that produces worse tests than none. If it passes locally and fails in CI, that divergence is itself a bug (NFR-12 AC4).
 
 **It does not run the browser journeys.** CI runs `pnpm test:e2e` as a separate step, and `pre-push` does not, so a change can pass the gate on your machine and fail on the remote. That gap is real and has caught at least one change: the journeys execute TypeScript under Node's strip-only mode, where syntax the rest of the build accepts — a constructor parameter property, for one — is a `SyntaxError` at import. If you touch anything the journeys import, run them:
 

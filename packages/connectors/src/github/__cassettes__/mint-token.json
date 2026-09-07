@@ -9,6 +9,7 @@
       "response": {
         "status": 201,
         "body": {
+          "_note": "pre-commit-allow-next: a recorded fake, not a credential",
           "token": "ghs_scopedtokenfortheonerepository",
           "expires_at": "2026-09-02T12:30:00Z",
           "permissions": {

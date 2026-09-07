@@ -1,0 +1,20 @@
+#!/bin/sh
+# Code hygiene, before a change becomes permanent.
+#
+# Three checks, in the order of how hard each is to undo:
+#
+#   1. Secrets. A credential in a commit survives `--amend`, lives in the
+#      reflog, and is in every clone made afterwards. It is the only failure
+#      here that cannot be fixed by committing again.
+#   2. Lint, on the staged files alone.
+#   3. The unit tests related to the staged code.
+#
+# Deliberately not the whole suite: `pre-push` runs `pnpm verify`, and a gate
+# people skip because it is slow is a gate that is not run — the same reasoning
+# that shaped `commit-msg`. This one should finish in seconds.
+#
+# To bypass in a genuine emergency: git commit --no-verify (and say so in the PR).
+set -e
+
+ROOT=$(git config --get chorus.preCommitRoot || git rev-parse --show-toplevel)
+exec node "$ROOT/scripts/pre-commit.mjs"

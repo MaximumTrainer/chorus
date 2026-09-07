@@ -16,13 +16,14 @@
     "test:nfr": "vitest run --project nfr",
     "test:perf": "vitest run --project performance",
     "test:watch": "vitest",
-    "verify": "pnpm typecheck && pnpm lint && pnpm test && pnpm test:acceptance && pnpm test:nfr",
+    "verify": "pnpm typecheck && pnpm lint && pnpm test:coverage && pnpm test:nfr",
     "site": "node website/build.mjs",
     "site:record": "vitest run --config website/capture/vitest.config.ts",
     "docs:sync": "node scripts/sync-docs.mjs",
     "prepare": "git config core.hooksPath .githooks || true",
     "db:migrate": "tsx packages/db/src/migrate.ts",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:coverage": "vitest run --passWithNoTests --project unit --project integration --project contract --project acceptance --coverage"
   },
   "devDependencies": {
     "@chorus/agent": "workspace:*",
@@ -45,6 +46,7 @@
     "@playwright/test": "1.49.1",
     "@types/node": "22.7.5",
     "@types/ws": "8.5.13",
+    "@vitest/coverage-v8": "2.1.3",
     "eslint": "9.13.0",
     "tsx": "^4.23.13",
     "turbo": "2.2.3",
