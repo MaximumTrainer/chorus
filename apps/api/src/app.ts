@@ -13,6 +13,8 @@ import {
 import { createAuth, type Mailer, type OidcConfig } from './auth.js'
 import type { TurnRunner } from './chat-turn.js'
 import type { Decomposer } from './decompose.js'
+import { createAuditService } from './audit.js'
+import { auditRoutes } from './audit-routes.js'
 import { createProposalService } from './proposals.js'
 import { proposalRoutes } from './proposal-routes.js'
 import type { Retriever } from '@chorus/core'
@@ -287,6 +289,7 @@ function buildRoutes(
       // Pointers attach at materialisation whichever path confirmed the
       // proposal, so a task created by an `auto` policy and one accepted by a
       // person carry the same evidence (DOC-6 AC3).
+      ...auditRoutes(createAuditService(config)),
       ...proposalRoutes(
         createProposalService(config, {
           ...(models
