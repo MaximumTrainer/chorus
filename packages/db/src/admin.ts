@@ -1022,7 +1022,21 @@ export async function applyMigrations(
       BEGIN
         CREATE ROLE ${config.appUser} LOGIN PASSWORD '${config.appPassword}';
       EXCEPTION
+        -- Raised when Postgres finds the role by name before inserting.
         WHEN duplicate_object THEN NULL;
+        -- Raised when it does not. Two sessions that both look and both find
+        -- nothing race to the unique index instead, and the loser gets this —
+        -- a different SQLSTATE for the same fact, and fatal if unhandled.
+        --
+        -- The advisory lock above does not prevent it: it is taken in the
+        -- database being migrated, every isolated test database is a different
+        -- database, and roles are cluster-wide. Two migrations therefore take
+        -- two different locks and are not serialised against each other at all.
+        --
+        -- Only reachable on a cluster where the role does not already exist,
+        -- which is why it is invisible locally — the role survives from the
+        -- last run — and reproducible on a fresh CI runner.
+        WHEN unique_violation THEN NULL;
       END
       $$;
     `)
