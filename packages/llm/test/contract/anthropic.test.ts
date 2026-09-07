@@ -3,6 +3,7 @@ import {
   CONTRACT_CHUNKS,
   CONTRACT_USAGE,
   CONTRACT_VALUE,
+  CONTRACT_TOOL_ARGS,
   type ModelProviderHarness,
 } from '../../src/testing/contract-kit.js'
 import { createAnthropicProvider } from '../../src/providers/anthropic.js'
@@ -109,6 +110,40 @@ function message(text: string): Response {
   )
 }
 
+/** A tool-use block, whose arguments stream as `input_json_delta` fragments. */
+function toolCallFrames(index: number, id: string, args: unknown) {
+  const json = JSON.stringify(args)
+  const cut = Math.floor(json.length / 2)
+  return [
+    {
+      event: 'content_block_start',
+      data: {
+        type: 'content_block_start',
+        index,
+        content_block: { type: 'tool_use', id, name: 'read_file', input: {} },
+      },
+    },
+    // Split mid-argument, which is what a real stream does.
+    {
+      event: 'content_block_delta',
+      data: {
+        type: 'content_block_delta',
+        index,
+        delta: { type: 'input_json_delta', partial_json: json.slice(0, cut) },
+      },
+    },
+    {
+      event: 'content_block_delta',
+      data: {
+        type: 'content_block_delta',
+        index,
+        delta: { type: 'input_json_delta', partial_json: json.slice(cut) },
+      },
+    },
+    { event: 'content_block_stop', data: { type: 'content_block_stop', index } },
+  ]
+}
+
 const harness: ModelProviderHarness = {
   ref: { provider: 'anthropic', model: 'claude-test-1' },
 
@@ -122,6 +157,26 @@ const harness: ModelProviderHarness = {
 
   // The connection ends after one delta: no `message_delta`, no `message_stop`.
   truncated: () => providerWith(() => streamResponse(sse([START, BLOCK_START, DELTAS[0]!]))),
+
+  toolCalling: () =>
+    providerWith(() =>
+      streamResponse(
+        sse([START, ...toolCallFrames(0, 'toolu_1', CONTRACT_TOOL_ARGS), MESSAGE_DELTA, MESSAGE_STOP]),
+      ),
+    ),
+
+  toolCallingParallel: () =>
+    providerWith(() =>
+      streamResponse(
+        sse([
+          START,
+          ...toolCallFrames(0, 'toolu_1', CONTRACT_TOOL_ARGS),
+          ...toolCallFrames(1, 'toolu_2', { path: 'src/billing/post.ts' }),
+          MESSAGE_DELTA,
+          MESSAGE_STOP,
+        ]),
+      ),
+    ),
 
   generating: () => providerWith(() => message(JSON.stringify(CONTRACT_VALUE))),
 

@@ -4,6 +4,7 @@ import {
   CONTRACT_USAGE,
   CONTRACT_VECTORS,
   CONTRACT_VALUE,
+  CONTRACT_TOOL_ARGS,
   type ModelProviderHarness,
 } from '../../src/testing/contract-kit.js'
 import { createOpenAiCompatibleProvider } from '../../src/providers/openai-compatible.js'
@@ -69,6 +70,41 @@ function completion(content: string): Response {
   )
 }
 
+/**
+ * Tool-call frames in the OpenAI-compatible shape.
+ *
+ * The id and name arrive once, on the first frame for an index; every later
+ * frame carries only the index and an argument fragment. A client that keyed on
+ * anything but that index loses the association entirely.
+ */
+function toolCallFrames(index: number, id: string, args: unknown) {
+  const json = JSON.stringify(args)
+  const cut = Math.floor(json.length / 2)
+  return [
+    {
+      choices: [
+        {
+          delta: {
+            tool_calls: [
+              {
+                index,
+                id,
+                type: 'function',
+                function: { name: 'read_file', arguments: json.slice(0, cut) },
+              },
+            ],
+          },
+        },
+      ],
+    },
+    {
+      choices: [
+        { delta: { tool_calls: [{ index, function: { arguments: json.slice(cut) } }] } },
+      ],
+    },
+  ]
+}
+
 const harness: ModelProviderHarness = {
   ref: { provider: 'openai-compatible', model: 'test-mid-1' },
 
@@ -90,6 +126,41 @@ const harness: ModelProviderHarness = {
           status: 200,
           headers: { 'content-type': 'text/event-stream' },
         }),
+    ),
+
+  toolCalling: () =>
+    providerWith(() =>
+      new Response(
+        sse([
+          ...toolCallFrames(0, 'call_1', CONTRACT_TOOL_ARGS),
+          {
+            choices: [{ delta: {}, finish_reason: 'tool_calls' }],
+            usage: {
+              prompt_tokens: CONTRACT_USAGE.inputTokens,
+              completion_tokens: CONTRACT_USAGE.outputTokens,
+            },
+          },
+        ]),
+        { status: 200, headers: { 'content-type': 'text/event-stream' } },
+      ),
+    ),
+
+  toolCallingParallel: () =>
+    providerWith(() =>
+      new Response(
+        sse([
+          ...toolCallFrames(0, 'call_1', CONTRACT_TOOL_ARGS),
+          ...toolCallFrames(1, 'call_2', { path: 'src/billing/post.ts' }),
+          {
+            choices: [{ delta: {}, finish_reason: 'tool_calls' }],
+            usage: {
+              prompt_tokens: CONTRACT_USAGE.inputTokens,
+              completion_tokens: CONTRACT_USAGE.outputTokens,
+            },
+          },
+        ]),
+        { status: 200, headers: { 'content-type': 'text/event-stream' } },
+      ),
     ),
 
   generating: () => providerWith(() => completion(JSON.stringify(CONTRACT_VALUE))),

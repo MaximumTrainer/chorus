@@ -72,6 +72,21 @@ describe('ADR-0015 tier configuration', () => {
     ).toThrow(/strong/)
   })
 
+  it('NFR-2: streamingToolDeltas is read from configuration, defaulting to capable', () => {
+    // A capability nothing can configure is a capability the router cannot act
+    // on. `streamingToolDeltas` sat in the type and in `missingCapabilities`
+    // for as long as no provider emitted them and no deployment could say so.
+    const withFlag = JSON.parse(valid) as Record<string, Array<Record<string, unknown>>>
+    withFlag.balanced![0]!.streamingToolDeltas = false
+
+    const config = routerConfigFromEnv({ CHORUS_MODEL_TIERS: JSON.stringify(withFlag) })
+
+    expect(config.tiers.balanced[0]!.capabilities.streamingToolDeltas).toBe(false)
+    // Defaulted to capable like the other flags: the common case is a current
+    // model, and a deployment made to enumerate every capability gets one wrong.
+    expect(config.tiers.strong[0]!.capabilities.streamingToolDeltas).toBe(true)
+  })
+
   it('ADR-0015: the embedding tier must actually be an embedding model', () => {
     const wrong = JSON.parse(valid) as Record<string, Array<Record<string, unknown>>>
     wrong.embed![0]!.embedding = false

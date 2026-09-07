@@ -70,6 +70,7 @@ interface ConfiguredCandidate {
   embedding?: unknown
   toolCalling?: unknown
   streaming?: unknown
+  streamingToolDeltas?: unknown
   structuredOutput?: unknown
   inputPerMillion?: unknown
   outputPerMillion?: unknown
@@ -96,6 +97,10 @@ function candidateFrom(raw: ConfiguredCandidate, tier: string, index: number): M
       structuredOutput: raw.structuredOutput !== false,
       toolCalling: raw.toolCalling !== false,
       streaming: raw.streaming !== false,
+      // Some providers stream text but not tool-call deltas. Defaulted to
+      // capable like the rest, and settable for the ones that are not — a
+      // capability no deployment can declare is one the router cannot act on.
+      streamingToolDeltas: raw.streamingToolDeltas !== false,
       contextWindow: typeof raw.contextWindow === 'number' ? raw.contextWindow : 0,
       embedding,
     },

@@ -1,6 +1,7 @@
 import { UpstreamError } from '@chorus/core'
 import type {
   ChatRequest,
+  ToolSpec,
   GenerateRequest,
   GenerateResult,
   ModelProvider,
@@ -41,9 +42,46 @@ function headersFor(apiKey: string | undefined): Record<string, string> {
   }
 }
 
+interface ToolCallDelta {
+  index?: number
+  id?: string
+  function?: { name?: string; arguments?: string }
+}
+
 interface ChatDelta {
-  choices?: Array<{ delta?: { content?: string } }>
+  choices?: Array<{ delta?: { content?: string; tool_calls?: ToolCallDelta[] } }>
   usage?: { prompt_tokens?: number; completion_tokens?: number }
+}
+
+/** Tool definitions in the OpenAI-compatible shape, from the one Zod source. */
+function toolsFor(tools: readonly ToolSpec[] | undefined): unknown[] | undefined {
+  if (!tools || tools.length === 0) return undefined
+  return tools.map((tool) => ({
+    type: 'function',
+    function: {
+      name: tool.name,
+      description: tool.description,
+      parameters: jsonSchemaFor(tool.inputSchema),
+    },
+  }))
+}
+
+/**
+ * The accumulated argument text, as an object.
+ *
+ * An empty string means a tool that takes no arguments, which is `{}` rather
+ * than a failure.
+ */
+function parseArguments(json: string): Record<string, unknown> {
+  if (json.trim() === '') return {}
+  try {
+    const parsed: unknown = JSON.parse(json)
+    return parsed !== null && typeof parsed === 'object'
+      ? (parsed as Record<string, unknown>)
+      : {}
+  } catch {
+    return {}
+  }
 }
 
 export function createOpenAiCompatibleProvider(
@@ -69,6 +107,7 @@ export function createOpenAiCompatibleProvider(
             // it simply omit it, and the `done` event then reports zeroes
             // rather than failing.
             stream_options: { include_usage: true },
+            ...(toolsFor(request.tools) ? { tools: toolsFor(request.tools) } : {}),
             ...(request.maxOutputTokens ? { max_tokens: request.maxOutputTokens } : {}),
           }),
           ...(request.signal ? { signal: request.signal } : {}),
@@ -103,6 +142,24 @@ export function createOpenAiCompatibleProvider(
       // under load.
       let buffered = ''
       let usage = { inputTokens: 0, outputTokens: 0 }
+      // Keyed by the delta's `index`, which is the only field every frame for a
+      // call carries — the id and name arrive once, on the first. Keying on
+      // anything else merges two parallel calls into one whose arguments are
+      // the concatenation of both, and that parses.
+      const calls = new Map<number, { id: string; name: string; json: string }>()
+
+      /** Completes every open call, in index order. */
+      function* finishCalls(): Generator<StreamEvent> {
+        for (const [index, call] of [...calls.entries()].sort((a, b) => a[0] - b[0])) {
+          calls.delete(index)
+          yield {
+            type: 'tool_call_end',
+            id: call.id,
+            name: call.name,
+            arguments: parseArguments(call.json),
+          }
+        }
+      }
 
       try {
         for (;;) {
@@ -123,6 +180,7 @@ export function createOpenAiCompatibleProvider(
             // throws at the very end of an otherwise perfect stream, which is
             // the framing detail every hand-rolled client gets wrong once.
             if (payload === '[DONE]') {
+              yield* finishCalls()
               yield { type: 'done', usage }
               return
             }
@@ -144,6 +202,21 @@ export function createOpenAiCompatibleProvider(
               }
             }
 
+            for (const delta of parsed.choices?.[0]?.delta?.tool_calls ?? []) {
+              const index = delta.index ?? 0
+              let call = calls.get(index)
+              if (!call) {
+                call = { id: delta.id ?? `call_${index}`, name: delta.function?.name ?? '', json: '' }
+                calls.set(index, call)
+                yield { type: 'tool_call_start', id: call.id, name: call.name }
+              }
+              const fragment = delta.function?.arguments
+              if (typeof fragment === 'string' && fragment !== '') {
+                call.json += fragment
+                yield { type: 'tool_call_delta', id: call.id, argumentsDelta: fragment }
+              }
+            }
+
             const text = parsed.choices?.[0]?.delta?.content
             if (typeof text === 'string' && text !== '') yield { type: 'token', text }
           }
@@ -152,6 +225,7 @@ export function createOpenAiCompatibleProvider(
         // The server closed without a terminator. Reported as done rather than
         // as an error: the tokens already yielded are real, and the caller has
         // to be told the stream ended either way.
+        yield* finishCalls()
         yield { type: 'done', usage }
       } catch (error) {
         yield {

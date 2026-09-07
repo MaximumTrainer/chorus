@@ -20,10 +20,32 @@ export interface ChatMessage {
   readonly content: string
 }
 
+/**
+ * A tool the model may call.
+ *
+ * The schema is Zod, as `generate`'s is, so one definition describes what a
+ * tool accepts whether it is being offered to a model or validated on the way
+ * back. A second, JSON-shaped copy per provider would drift from the first.
+ */
+export interface ToolSpec {
+  readonly name: string
+  /** What it does, in the words the model will decide on. */
+  readonly description: string
+  readonly inputSchema: ZodType<unknown>
+}
+
 export interface ChatRequest {
   readonly model: ModelRef
   readonly messages: readonly ChatMessage[]
   readonly context: CallContext
+  /**
+   * Tools the model may call. Offering none is the chat case.
+   *
+   * Requires `streamingToolDeltas` of the resolved model: a provider that
+   * streams text but not tool-call deltas cannot serve this, and the router
+   * refuses it before the call rather than half-way through one.
+   */
+  readonly tools?: readonly ToolSpec[]
   readonly maxOutputTokens?: number
   /** Aborts an in-flight call — a closed connection, a cancelled run. */
   readonly signal?: AbortSignal
@@ -38,6 +60,30 @@ export interface ChatRequest {
  */
 export type StreamEvent =
   | { readonly type: 'token'; readonly text: string }
+  /** The model has begun a call, and named the tool. Arguments follow. */
+  | { readonly type: 'tool_call_start'; readonly id: string; readonly name: string }
+  /**
+   * A fragment of the arguments, as JSON text.
+   *
+   * Deltas rather than whole calls because a coding job's arguments are large —
+   * a file edit is a diff — and a panel that shows nothing until the whole call
+   * has arrived reads as a hang. The fragments are not individually parseable;
+   * only their concatenation is.
+   */
+  | { readonly type: 'tool_call_delta'; readonly id: string; readonly argumentsDelta: string }
+  /**
+   * The call, complete and parsed.
+   *
+   * Parsed here rather than by every caller: providers differ in how they
+   * escape JSON strings, and a consumer that string-matched the raw fragments
+   * would break on a Unicode or forward-slash escape it had never seen.
+   */
+  | {
+      readonly type: 'tool_call_end'
+      readonly id: string
+      readonly name: string
+      readonly arguments: Record<string, unknown>
+    }
   | { readonly type: 'done'; readonly usage: TokenUsage }
   | { readonly type: 'error'; readonly message: string }
 

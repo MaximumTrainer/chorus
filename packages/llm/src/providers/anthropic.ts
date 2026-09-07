@@ -3,6 +3,7 @@ import { ConfigurationError } from '@chorus/core'
 import type {
   ChatMessage,
   ChatRequest,
+  ToolSpec,
   GenerateRequest,
   GenerateResult,
   ModelProvider,
@@ -49,6 +50,24 @@ export interface AnthropicOptions {
 const DEFAULT_MAX_OUTPUT_TOKENS = 8192
 
 /**
+ * The accumulated argument text, as an object.
+ *
+ * An empty string means the model called a tool that takes no arguments, which
+ * is `{}` rather than a failure.
+ */
+function parseArguments(json: string): Record<string, unknown> {
+  if (json.trim() === '') return {}
+  try {
+    const parsed: unknown = JSON.parse(json)
+    return parsed !== null && typeof parsed === 'object'
+      ? (parsed as Record<string, unknown>)
+      : {}
+  } catch {
+    return {}
+  }
+}
+
+/**
  * Splits Chorus's flat message list into Anthropic's shape.
  *
  * System messages are a top-level parameter there, not a role in the
@@ -72,6 +91,16 @@ function split(messages: readonly ChatMessage[]): {
   }
 
   return { system: system.length > 0 ? system.join('\n\n') : undefined, turns }
+}
+
+/** Tool definitions in Anthropic's shape, from the one Zod definition. */
+function toolsFor(tools: readonly ToolSpec[] | undefined): unknown[] | undefined {
+  if (!tools || tools.length === 0) return undefined
+  return tools.map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    input_schema: jsonSchemaFor(tool.inputSchema),
+  }))
 }
 
 export function createAnthropicProvider(options: AnthropicOptions): ModelProvider {
@@ -102,10 +131,18 @@ export function createAnthropicProvider(options: AnthropicOptions): ModelProvide
             max_tokens: request.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
             messages: turns,
             ...(system ? { system } : {}),
+            ...(toolsFor(request.tools)
+              ? { tools: toolsFor(request.tools) as never }
+              : {}),
             stream: true,
           },
           { ...(request.signal ? { signal: request.signal } : {}) },
         )
+
+        // Keyed by content-block index, which is the only thing every frame for
+        // a call carries. Two calls in one turn arrive interleaved, and an
+        // accumulator keyed on anything else concatenates their arguments.
+        const calls = new Map<number, { id: string; name: string; json: string }>()
 
         for await (const event of events) {
           // Input tokens arrive once, on the opening frame, and never again.
@@ -115,8 +152,44 @@ export function createAnthropicProvider(options: AnthropicOptions): ModelProvide
             continue
           }
 
+          if (event.type === 'content_block_start') {
+            const block = event.content_block as { type: string; id?: string; name?: string }
+            if (block.type === 'tool_use' && block.id && block.name) {
+              calls.set(event.index, { id: block.id, name: block.name, json: '' })
+              yield { type: 'tool_call_start', id: block.id, name: block.name }
+            }
+            continue
+          }
+
           if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
             if (event.delta.text !== '') yield { type: 'token', text: event.delta.text }
+            continue
+          }
+
+          if (event.type === 'content_block_delta' && event.delta.type === 'input_json_delta') {
+            const call = calls.get(event.index)
+            const fragment = event.delta.partial_json
+            if (call && fragment !== '') {
+              call.json += fragment
+              yield { type: 'tool_call_delta', id: call.id, argumentsDelta: fragment }
+            }
+            continue
+          }
+
+          if (event.type === 'content_block_stop') {
+            const call = calls.get(event.index)
+            if (call) {
+              calls.delete(event.index)
+              // Parsed here, once. Providers escape JSON strings differently,
+              // and a caller string-matching raw fragments breaks on the first
+              // escape it has not seen.
+              yield {
+                type: 'tool_call_end',
+                id: call.id,
+                name: call.name,
+                arguments: parseArguments(call.json),
+              }
+            }
             continue
           }
 

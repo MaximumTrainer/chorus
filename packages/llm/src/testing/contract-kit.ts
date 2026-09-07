@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { z } from 'zod'
-import type { ModelProvider } from '../provider.js'
+import type { ModelProvider, StreamEvent } from '../provider.js'
 import type { ModelRef, TokenUsage } from '../types.js'
 
 /**
@@ -39,6 +39,23 @@ export const CONTRACT_SCHEMA_NAME = 'contract_draft'
 /** The value a rigged `generate` provider must return. */
 export const CONTRACT_VALUE = { title: 'The invoice parser does three jobs', tags: ['billing'] }
 
+/** The tool a rigged tool-calling provider is offered, and what it must call. */
+export const CONTRACT_TOOL = {
+  name: 'read_file',
+  description: 'Reads a file from the repository.',
+  inputSchema: z.object({ path: z.string(), pattern: z.string().optional() }),
+}
+
+/**
+ * Arguments a rigged tool call must produce.
+ *
+ * The path carries forward slashes and the pattern a Unicode escape, both on
+ * purpose: providers differ in how they escape JSON strings, and a consumer
+ * that string-matched raw fragments passes until it meets one that escapes
+ * differently.
+ */
+export const CONTRACT_TOOL_ARGS = { path: 'src/billing/parse.ts', pattern: 'café' }
+
 /** The vectors a rigged embedding provider must return, for two inputs. */
 export const CONTRACT_VECTORS: readonly number[][] = [
   [0.5, 0.25, 0],
@@ -70,6 +87,17 @@ export interface ModelProviderHarness {
    * consumer waiting forever.
    */
   truncated(): ModelProvider
+
+  /**
+   * Streams one tool call whose arguments arrive across several frames.
+   *
+   * Split mid-argument on purpose: a provider that assumed one frame is one
+   * complete argument drops part of every large call, and only under load.
+   */
+  toolCalling(): ModelProvider
+
+  /** Streams two tool calls in one turn, interleaved. */
+  toolCallingParallel(): ModelProvider
 
   /** Returns `CONTRACT_VALUE` as structured output. */
   generating(): ModelProvider
@@ -194,6 +222,71 @@ export function describeModelProviderContract(name: string, harness: ModelProvid
       const { errors } = await drain(harness.leaking(apiKey), ref)
 
       expect(errors.join(' ')).not.toContain(apiKey)
+    })
+
+    it('NFR-2: a tool call arrives incrementally, then complete', async () => {
+      const events: StreamEvent[] = []
+      for await (const event of harness.toolCalling().stream({
+        model: ref,
+        messages: [{ role: 'user', content: 'Read the parser.' }],
+        context: CONTEXT,
+        tools: [CONTRACT_TOOL],
+      })) {
+        events.push(event)
+      }
+
+      const start = events.find((e) => e.type === 'tool_call_start')
+      const deltas = events.filter((e) => e.type === 'tool_call_delta')
+      const end = events.find((e) => e.type === 'tool_call_end')
+
+      expect(start, 'a tool call must announce itself before its arguments').toMatchObject({
+        name: CONTRACT_TOOL.name,
+      })
+      // More than one, or nothing was streamed and the caller may as well have
+      // waited for the whole response.
+      expect(deltas.length).toBeGreaterThan(1)
+      expect(end).toBeDefined()
+
+      // The fragments concatenate to what the completed call reports, so a
+      // consumer rendering progress and a consumer acting on the result agree.
+      const joined = deltas.map((e) => (e as { argumentsDelta: string }).argumentsDelta).join('')
+      expect(JSON.parse(joined)).toEqual(CONTRACT_TOOL_ARGS)
+      expect((end as { arguments: unknown }).arguments).toEqual(CONTRACT_TOOL_ARGS)
+
+      // Every event for a call carries the same id, or a caller with two calls
+      // in flight cannot tell which deltas belong to which.
+      const id = (start as { id: string }).id
+      expect(deltas.every((e) => (e as { id: string }).id === id)).toBe(true)
+      expect((end as { id: string }).id).toBe(id)
+
+      expect(events.at(-1)?.type).toBe('done')
+    })
+
+    it('NFR-2: parallel tool calls stay distinguishable', async () => {
+      const events: StreamEvent[] = []
+      for await (const event of harness.toolCallingParallel().stream({
+        model: ref,
+        messages: [{ role: 'user', content: 'Read both.' }],
+        context: CONTEXT,
+        tools: [CONTRACT_TOOL],
+      })) {
+        events.push(event)
+      }
+
+      const ends = events.filter((e) => e.type === 'tool_call_end') as Array<{
+        id: string
+        arguments: Record<string, unknown>
+      }>
+
+      // Two calls, two ids, two distinct argument sets — not one call whose
+      // arguments are the concatenation of both, which is what an
+      // accumulator keyed on nothing produces.
+      expect(ends).toHaveLength(2)
+      expect(new Set(ends.map((e) => e.id)).size).toBe(2)
+      expect(ends.map((e) => e.arguments.path).sort()).toEqual([
+        'src/billing/parse.ts',
+        'src/billing/post.ts',
+      ])
     })
 
     it('NFR-2: generate returns a value validated against the schema', async () => {

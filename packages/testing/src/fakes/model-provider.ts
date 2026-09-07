@@ -51,6 +51,19 @@ export interface FakeModelScript {
    * (CLAUDE.md §4: extend the fake, do not stub around it).
    */
   readonly schemaInvalid?: unknown
+  /**
+   * Tool calls the stream should make, arguments split across frames.
+   *
+   * Scripted as whole calls and split by the fake, because what a test wants to
+   * say is "it called read_file with this path"; how many frames that took is
+   * the fake's business, and a test that spelled it out would be asserting on
+   * the transport rather than the behaviour.
+   */
+  readonly toolCalls?: readonly {
+    readonly id: string
+    readonly name: string
+    readonly arguments: Record<string, unknown>
+  }[]
 }
 
 export interface RecordedRequest {
@@ -208,6 +221,23 @@ export function createFakeModelProvider(initial: FakeModelScript = {}): FakeMode
 
       for (const text of current.chunks ?? []) {
         yield { type: 'token', text }
+      }
+
+      for (const call of current.toolCalls ?? []) {
+        yield { type: 'tool_call_start', id: call.id, name: call.name }
+        // Split mid-argument, as a real stream does: a consumer that assumed
+        // one frame is one complete argument passes against a fake that never
+        // splits and drops data against a provider that does.
+        const json = JSON.stringify(call.arguments)
+        const cut = Math.floor(json.length / 2)
+        yield { type: 'tool_call_delta', id: call.id, argumentsDelta: json.slice(0, cut) }
+        yield { type: 'tool_call_delta', id: call.id, argumentsDelta: json.slice(cut) }
+        yield {
+          type: 'tool_call_end',
+          id: call.id,
+          name: call.name,
+          arguments: call.arguments,
+        }
       }
 
       yield {
