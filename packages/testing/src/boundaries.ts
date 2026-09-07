@@ -202,6 +202,17 @@ export const CHORUS_BOUNDARY_RULES: readonly BoundaryRule[] = [
     forbidContent: MODEL_NAMES,
   },
   {
+    id: 'CODE-2: exactly one brief builder, in packages/coding',
+    rationale:
+      'The sandbox and a local agent over MCP must receive identical context ' +
+      '(ADR-0007). A second assembler is how that stops being true, and the ' +
+      'drift is invisible: nothing fails, and months later somebody mentions ' +
+      'that the CLI gives worse results than the web app.',
+    appliesTo: /^(apps|packages)\/.*\/src\//,
+    except: [/^packages\/coding\//, /\.test\.ts$/],
+    forbidContent: [/\bBRIEF\.md\b/, /\bassembleBrief\b/],
+  },
+  {
     id: 'NFR-3: no database driver outside packages/db',
     rationale:
       'Tenancy is enforced by row-level security bound to a session variable, ' +

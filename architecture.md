@@ -891,6 +891,8 @@ sequenceDiagram
 
 One deterministic builder produces both `BRIEF.md` (for the agent to read) and `brief.json` (for adapters that prefer structure) from: task title, description and acceptance criteria; linked document sections; the session decision log; code pointers; capture evidence (screenshots, DOM excerpts, annotations); repository conventions from the indexer; and the team charter. The same builder serves the MCP `implement-task` prompt (§14), so a local agent and the platform's sandbox receive **identical** context.
 
+It lives in `packages/coding`, and a dependency-boundary rule fails any second assembler — the guarantee is that there is exactly one, and a second one is how it quietly stops being true. Two ordering decisions follow from §9.3 rather than from readability: the **stable prefix comes first** (charter, then repository conventions, then documents) with the task and its pointers last, because caching is a prefix match and a volatile section early in the brief means nothing before it can be reused; and **truncation drops whole sections by precedence** (captures, then decisions, then documents, then charter) rather than cutting text, because half a document reads as a complete one that happens to stop. Acceptance criteria and code pointers are never truncated: they are what the agent is asked to satisfy and where it is told to look, and a brief missing either still looks complete. Whatever was dropped is named in the brief itself. Sources that do not yet exist — the decision log (CHAT-10) and capture evidence (EXT-5) — are present and empty rather than absent, so an adapter never has to tell "none recorded" apart from "the builder forgot".
+
 ### 12.2 Adapter interface (CODE-3)
 
 ```ts
@@ -906,7 +908,13 @@ interface CodingAdapter {
 
 Each adapter runs its agent non-interactively with the brief as the prompt and the workspace's model configuration injected as environment. The **reference adapter** is a small tool-using loop (read, search, edit, run) built on the provider router, so the platform works with any model — including a local one — with no third-party CLI installed.
 
+Every adapter passes one **shared contract kit** (`packages/coding/src/testing/`), with no per-adapter exemption: a kit with an exemption is a description of whichever adapter was written first, not a contract. The reference adapter is built before any vendor adapter (`plan.md` WP-2.3) because a vendor CLI brings its own file access, network assumptions and credential handling, and would paper over gaps in the sandbox contract the reference agent cannot. Vendor adapters are thin by design and their SDKs live in `deploy/images`, never in `apps/` or `packages/` — the `claude-code` adapter installs the Claude Code CLI into its sandbox image and invokes it as the container entrypoint, so ADR-0005's boundary rule is not engaged.
+
 ### 12.3 Sandbox contract (CODE-4)
+
+The `Sandbox` contract is declared in `packages/core`, for the reason `ArtefactWriter` is: the coding package implements against it and `packages/testing` fakes it, and a contract owned by either would make the two depend on each other (CLAUDE.md §10).
+
+The properties below divide into two kinds, and the division decides where each is asserted. Environment construction and result validation are **logic** — decided before any container starts — and `test/nfr/sandbox-security.test.ts` asserts them on every pull request. Egress refusal, resource limits and orphan reconciliation are properties of a **runtime**, and are asserted against real containers; a mock asserting them would be a test that a comment is still present. The environment is built as an allow-list rather than as the host environment minus known names, because the subtractive version is correct until somebody adds a variable and is then silently wrong in the direction that leaks.
 
 Non-negotiable properties, asserted by a dedicated security test suite:
 

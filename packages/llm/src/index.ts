@@ -19,6 +19,7 @@ export type {
   StreamEvent,
   GenerateRequest,
   GenerateResult,
+  ToolSpec,
 } from './provider.js'
 export { routerConfigFromEnv, DEFAULT_PURPOSE_TIERS, TIER_REQUIREMENTS } from './config.js'
 export { createOpenAiCompatibleProvider } from './providers/openai-compatible.js'

@@ -199,3 +199,18 @@ export type { Anchor, AnchorLocation } from './anchors.js'
 export { blocksOf, diffBlocks, DIFF_KINDS } from './diff.js'
 export type { DiffKind, DiffLine } from './diff.js'
 export { absolute, documentToHtml } from './document-html.js'
+export {
+  buildSandboxEnvironment,
+  validateSandboxResult,
+  DEFAULT_MAX_CHANGED_LINES,
+} from './sandbox.js'
+export type {
+  Sandbox,
+  SandboxRunner,
+  SandboxSpec,
+  SandboxLimits,
+  SandboxRepository,
+  SandboxOutput,
+  SandboxChange,
+  SandboxVerdict,
+} from './sandbox.js'

@@ -27,3 +27,5 @@ export type {
   FakeModelScript,
   RecordedRequest,
 } from './fakes/model-provider.js'
+export { createFakeSandbox, createFakeSandboxRunner } from './fakes/sandbox.js'
+export type { FakeSandbox, FakeSandboxScript } from './fakes/sandbox.js'

@@ -29,6 +29,7 @@
     "@chorus/agent": "workspace:*",
     "@chorus/api": "workspace:*",
     "@chorus/brain": "workspace:*",
+    "@chorus/coding": "workspace:*",
     "@chorus/collab": "workspace:*",
     "@chorus/connectors": "workspace:*",
     "@chorus/core": "workspace:*",

@@ -47,6 +47,7 @@ COPY packages/telemetry/package.json packages/telemetry/
 COPY packages/connectors/package.json packages/connectors/
 COPY packages/indexer/package.json packages/indexer/
 COPY packages/agent/package.json packages/agent/
+COPY packages/coding/package.json packages/coding/
 COPY packages/brain/package.json packages/brain/
 COPY packages/notifications/package.json packages/notifications/
 COPY packages/testing/package.json packages/testing/
