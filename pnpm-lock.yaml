@@ -456,7 +456,7 @@ importers:
   packages/llm:
     dependencies:
       '@anthropic-ai/sdk':
-        specifier: ^0.124.0
+        specifier: 0.124.0
         version: 0.124.0(zod@4.5.4)
       '@chorus/core':
         specifier: workspace:*
