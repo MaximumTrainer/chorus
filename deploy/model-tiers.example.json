@@ -1,7 +1,7 @@
 {
   "_comment": [
     "Reference tier profiles (ADR-0015). REASONABLE STARTING POINTS, NOT",
-    "BENCHMARKED RECOMMENDATIONS — the evaluation set that would justify a",
+    "BENCHMARKED RECOMMENDATIONS \u2014 the evaluation set that would justify a",
     "ranking cannot exist before CHAT-5 and TASK-3, and inventing one would",
     "look measured while being guesswork. Issue #152 tracks replacing these",
     "with measured profiles.",
@@ -12,25 +12,94 @@
     "extra entries are fallbacks, tried in order, and every fallback is",
     "recorded in the run trace so a silent downgrade is impossible to miss.",
     "",
+    "TWO PROVIDERS SHIP. \"openai-compatible\" reaches OpenAI, Azure, Ollama, LM",
+    "Studio, vLLM and any self-hosted server; set CHORUS_MODEL_BASE_URL (and",
+    "CHORUS_MODEL_API_KEY where the endpoint wants one). \"anthropic\" reaches",
+    "Anthropic; set CHORUS_ANTHROPIC_API_KEY. Configure either or both \u2014 the",
+    "\"provider\" field on each candidate below selects which client serves it.",
+    "",
+    "Anthropic serves no embedding endpoint, so the \"embed\" tier must name an",
+    "OpenAI-compatible model whatever the chat tiers use. A misconfigured embed",
+    "tier is refused at boot rather than discovered as bad retrieval later.",
+    "",
     "Set this as CHORUS_MODEL_TIERS, and point CHORUS_MODEL_BASE_URL at any",
-    "OpenAI-compatible endpoint — including a local one, which is what makes",
+    "OpenAI-compatible endpoint \u2014 including a local one, which is what makes",
     "NFR-1's 'no mandatory SaaS dependency' true rather than aspirational.",
     "",
     "Model names live here and never in source: that is what keeps the",
     "boundary rule meaningful and makes a provider's deprecation an ops change",
     "rather than a release."
   ],
-
   "fast": [
-    { "provider": "openai-compatible", "model": "REPLACE-WITH-A-SMALL-MODEL", "contextWindow": 32000 }
+    {
+      "provider": "openai-compatible",
+      "model": "REPLACE-WITH-A-SMALL-MODEL",
+      "contextWindow": 32000
+    }
   ],
   "balanced": [
-    { "provider": "openai-compatible", "model": "REPLACE-WITH-A-MID-MODEL", "contextWindow": 128000 }
+    {
+      "provider": "openai-compatible",
+      "model": "REPLACE-WITH-A-MID-MODEL",
+      "contextWindow": 128000
+    }
   ],
   "strong": [
-    { "provider": "openai-compatible", "model": "REPLACE-WITH-A-LARGE-MODEL", "contextWindow": 200000 }
+    {
+      "provider": "openai-compatible",
+      "model": "REPLACE-WITH-A-LARGE-MODEL",
+      "contextWindow": 200000
+    }
   ],
   "embed": [
-    { "provider": "openai-compatible", "model": "REPLACE-WITH-AN-EMBEDDING-MODEL", "embedding": true }
-  ]
+    {
+      "provider": "openai-compatible",
+      "model": "REPLACE-WITH-AN-EMBEDDING-MODEL",
+      "embedding": true
+    }
+  ],
+  "_cloud_anthropic_profile": {
+    "_comment": [
+      "A cloud profile on Anthropic. Same caveat as everything above: reasonable",
+      "starting points, NOT benchmarked recommendations (#152). Copy these entries",
+      "over the tiers above to use them, and keep an OpenAI-compatible embed tier.",
+      "",
+      "Prices are hundredths of a cent per million tokens, so cost arithmetic stays",
+      "integer and the displayed run cost reconciles exactly with the ledger."
+    ],
+    "fast": [
+      {
+        "provider": "anthropic",
+        "model": "claude-haiku-4-5",
+        "contextWindow": 200000,
+        "inputPerMillion": 10000,
+        "outputPerMillion": 50000
+      }
+    ],
+    "balanced": [
+      {
+        "provider": "anthropic",
+        "model": "claude-sonnet-5",
+        "contextWindow": 1000000,
+        "inputPerMillion": 20000,
+        "outputPerMillion": 100000
+      }
+    ],
+    "strong": [
+      {
+        "provider": "anthropic",
+        "model": "claude-opus-5",
+        "contextWindow": 1000000,
+        "inputPerMillion": 50000,
+        "outputPerMillion": 250000
+      }
+    ],
+    "embed": [
+      {
+        "provider": "openai-compatible",
+        "model": "REPLACE-WITH-AN-EMBEDDING-MODEL",
+        "embedding": true
+      }
+    ]
+  }
 }

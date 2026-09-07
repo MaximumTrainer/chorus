@@ -16,3 +16,7 @@ export type { ModelProvider, ChatRequest, ChatMessage, StreamEvent } from './pro
 export { routerConfigFromEnv, DEFAULT_PURPOSE_TIERS, TIER_REQUIREMENTS } from './config.js'
 export { createOpenAiCompatibleProvider } from './providers/openai-compatible.js'
 export type { OpenAiCompatibleOptions } from './providers/openai-compatible.js'
+export { createAnthropicProvider } from './providers/anthropic.js'
+export type { AnthropicOptions } from './providers/anthropic.js'
+export { createProviderRegistry } from './registry.js'
+export { providersFromEnv } from './providers.js'

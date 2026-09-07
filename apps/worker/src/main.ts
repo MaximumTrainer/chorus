@@ -4,7 +4,7 @@ import { createCredentialStore } from '@chorus/connectors'
 import { configFromEnv } from '@chorus/db'
 import { builtInWorkflows } from '@chorus/agent'
 import { createIndexer } from '@chorus/indexer'
-import { createOpenAiCompatibleProvider, routerConfigFromEnv } from '@chorus/llm'
+import { providersFromEnv, routerConfigFromEnv } from '@chorus/llm'
 import { createQueue, redisConfigFromEnv } from '@chorus/queue'
 import { initTelemetry, shutdownTelemetry } from '@chorus/telemetry'
 import { createGitRepositoryAccess } from './access.js'
@@ -101,12 +101,9 @@ async function main(): Promise<void> {
         )
       }
       const embedModel = models.embed[0]!.ref
-      return createOpenAiCompatibleProvider({
-        baseUrl: required('CHORUS_MODEL_BASE_URL'),
-        ...(process.env.CHORUS_MODEL_API_KEY
-          ? { apiKey: process.env.CHORUS_MODEL_API_KEY }
-          : {}),
-      }).embed(texts, embedModel)
+      // Through the registry, so the `provider` half of the configured tier is
+      // what decides the client — the same dispatch every model call uses.
+      return providersFromEnv().embed(texts, embedModel)
     },
     embeddingModel: models?.embed[0]!.ref.model ?? 'unconfigured',
   })

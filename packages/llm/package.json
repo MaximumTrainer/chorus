@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "0.124.0",
     "@chorus/core": "workspace:*",
     "yaml": "2.6.0"
   },

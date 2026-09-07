@@ -1,6 +1,7 @@
 import { UpstreamError } from '@chorus/core'
 import type { ChatRequest, ModelProvider, StreamEvent } from '../provider.js'
 import type { ModelRef } from '../types.js'
+import { redact } from './redact.js'
 
 /**
  * A provider speaking the OpenAI-compatible wire format (NFR-1, NFR-2).
@@ -24,16 +25,6 @@ export interface OpenAiCompatibleOptions {
   /** Injected so tests drive the parser without a server. */
   readonly fetch?: typeof fetch
   readonly name?: string
-}
-
-/**
- * Strips anything that would put the credential in a log or a health row.
- *
- * Provider errors reach run traces and health pages that people read, and an
- * upstream is perfectly capable of echoing the key back in its own message.
- */
-function redact(text: string, apiKey: string | undefined): string {
-  return apiKey ? text.split(apiKey).join('[redacted]') : text
 }
 
 function headersFor(apiKey: string | undefined): Record<string, string> {
