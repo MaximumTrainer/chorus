@@ -29,7 +29,7 @@ import {
   type CheckpointRow,
 } from './checkpoints.js'
 import { fillPrompt } from '@chorus/llm'
-import type { ModelProvider, ModelRef } from '@chorus/llm'
+import type { ModelProvider, ModelRef, TokenUsage } from '@chorus/llm'
 import { withSpan } from '@chorus/telemetry'
 import { issueDecisionToken } from './decision-links.js'
 import { routingEvent, type RoutingDecision } from './router.js'
@@ -147,7 +147,12 @@ export interface ExecutorDeps {
    * written. Absent means zero, which keeps the ledger's *shape* correct while
    * a deployment has told it nothing about money.
    */
-  readonly priceFor?: (model: ModelRef, usage: { inputTokens: number; outputTokens: number }) => number
+  /**
+   * Prices a call. Takes the whole `TokenUsage` — including cached input, which
+   * bills at a different rate — so the ledger and the displayed cost cannot
+   * disagree about what a cached run cost (NFR-8 AC2).
+   */
+  readonly priceFor?: (model: ModelRef, usage: TokenUsage) => number
   /**
    * Live events for a caller streaming this run (CHAT-2).
    *
@@ -1032,12 +1037,31 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
         // no charter contributes nothing at all, rather than a heading standing
         // over an empty section.
         const charter = await charterFor(workspaceId, teamId)
-        const content = charter ? `# Team charter\n\n${charter}\n\n---\n\n${body}` : body
+
+        // §9.3: the stable prefix first, the volatile part last, and in
+        // separate messages so a provider can mark the boundary between them.
+        // Caching is a prefix match — one changing byte early invalidates
+        // everything after it — so a charter concatenated in front of a body
+        // that changes every call produces a prefix that caches nothing, which
+        // is exactly the shape this used to have.
+        const messages: Array<{ role: 'system' | 'user'; content: string }> = charter
+          ? [
+              { role: 'system', content: `# Team charter\n\n${charter}` },
+              { role: 'user', content: body },
+            ]
+          : [{ role: 'user', content: body }]
+
+        // The trace records what was sent as one text, so a reader sees the
+        // whole prompt rather than reassembling it from parts.
+        const content = messages.map((message) => message.content).join('\n\n---\n\n')
 
         const startedAt = Date.now()
         let text = ''
         let structured: unknown
-        let usage = { inputTokens: 0, outputTokens: 0 }
+        let usage: { inputTokens: number; outputTokens: number; cachedInputTokens?: number } = {
+          inputTokens: 0,
+          outputTokens: 0,
+        }
 
         // A prompt that declares an output schema is asking for a *value*, not
         // for prose to be mined for one (§9.4). Those are different calls, and
@@ -1055,7 +1079,7 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
 
           const generated = await deps.models.generate({
             model,
-            messages: [{ role: 'user', content }],
+            messages,
             context: { workspaceId, teamId, runId, purpose: 'chat' },
             schema: OUTPUT_SCHEMAS[schemaName],
             schemaName,
@@ -1065,7 +1089,7 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
         } else {
           for await (const event of deps.models.stream({
             model,
-            messages: [{ role: 'user', content }],
+            messages,
             context: { workspaceId, teamId, runId, purpose: 'chat' },
           })) {
             if (event.type === 'token') {
@@ -1091,8 +1115,8 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
           await t.execute(
             `INSERT INTO spend_ledger
                (id, workspace_id, team_id, run_id, provider, model, purpose,
-                tokens_in, tokens_out, cost_cents, latency_ms)
-             VALUES ($1, $2, $3, $4, $5, $6, 'chat', $7, $8, $9, $10)`,
+                tokens_in, tokens_cached_in, tokens_out, cost_cents, latency_ms)
+             VALUES ($1, $2, $3, $4, $5, $6, 'chat', $7, $8, $9, $10, $11)`,
             [
               ulid(),
               workspaceId,
@@ -1101,6 +1125,7 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
               model.provider,
               model.model,
               usage.inputTokens,
+              usage.cachedInputTokens ?? 0,
               usage.outputTokens,
               costCents,
               latencyMs,

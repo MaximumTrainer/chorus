@@ -178,6 +178,18 @@ const harness: ModelProviderHarness = {
       ),
     ),
 
+  counting: () => {
+    let calls = 0
+    const provider = providerWith(() => {
+      calls += 1
+      return new Response(JSON.stringify({ input_tokens: 9 }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    })
+    return { provider, upstreamCalls: () => calls }
+  },
+
   generating: () => providerWith(() => message(JSON.stringify(CONTRACT_VALUE))),
 
   generatingInvalid: () => providerWith(() => message(JSON.stringify({ tags: ['billing'] }))),

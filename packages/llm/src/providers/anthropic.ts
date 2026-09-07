@@ -12,6 +12,7 @@ import type {
 import type { ModelRef, TokenUsage } from '../types.js'
 import { redact } from './redact.js'
 import { jsonSchemaFor, parseStructured } from './structured.js'
+import { createTokenCountCache } from './token-count-cache.js'
 
 /**
  * The Anthropic provider (NFR-2, ADR-0018).
@@ -76,7 +77,7 @@ function parseArguments(json: string): Record<string, unknown> {
  * instructions the model may argue with rather than instructions it follows.
  */
 function split(messages: readonly ChatMessage[]): {
-  system: string | undefined
+  system: unknown[] | undefined
   turns: Array<{ role: 'user' | 'assistant'; content: string }>
 } {
   const system: string[] = []
@@ -90,7 +91,26 @@ function split(messages: readonly ChatMessage[]): {
     turns.push({ role: message.role, content: message.content })
   }
 
-  return { system: system.length > 0 ? system.join('\n\n') : undefined, turns }
+  if (system.length === 0) return { system: undefined, turns }
+
+  // §9.3: prompt-prefix caching, where the provider supports it. The system
+  // block is the stable half — charter, workflow instructions, output schema —
+  // and the cache breakpoint goes at its end, so everything up to it is reused
+  // and the volatile turns after it are not.
+  //
+  // This is only worth anything because the caller assembles the stable part
+  // first. Caching is a prefix match, so a breakpoint placed after content that
+  // changes every call caches nothing and still pays for the write.
+  return {
+    system: [
+      {
+        type: 'text',
+        text: system.join('\n\n'),
+        cache_control: { type: 'ephemeral' },
+      },
+    ],
+    turns,
+  }
 }
 
 /** Tool definitions in Anthropic's shape, from the one Zod definition. */
@@ -104,6 +124,7 @@ function toolsFor(tools: readonly ToolSpec[] | undefined): unknown[] | undefined
 }
 
 export function createAnthropicProvider(options: AnthropicOptions): ModelProvider {
+  const tokenCounts = createTokenCountCache()
   const client = new Anthropic({
     apiKey: options.apiKey,
     ...(options.baseUrl ? { baseURL: options.baseUrl } : {}),
@@ -119,10 +140,11 @@ export function createAnthropicProvider(options: AnthropicOptions): ModelProvide
 
     async *stream(request: ChatRequest): AsyncIterable<StreamEvent> {
       const { system, turns } = split(request.messages)
-      const usage: { inputTokens: number; outputTokens: number } = {
-        inputTokens: 0,
-        outputTokens: 0,
-      }
+      const usage: {
+        inputTokens: number
+        outputTokens: number
+        cachedInputTokens: number
+      } = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 }
 
       try {
         const events = await client.messages.create(
@@ -130,7 +152,7 @@ export function createAnthropicProvider(options: AnthropicOptions): ModelProvide
             model: request.model.model,
             max_tokens: request.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
             messages: turns,
-            ...(system ? { system } : {}),
+            ...(system ? { system: system as never } : {}),
             ...(toolsFor(request.tools)
               ? { tools: toolsFor(request.tools) as never }
               : {}),
@@ -147,8 +169,17 @@ export function createAnthropicProvider(options: AnthropicOptions): ModelProvide
         for await (const event of events) {
           // Input tokens arrive once, on the opening frame, and never again.
           if (event.type === 'message_start') {
-            usage.inputTokens = event.message.usage.input_tokens
-            usage.outputTokens = event.message.usage.output_tokens ?? 0
+            const reported = event.message.usage as {
+              input_tokens: number
+              output_tokens?: number
+              cache_read_input_tokens?: number
+            }
+            usage.inputTokens = reported.input_tokens
+            usage.outputTokens = reported.output_tokens ?? 0
+            // Reported separately by the provider, and kept separate here. A
+            // cache read costs about a tenth of a fresh token; added to
+            // `inputTokens` the discount is lost and cannot be recovered.
+            usage.cachedInputTokens = reported.cache_read_input_tokens ?? 0
             continue
           }
 
@@ -229,7 +260,7 @@ export function createAnthropicProvider(options: AnthropicOptions): ModelProvide
           model: request.model.model,
           max_tokens: request.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
           messages: turns,
-          ...(system ? { system } : {}),
+          ...(system ? { system: system as never } : {}),
           output_config: {
             format: {
               type: 'json_schema',
@@ -245,13 +276,32 @@ export function createAnthropicProvider(options: AnthropicOptions): ModelProvide
         .map((block) => ('text' in block && typeof block.text === 'string' ? block.text : ''))
         .join('')
 
+      const reported = response.usage as {
+        input_tokens: number
+        output_tokens: number
+        cache_read_input_tokens?: number
+      }
       return {
         value: parseStructured(text, request.schema, request.schemaName),
         usage: {
-          inputTokens: response.usage.input_tokens,
-          outputTokens: response.usage.output_tokens,
+          inputTokens: reported.input_tokens,
+          outputTokens: reported.output_tokens,
+          cachedInputTokens: reported.cache_read_input_tokens ?? 0,
         },
       }
+    },
+
+    async countTokens(text: string, model: ModelRef): Promise<number> {
+      // Exact, from the model's own tokeniser. A local approximation drifts as
+      // models change, and a spend guard built on a drifting number is one that
+      // stops guarding without anybody noticing.
+      return tokenCounts.get(model, text, async () => {
+        const response = await client.messages.countTokens({
+          model: model.model,
+          messages: [{ role: 'user', content: text }],
+        })
+        return response.input_tokens
+      })
     },
 
     async embed(_texts: readonly string[], model: ModelRef): Promise<number[][]> {

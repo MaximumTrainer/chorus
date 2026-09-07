@@ -74,6 +74,7 @@ interface ConfiguredCandidate {
   structuredOutput?: unknown
   inputPerMillion?: unknown
   outputPerMillion?: unknown
+  cachedInputPerMillion?: unknown
 }
 
 /** Tiers a deployment must configure. `embed` is separate from the chat tiers. */
@@ -107,6 +108,9 @@ function candidateFrom(raw: ConfiguredCandidate, tier: string, index: number): M
     cost: {
       inputPerMillion: typeof raw.inputPerMillion === 'number' ? raw.inputPerMillion : 0,
       outputPerMillion: typeof raw.outputPerMillion === 'number' ? raw.outputPerMillion : 0,
+      ...(typeof raw.cachedInputPerMillion === 'number'
+        ? { cachedInputPerMillion: raw.cachedInputPerMillion }
+        : {}),
     },
   }
 }

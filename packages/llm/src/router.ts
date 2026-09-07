@@ -96,7 +96,12 @@ export function createRouter(config: RouterConfig): ModelRouter {
     costCents(candidate, usage): number {
       const input = usage.inputTokens * candidate.cost.inputPerMillion
       const output = usage.outputTokens * candidate.cost.outputPerMillion
-      return Math.round((input + output) / 1_000_000)
+      // Falls back to the full input rate rather than to free. A deployment
+      // that has not said what its cache costs has not earned a discount in
+      // its own ledger, and over-reporting is the recoverable direction.
+      const cachedRate = candidate.cost.cachedInputPerMillion ?? candidate.cost.inputPerMillion
+      const cached = (usage.cachedInputTokens ?? 0) * cachedRate
+      return Math.round((input + output + cached) / 1_000_000)
     },
   }
 }

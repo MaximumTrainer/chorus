@@ -10,6 +10,7 @@ import type {
 import type { ModelRef } from '../types.js'
 import { redact } from './redact.js'
 import { jsonSchemaFor, parseStructured } from './structured.js'
+import { createTokenCountCache } from './token-count-cache.js'
 
 /**
  * A provider speaking the OpenAI-compatible wire format (NFR-1, NFR-2).
@@ -84,10 +85,22 @@ function parseArguments(json: string): Record<string, unknown> {
   }
 }
 
+/**
+ * Characters per token, for the estimate below.
+ *
+ * Four is the usual rule of thumb for English prose and code in the
+ * byte-pair-encoding family every OpenAI-compatible server uses. It is an
+ * estimate and is documented as one; the alternative is bundling a tokeniser
+ * per model, which would be wrong for the local endpoints this provider exists
+ * to reach and would still be wrong whenever one of them updated.
+ */
+const CHARS_PER_TOKEN = 4
+
 export function createOpenAiCompatibleProvider(
   options: OpenAiCompatibleOptions,
 ): ModelProvider {
   const http = options.fetch ?? fetch
+  const tokenCounts = createTokenCountCache()
   const base = options.baseUrl.replace(/\/+$/, '')
 
   return {
@@ -285,6 +298,16 @@ export function createOpenAiCompatibleProvider(
           outputTokens: body.usage?.completion_tokens ?? 0,
         },
       }
+    },
+
+    async countTokens(text: string, model: ModelRef): Promise<number> {
+      // Estimated, not exact. The OpenAI-compatible format has no token-count
+      // endpoint, and this provider deliberately reaches servers — Ollama, LM
+      // Studio, vLLM — whose tokenisers it cannot know. Rounded *up*, so a
+      // spend guard errs toward asking rather than toward overspending.
+      return tokenCounts.get(model, text, () =>
+        Promise.resolve(Math.max(1, Math.ceil(text.length / CHARS_PER_TOKEN))),
+      )
     },
 
     async embed(texts: readonly string[], model: ModelRef): Promise<number[][]> {

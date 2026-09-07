@@ -44,6 +44,14 @@ export interface ModelCapabilities {
 export interface ModelCost {
   readonly inputPerMillion: number
   readonly outputPerMillion: number
+  /**
+   * Price of a cached input token, where the provider offers one.
+   *
+   * Defaults to the full input rate when a deployment does not configure it:
+   * over-reporting cost is recoverable, and a deployment that has not said what
+   * its cache costs has not earned a discount in its own ledger.
+   */
+  readonly cachedInputPerMillion?: number
 }
 
 export interface ModelCandidate {
@@ -85,8 +93,18 @@ export interface RoutingDecision {
 }
 
 export interface TokenUsage {
+  /** Input tokens processed fresh, at the full rate. */
   readonly inputTokens: number
   readonly outputTokens: number
+  /**
+   * Input tokens the provider served from its prompt cache (§9.3).
+   *
+   * Separate from `inputTokens` rather than included in it, because the two
+   * prices differ by roughly an order of magnitude and the split cannot be
+   * recovered once they are added together. Absent where a provider reports no
+   * cache activity, which is not the same as zero from a provider that does.
+   */
+  readonly cachedInputTokens?: number
 }
 
 /** Provenance stamped on every call, so spend and traces attribute correctly. */

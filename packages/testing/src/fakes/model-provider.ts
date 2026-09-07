@@ -5,6 +5,7 @@ import type {
   GenerateResult,
   ModelProvider,
   StreamEvent,
+  TokenUsage,
 } from '@chorus/llm'
 import type { ModelRef } from '@chorus/llm'
 
@@ -33,7 +34,7 @@ export interface FakeModelScript {
   readonly failWith?: string
   /** Emits nothing and never completes, so a timeout path can be tested. */
   readonly hang?: boolean
-  readonly usage?: { inputTokens: number; outputTokens: number }
+  readonly usage?: TokenUsage
   /**
    * What a `generate` call returns, already the right shape.
    *
@@ -152,6 +153,12 @@ export function createFakeModelProvider(initial: FakeModelScript = {}): FakeMode
 
     async embed(texts) {
       return texts.map(deterministicEmbedding)
+    },
+
+    async countTokens(text) {
+      // Deterministic and proportional, so a test can reason about a budget
+      // without knowing a real tokeniser's behaviour.
+      return Math.max(1, Math.ceil(text.length / 4))
     },
 
     async generate<T>(request: GenerateRequest<T>): Promise<GenerateResult<T>> {

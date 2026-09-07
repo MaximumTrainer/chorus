@@ -130,6 +130,16 @@ export interface ModelProvider {
    * makes this worth having over `stream`.
    */
   generate<T>(request: GenerateRequest<T>): Promise<GenerateResult<T>>
+  /**
+   * How many input tokens `text` costs on `model` (§9.1).
+   *
+   * Asynchronous, unlike §9.1's sketch, because it is a question only the
+   * provider can answer: tokenisers differ per model and change with them, and
+   * a local approximation that drifts silently is worse for a spend guard than
+   * a round trip. Cached by content hash, so the repeated prefixes a guard
+   * counts are paid for once.
+   */
+  countTokens(text: string, model: ModelRef): Promise<number>
   /** One vector per text, in order. */
   embed(texts: readonly string[], model: ModelRef): Promise<number[][]>
 }

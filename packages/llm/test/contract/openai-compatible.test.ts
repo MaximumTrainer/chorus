@@ -163,6 +163,19 @@ const harness: ModelProviderHarness = {
       ),
     ),
 
+  counting: () => {
+    // This provider estimates locally and never reaches the endpoint, so the
+    // count is genuinely zero. Reported as it is rather than massaged to one:
+    // a harness that lied here would make the kit's assertion meaningless for
+    // the provider that does make the call.
+    let calls = 0
+    const provider = providerWith(() => {
+      calls += 1
+      return new Response('{}', { status: 200 })
+    })
+    return { provider, upstreamCalls: () => calls }
+  },
+
   generating: () => providerWith(() => completion(JSON.stringify(CONTRACT_VALUE))),
 
   generatingInvalid: () =>

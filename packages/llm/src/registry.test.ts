@@ -43,6 +43,9 @@ function labelled(name: string): ModelProvider {
         usage: { inputTokens: 1, outputTokens: 1 },
       }
     },
+    async countTokens(text: string): Promise<number> {
+      return text.length
+    },
     async embed(texts: readonly string[]): Promise<number[][]> {
       return texts.map(() => [name.length])
     },

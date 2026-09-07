@@ -72,6 +72,12 @@ export function createProviderRegistry(
       return provider.generate(request)
     },
 
+    async countTokens(text: string, model: ModelRef): Promise<number> {
+      const provider = providers[model.provider]
+      if (!provider) throw missing(model)
+      return provider.countTokens(text, model)
+    },
+
     async embed(texts: readonly string[], model: ModelRef): Promise<number[][]> {
       const provider = providers[model.provider]
       if (!provider) throw missing(model)

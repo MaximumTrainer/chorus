@@ -476,7 +476,7 @@ Embeddings are **content-hash cached**: `embedding_cache(hash, model, embedding)
 generate<T>(req: GenerateRequest<T>): Promise<GenerateResult<T>>   // structured output via Zod schema
 stream(req: StreamRequest): AsyncIterable<StreamChunk>              // text + tool-call deltas
 embed(req: EmbedRequest): Promise<EmbedResult>                      // batched, content-hash cached
-countTokens(text: string, model: ModelRef): number
+countTokens(text: string, model: ModelRef): Promise<number>            // exact where the provider counts, cached by content hash
 ```
 
 **One provider speaks the OpenAI-compatible wire format**, over `fetch` rather than a vendor SDK — there, an SDK would be a dependency that reaches exactly one endpoint, collapsing a client whose whole value is breadth. That argument is about *that* provider, not about SDKs in general: a single-vendor provider reaches one vendor by construction, so it may use that vendor's SDK, confined to `packages/llm` where the boundary suite already keeps it ([ADR-0018](docs/adr/0018-a-second-provider-and-the-vendor-sdk-rule.md)). That one format covers OpenAI, Azure, Ollama, LM Studio, vLLM and most self-hosted servers, which is what makes NFR-1's "no mandatory SaaS dependency except the chosen model endpoint" true in practice rather than in principle: a self-hoster points `CHORUS_MODEL_BASE_URL` at their own machine and the local profile works.
@@ -495,9 +495,9 @@ Two providers ship: the OpenAI-compatible one and Anthropic. A **registry** disp
 
 ### 9.3 Cost, caching and guards
 
-- Every call writes a `spend_ledger` row with tokens and computed cost; runs aggregate it; the UI shows per-run cost.
+- Every call writes a `spend_ledger` row with tokens and computed cost; runs aggregate it; the UI shows per-run cost. Cached input tokens are a **separate column and a separate rate**: a cache read costs roughly a tenth of a fresh token, and folded into `tokens_in` a cached run is billed at up to ten times what it cost — worse than a visibly wrong number, because the row stays internally consistent and every reconciliation anybody thinks to run agrees. A deployment that has not configured `cachedInputPerMillion` is charged the full input rate rather than nothing: over-reporting is the recoverable direction.
 - **Spend guard**: before dequeuing a model-calling job the worker checks workspace and team period spend against configured limits. Exceeding a soft limit raises a `before_spend_over` checkpoint; exceeding a hard limit fails the run with a clear error (NFR-8).
-- **Prompt-prefix caching** is used where the provider supports it; the stable prefix (charter, workflow instructions, output schema) is assembled first and the volatile retrieved context last.
+- **Prompt-prefix caching** is used where the provider supports it; the stable prefix (charter, workflow instructions, output schema) is assembled first and the volatile retrieved context last. The executor sends the stable half as its own message rather than concatenating it in front of the body, because caching is a prefix match: a breakpoint placed after content that changes every call caches nothing and still pays for the write.
 - **Embedding cache** keyed by `(content_hash, model)`.
 
 ### 9.4 Prompts

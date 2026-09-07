@@ -99,6 +99,15 @@ export interface ModelProviderHarness {
   /** Streams two tool calls in one turn, interleaved. */
   toolCallingParallel(): ModelProvider
 
+  /**
+   * Counts tokens, and records how many times it asked upstream.
+   *
+   * The count itself is the provider's business — one is exact, the other
+   * estimates — so the kit asserts the contract rather than a number: a
+   * positive integer, and the same text counted twice costs one call.
+   */
+  counting(): { provider: ModelProvider; upstreamCalls: () => number }
+
   /** Returns `CONTRACT_VALUE` as structured output. */
   generating(): ModelProvider
 
@@ -198,7 +207,7 @@ export function describeModelProviderContract(name: string, harness: ModelProvid
       // Usage arrives *with* done rather than separately, because a stream that
       // ended without reporting what it cost is a gap in the spend ledger that
       // nothing can reconstruct afterwards (NFR-8).
-      expect(usage).toEqual(CONTRACT_USAGE)
+      expect(usage).toMatchObject(CONTRACT_USAGE)
     })
 
     it('NFR-2: a stream cut short still reports done rather than hanging', async () => {
@@ -289,6 +298,32 @@ export function describeModelProviderContract(name: string, harness: ModelProvid
       ])
     })
 
+    it('NFR-8: countTokens returns a positive count for real text', async () => {
+      const { provider } = harness.counting()
+      const count = await provider.countTokens('The invoice parser does three jobs.', ref)
+
+      expect(Number.isInteger(count)).toBe(true)
+      expect(count).toBeGreaterThan(0)
+    })
+
+    it('NFR-8 AC6: the same text counted twice costs one upstream call', async () => {
+      // Counting is what makes the spend guard a guard rather than a
+      // notification, so it runs before work rather than after it — often on
+      // the same prefix. Paying a round trip each time would make the guard
+      // cost more than the call it is protecting.
+      const { provider, upstreamCalls } = harness.counting()
+      const text = 'The invoice parser does three jobs.'
+
+      const first = await provider.countTokens(text, ref)
+      const second = await provider.countTokens(text, ref)
+
+      expect(second).toBe(first)
+      // At most one, not exactly one: a provider that estimates locally makes
+      // no round trip at all, and demanding one would be asserting on how the
+      // answer is obtained rather than on what the caller is promised.
+      expect(upstreamCalls()).toBeLessThanOrEqual(1)
+    })
+
     it('NFR-2: generate returns a value validated against the schema', async () => {
       const result = await harness.generating().generate({
         model: ref,
@@ -299,7 +334,7 @@ export function describeModelProviderContract(name: string, harness: ModelProvid
       })
 
       expect(result.value).toEqual(CONTRACT_VALUE)
-      expect(result.usage).toEqual(CONTRACT_USAGE)
+      expect(result.usage).toMatchObject(CONTRACT_USAGE)
     })
 
     it('NFR-2: generate rejects output of the wrong shape, naming the field', async () => {
