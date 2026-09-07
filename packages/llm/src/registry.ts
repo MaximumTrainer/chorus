@@ -1,5 +1,11 @@
 import { ConfigurationError } from '@chorus/core'
-import type { ChatRequest, ModelProvider, StreamEvent } from './provider.js'
+import type {
+  ChatRequest,
+  GenerateRequest,
+  GenerateResult,
+  ModelProvider,
+  StreamEvent,
+} from './provider.js'
 import type { ModelRef } from './types.js'
 
 /**
@@ -56,6 +62,14 @@ export function createProviderRegistry(
       }
 
       yield* provider.stream(request)
+    },
+
+    async generate<T>(request: GenerateRequest<T>): Promise<GenerateResult<T>> {
+      const provider = providers[request.model.provider]
+      // Thrown rather than yielded: `generate` is request/response, and a
+      // caller holding a `GenerateResult` must be able to rely on its shape.
+      if (!provider) throw missing(request.model)
+      return provider.generate(request)
     },
 
     async embed(texts: readonly string[], model: ModelRef): Promise<number[][]> {

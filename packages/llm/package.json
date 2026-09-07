@@ -13,7 +13,8 @@
   "dependencies": {
     "@anthropic-ai/sdk": "0.124.0",
     "@chorus/core": "workspace:*",
-    "yaml": "2.6.0"
+    "yaml": "2.6.0",
+    "zod": "4.5.4"
   },
   "devDependencies": {
     "@chorus/config": "workspace:*",

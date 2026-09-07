@@ -1,5 +1,11 @@
 import { createHash } from 'node:crypto'
-import type { ChatRequest, ModelProvider, StreamEvent } from '@chorus/llm'
+import type {
+  ChatRequest,
+  GenerateRequest,
+  GenerateResult,
+  ModelProvider,
+  StreamEvent,
+} from '@chorus/llm'
 import type { ModelRef } from '@chorus/llm'
 
 /**
@@ -28,6 +34,23 @@ export interface FakeModelScript {
   /** Emits nothing and never completes, so a timeout path can be tested. */
   readonly hang?: boolean
   readonly usage?: { inputTokens: number; outputTokens: number }
+  /**
+   * What a `generate` call returns, already the right shape.
+   *
+   * Separate from `chunks` because structured output is a different call, not
+   * a differently-formatted stream — scripting it as text would let a test pass
+   * against a provider that never looked at the schema.
+   */
+  readonly structured?: unknown
+  /**
+   * Output shaped like the schema but failing it — a missing required field, a
+   * wrong type.
+   *
+   * The failure path is the whole reason `generate` exists, so a fake that
+   * could not produce one would leave the behaviour that matters untested
+   * (CLAUDE.md §4: extend the fake, do not stub around it).
+   */
+  readonly schemaInvalid?: unknown
 }
 
 export interface RecordedRequest {
@@ -37,6 +60,8 @@ export interface RecordedRequest {
   readonly prompt: string
   readonly workspaceId: string
   readonly purpose: string
+  /** The schema the call was constrained to, when it was a `generate`. */
+  readonly schemaName?: string
 }
 
 export interface FakeModelProvider extends ModelProvider {
@@ -77,6 +102,24 @@ function deterministicEmbedding(text: string): number[] {
   return magnitude === 0 ? vector : vector.map((value) => value / magnitude)
 }
 
+/**
+ * Recovers an object from scripted chunks, so a test can script the prose case.
+ *
+ * Mirrors the tolerance `packages/llm` applies to a provider that ignores the
+ * format instruction and explains itself first.
+ */
+function parseFromChunks(chunks: readonly string[]): unknown {
+  const text = chunks.join('')
+  const start = text.indexOf('{')
+  const end = text.lastIndexOf('}')
+  if (start === -1 || end <= start) return undefined
+  try {
+    return JSON.parse(text.slice(start, end + 1))
+  } catch {
+    return undefined
+  }
+}
+
 export function createFakeModelProvider(initial: FakeModelScript = {}): FakeModelProvider {
   let current: FakeModelScript = { chunks: ['ok'], ...initial }
   const recorded: RecordedRequest[] = []
@@ -96,6 +139,48 @@ export function createFakeModelProvider(initial: FakeModelScript = {}): FakeMode
 
     async embed(texts) {
       return texts.map(deterministicEmbedding)
+    },
+
+    async generate<T>(request: GenerateRequest<T>): Promise<GenerateResult<T>> {
+      recorded.push({
+        model: request.model,
+        messages: request.messages,
+        prompt: request.messages.map((message) => message.content).join('\n\n'),
+        workspaceId: request.context.workspaceId,
+        purpose: request.context.purpose,
+        schemaName: request.schemaName,
+      })
+
+      if (current.failWith) throw new Error(current.failWith)
+
+      // Validated here rather than returned raw, so the fake enforces the same
+      // guarantee a real provider does: a caller holding a result may rely on
+      // its shape. A fake that skipped this would let a scripted-but-wrong
+      // value reach code that a real provider would never have handed it.
+      const candidate =
+        current.schemaInvalid !== undefined
+          ? current.schemaInvalid
+          : current.structured !== undefined
+            ? current.structured
+            : parseFromChunks(current.chunks ?? [])
+
+      const result = request.schema.safeParse(candidate)
+      if (!result.success) {
+        const problems = result.error.issues
+          .map((issue) => {
+            const path = issue.path.join('.')
+            return path ? `${path}: ${issue.message}` : issue.message
+          })
+          .join('; ')
+        throw new Error(
+          `the model returned output that does not satisfy "${request.schemaName}" (${problems})`,
+        )
+      }
+
+      return {
+        value: result.data,
+        usage: current.usage ?? { inputTokens: 1, outputTokens: 1 },
+      }
     },
 
     async *stream(request: ChatRequest): AsyncIterable<StreamEvent> {

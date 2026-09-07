@@ -3,7 +3,9 @@ import {
   ConfigurationError,
   DEFAULT_REDACTION_LEVEL,
   NotFoundError,
+  OUTPUT_SCHEMAS,
   ValidationError,
+  isOutputSchemaName,
   redactBody,
   scrubSecrets,
   resolveCheckpointPolicy,
@@ -165,7 +167,13 @@ export interface ExecutorDeps {
 
 /** The narrow slice of a prompt registry the executor needs. */
 export interface PromptSource {
-  get(id: string): { readonly body: string; readonly version: number; readonly hash: string }
+  get(id: string): {
+    readonly body: string
+    readonly version: number
+    readonly hash: string
+    /** Names a schema in `OUTPUT_SCHEMAS` when the prompt asks for a value (§9.4). */
+    readonly outputSchema?: string
+  }
 }
 
 const DEFAULT_CHECKPOINT_TTL_MS = 72 * 60 * 60 * 1000
@@ -1028,21 +1036,47 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
 
         const startedAt = Date.now()
         let text = ''
+        let structured: unknown
         let usage = { inputTokens: 0, outputTokens: 0 }
 
-        for await (const event of deps.models.stream({
-          model,
-          messages: [{ role: 'user', content }],
-          context: { workspaceId, teamId, runId, purpose: 'chat' },
-        })) {
-          if (event.type === 'token') {
-            text += event.text
-            deps.onEvent?.({ kind: 'token', text: event.text })
+        // A prompt that declares an output schema is asking for a *value*, not
+        // for prose to be mined for one (§9.4). Those are different calls, and
+        // conflating them is what made every malformed reply arrive as
+        // `undefined` two steps later, blaming the emit for the model's fault.
+        const schemaName = template?.outputSchema
+        if (schemaName !== undefined) {
+          if (!isOutputSchemaName(schemaName)) {
+            throw new ConfigurationError(
+              `Prompt "${step.prompt}" declares outputSchema "${schemaName}", which is not a known schema. ` +
+                `Known: ${Object.keys(OUTPUT_SCHEMAS).join(', ')}.`,
+              { step: step.id, prompt: step.prompt, outputSchema: schemaName },
+            )
           }
-          // Usage arrives with `done` precisely so a stream cannot end without
-          // reporting what it cost — a gap here is unreconstructable later.
-          if (event.type === 'done') usage = event.usage
-          if (event.type === 'error') throw new Error(event.message)
+
+          const generated = await deps.models.generate({
+            model,
+            messages: [{ role: 'user', content }],
+            context: { workspaceId, teamId, runId, purpose: 'chat' },
+            schema: OUTPUT_SCHEMAS[schemaName],
+            schemaName,
+          })
+          structured = generated.value
+          usage = generated.usage
+        } else {
+          for await (const event of deps.models.stream({
+            model,
+            messages: [{ role: 'user', content }],
+            context: { workspaceId, teamId, runId, purpose: 'chat' },
+          })) {
+            if (event.type === 'token') {
+              text += event.text
+              deps.onEvent?.({ kind: 'token', text: event.text })
+            }
+            // Usage arrives with `done` precisely so a stream cannot end without
+            // reporting what it cost — a gap here is unreconstructable later.
+            if (event.type === 'done') usage = event.usage
+            if (event.type === 'error') throw new Error(event.message)
+          }
         }
 
         const latencyMs = Date.now() - startedAt
@@ -1119,7 +1153,10 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
             // that was never written cannot be leaked by a query somebody
             // writes next year, or by a backup restored somewhere else.
             ...prefixed('prompt', redactBody(redaction, content)),
-            ...prefixed('response', redactBody(redaction, text)),
+            ...prefixed(
+              'response',
+              redactBody(redaction, structured !== undefined ? JSON.stringify(structured) : text),
+            ),
             // WS-3 AC2: what the model was *told*, not only what it said.
             //
             // Recorded beside the structural record rather than inside the
@@ -1140,7 +1177,10 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
             ? { id: step.prompt, version: template.version, hash: template.hash }
             : undefined,
         )
-        return { kind: 'output', output: text }
+        // The validated value when the prompt asked for one, the text
+        // otherwise. Downstream steps read an object rather than re-deriving
+        // one from a string, which is the whole point of asking for a shape.
+        return { kind: 'output', output: structured !== undefined ? structured : text }
       }
 
       case 'retrieve': {
@@ -1601,9 +1641,12 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
     // A model asked for JSON usually returns JSON, sometimes wrapped in prose.
     // Taking the outermost braces is the smallest thing that handles both
     // without inventing a parser.
-    const record =
-      typeof value === 'string' ? parseJsonObject(value) : (value as Record<string, unknown>)
-    if (!record || typeof record !== 'object') return undefined
+    // No string branch. A model step that was asked for an artefact returns a
+    // validated object (§9.4); one that was not returns prose, and prose is not
+    // an artefact. Mining a paragraph for braces here is what let a malformed
+    // reply reach this point at all, and then blamed the emit for it.
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+    const record = value as Record<string, unknown>
 
     const title = record.title
     if (typeof title !== 'string' || title.trim() === '') return undefined
@@ -1626,18 +1669,6 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
         : artefact !== 'task'
           ? { documentType: artefact }
           : {}),
-    }
-  }
-
-  function parseJsonObject(text: string): Record<string, unknown> | undefined {
-    const start = text.indexOf('{')
-    const end = text.lastIndexOf('}')
-    if (start === -1 || end <= start) return undefined
-    try {
-      const parsed: unknown = JSON.parse(text.slice(start, end + 1))
-      return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : undefined
-    } catch {
-      return undefined
     }
   }
 

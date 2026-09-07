@@ -23,6 +23,14 @@ export interface Prompt {
   readonly version: number
   readonly description?: string
   readonly inputs: readonly string[]
+  /**
+   * The schema this prompt's output must satisfy, by name (§9.4).
+   *
+   * Present on a prompt that asks for a value rather than for prose. Absent on
+   * a chat prompt, where tokens as they arrive are the point and a schema would
+   * make streaming the exception.
+   */
+  readonly outputSchema?: string
   readonly body: string
   /** SHA-256 of the whole file, front-matter included. Recorded on every run. */
   readonly hash: string
@@ -89,6 +97,7 @@ export function parsePrompt(path: string, source: string): Prompt {
     version: meta.version,
     ...(typeof meta.description === 'string' ? { description: meta.description } : {}),
     inputs,
+    ...(typeof meta.outputSchema === 'string' ? { outputSchema: meta.outputSchema } : {}),
     body: rawBody.trim(),
     // Hash the whole file: a front-matter change is a behaviour change too.
     hash: createHash('sha256').update(source, 'utf8').digest('hex'),

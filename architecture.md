@@ -500,7 +500,7 @@ Two providers ship: the OpenAI-compatible one and Anthropic. A **registry** disp
 
 ### 9.4 Prompts
 
-Prompt templates are **files**, not string literals in code: `workflows/prompts/<workflow>/<step>.md` with YAML front-matter declaring `id`, `version`, `inputs` and `outputSchema`. The run records the template hash, so a trace can be replayed against the exact prompt that produced it (NFR-11). Changing a prompt is a reviewable diff, and golden tests (§23.6) pin their behaviour.
+Prompt templates are **files**, not string literals in code: `workflows/prompts/<workflow>/<step>.md` with YAML front-matter declaring `id`, `version`, `inputs` and `outputSchema`. `outputSchema` names a schema in `OUTPUT_SCHEMAS` (`packages/core`) rather than spelling one out: a schema written as text in a prompt would be a second definition of a shape `core` already owns, and the two would drift. A prompt that declares one is served by `generate` — the schema reaches the provider as an output format, and the reply is validated before any step sees it. A prompt that declares none is served by `stream`, because a chat turn wants tokens as they arrive and requiring a schema everywhere would make streaming the exception rather than the primary shape. The run records the template hash, so a trace can be replayed against the exact prompt that produced it (NFR-11). Changing a prompt is a reviewable diff, and golden tests (§23.6) pin their behaviour.
 
 ---
 

@@ -1,7 +1,14 @@
 import { describe, it, expect } from 'vitest'
+import { z } from 'zod'
 import { ConfigurationError } from '@chorus/core'
 import { createProviderRegistry } from './registry.js'
-import type { ChatRequest, ModelProvider, StreamEvent } from './provider.js'
+import type {
+  ChatRequest,
+  GenerateRequest,
+  GenerateResult,
+  ModelProvider,
+  StreamEvent,
+} from './provider.js'
 import type { ModelRef } from './types.js'
 
 /**
@@ -29,6 +36,12 @@ function labelled(name: string): ModelProvider {
     async *stream(): AsyncIterable<StreamEvent> {
       yield { type: 'token', text: `served by ${name}` }
       yield { type: 'done', usage: { inputTokens: 1, outputTokens: 1 } }
+    },
+    async generate<T>(request: GenerateRequest<T>): Promise<GenerateResult<T>> {
+      return {
+        value: request.schema.parse({ servedBy: name }),
+        usage: { inputTokens: 1, outputTokens: 1 },
+      }
     },
     async embed(texts: readonly string[]): Promise<number[][]> {
       return texts.map(() => [name.length])
@@ -61,6 +74,40 @@ describe('NFR-2 provider registry', () => {
     expect(await textOf(registry, { provider: 'openai-compatible', model: 'o-1' })).toBe(
       'served by openai-compatible',
     )
+  })
+
+  it('NFR-2: generates through the provider the model reference names', async () => {
+    const registry = createProviderRegistry({
+      anthropic: labelled('anthropic'),
+      'openai-compatible': labelled('openai-compatible'),
+    })
+
+    const result = await registry.generate({
+      model: { provider: 'anthropic', model: 'a-1' },
+      messages: [{ role: 'user', content: 'hello' }],
+      context: CONTEXT,
+      schema: z.object({ servedBy: z.string() }),
+      schemaName: 'served_by',
+    })
+
+    expect(result.value).toEqual({ servedBy: 'anthropic' })
+  })
+
+  it('NFR-2: an unconfigured provider throws on generate, rather than returning a shapeless value', async () => {
+    const registry = createProviderRegistry({ 'openai-compatible': labelled('openai-compatible') })
+
+    // Thrown rather than yielded as an error event, unlike `stream`: a caller
+    // holding a GenerateResult must be able to rely on its shape, and there is
+    // no partial value that would honour that.
+    await expect(
+      registry.generate({
+        model: { provider: 'anthropic', model: 'a-1' },
+        messages: [{ role: 'user', content: 'hello' }],
+        context: CONTEXT,
+        schema: z.object({ servedBy: z.string() }),
+        schemaName: 'served_by',
+      }),
+    ).rejects.toBeInstanceOf(ConfigurationError)
   })
 
   it('NFR-2: embeds through the provider the model reference names', async () => {

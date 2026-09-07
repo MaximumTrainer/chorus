@@ -12,7 +12,14 @@ export type { Prompt, PromptRegistry } from './prompts.js'
 export { contentHash, cacheKey, createInMemoryEmbeddingCache } from './cache.js'
 export type { EmbeddingCache, EmbeddingCacheStats } from './cache.js'
 export { isPromptPath } from './prompts.js'
-export type { ModelProvider, ChatRequest, ChatMessage, StreamEvent } from './provider.js'
+export type {
+  ModelProvider,
+  ChatRequest,
+  ChatMessage,
+  StreamEvent,
+  GenerateRequest,
+  GenerateResult,
+} from './provider.js'
 export { routerConfigFromEnv, DEFAULT_PURPOSE_TIERS, TIER_REQUIREMENTS } from './config.js'
 export { createOpenAiCompatibleProvider } from './providers/openai-compatible.js'
 export type { OpenAiCompatibleOptions } from './providers/openai-compatible.js'

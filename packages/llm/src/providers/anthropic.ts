@@ -1,8 +1,16 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { ConfigurationError } from '@chorus/core'
-import type { ChatMessage, ChatRequest, ModelProvider, StreamEvent } from '../provider.js'
+import type {
+  ChatMessage,
+  ChatRequest,
+  GenerateRequest,
+  GenerateResult,
+  ModelProvider,
+  StreamEvent,
+} from '../provider.js'
 import type { ModelRef, TokenUsage } from '../types.js'
 import { redact } from './redact.js'
+import { jsonSchemaFor, parseStructured } from './structured.js'
 
 /**
  * The Anthropic provider (NFR-2, ADR-0018).
@@ -134,6 +142,42 @@ export function createAnthropicProvider(options: AnthropicOptions): ModelProvide
             options.apiKey,
           ),
         }
+      }
+    },
+
+    async generate<T>(request: GenerateRequest<T>): Promise<GenerateResult<T>> {
+      const { system, turns } = split(request.messages)
+
+      // The schema goes to the provider as an output format, not into the
+      // prompt as a request. A model told to produce this shape is constrained
+      // to it; a model asked nicely for it is not.
+      const response = await client.messages.create(
+        {
+          model: request.model.model,
+          max_tokens: request.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+          messages: turns,
+          ...(system ? { system } : {}),
+          output_config: {
+            format: {
+              type: 'json_schema',
+              name: request.schemaName,
+              schema: jsonSchemaFor(request.schema as never),
+            },
+          },
+        } as never,
+        { ...(request.signal ? { signal: request.signal } : {}) },
+      )
+
+      const text = response.content
+        .map((block) => ('text' in block && typeof block.text === 'string' ? block.text : ''))
+        .join('')
+
+      return {
+        value: parseStructured(text, request.schema, request.schemaName),
+        usage: {
+          inputTokens: response.usage.input_tokens,
+          outputTokens: response.usage.output_tokens,
+        },
       }
     },
 

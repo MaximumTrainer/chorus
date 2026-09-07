@@ -1,7 +1,14 @@
 import { UpstreamError } from '@chorus/core'
-import type { ChatRequest, ModelProvider, StreamEvent } from '../provider.js'
+import type {
+  ChatRequest,
+  GenerateRequest,
+  GenerateResult,
+  ModelProvider,
+  StreamEvent,
+} from '../provider.js'
 import type { ModelRef } from '../types.js'
 import { redact } from './redact.js'
+import { jsonSchemaFor, parseStructured } from './structured.js'
 
 /**
  * A provider speaking the OpenAI-compatible wire format (NFR-1, NFR-2).
@@ -153,6 +160,56 @@ export function createOpenAiCompatibleProvider(
         }
       } finally {
         reader.releaseLock()
+      }
+    },
+
+    async generate<T>(request: GenerateRequest<T>): Promise<GenerateResult<T>> {
+      // `json_schema` with `strict`, which is the only form that constrains the
+      // model rather than merely suggesting a shape. Endpoints that do not
+      // support it ignore it and return prose — which the tolerant parse below
+      // still recovers, and the schema still rejects if it is wrong.
+      const response = await http(`${base}/chat/completions`, {
+        method: 'POST',
+        headers: headersFor(options.apiKey),
+        body: JSON.stringify({
+          model: request.model.model,
+          messages: request.messages,
+          response_format: {
+            type: 'json_schema',
+            json_schema: {
+              name: request.schemaName,
+              strict: true,
+              schema: jsonSchemaFor(request.schema as never),
+            },
+          },
+          ...(request.maxOutputTokens ? { max_tokens: request.maxOutputTokens } : {}),
+        }),
+        ...(request.signal ? { signal: request.signal } : {}),
+      })
+
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '')
+        throw new UpstreamError(
+          redact(
+            `the model endpoint responded ${response.status}: ${detail.slice(0, 300)}`,
+            options.apiKey,
+          ),
+          { status: response.status },
+        )
+      }
+
+      const body = (await response.json()) as {
+        choices?: Array<{ message?: { content?: string } }>
+        usage?: { prompt_tokens?: number; completion_tokens?: number }
+      }
+
+      const text = body.choices?.[0]?.message?.content ?? ''
+      return {
+        value: parseStructured(text, request.schema, request.schemaName),
+        usage: {
+          inputTokens: body.usage?.prompt_tokens ?? 0,
+          outputTokens: body.usage?.completion_tokens ?? 0,
+        },
       }
     },
 

@@ -15,6 +15,8 @@
  * citation will produce more.
  */
 
+import { z } from 'zod'
+
 export const ARTEFACT_KINDS = ['document', 'task'] as const
 export type ArtefactKind = (typeof ARTEFACT_KINDS)[number]
 
@@ -91,4 +93,58 @@ export class ArtefactRefusedError extends Error {
     super(message)
     this.details = details
   }
+}
+
+/**
+ * The wire shape of an `ArtefactDraft`, as a schema (CLAUDE.md §10).
+ *
+ * A model asked for an artefact is asked for *this*, and the same definition
+ * validates what comes back — so "the shape the prompt requested" and "the
+ * shape the code accepts" cannot drift apart, which they silently did while the
+ * request was prose and the acceptance was a brace-scraper.
+ *
+ * `title` is required and non-empty for the reason the old parser also checked
+ * it: everything downstream names the artefact by it, and a document titled
+ * from the first line of a model's preamble is worse than no document.
+ */
+export const ArtefactPointerSchema = z.object({
+  repositoryId: z.string(),
+  path: z.string(),
+  lineStart: z.number().int(),
+  lineEnd: z.number().int(),
+  symbolName: z.string().optional(),
+})
+
+export const ArtefactDraftSchema = z.object({
+  /**
+   * Optional, because the workflow already knows it.
+   *
+   * An emit step names the artefact it is writing (`artefact: prd`), and the
+   * kind follows from that. Requiring the model to repeat it would ask for a
+   * fact the run already holds and let a wrong answer contradict it.
+   */
+  kind: z.enum(ARTEFACT_KINDS).optional(),
+  title: z.string().min(1, 'an artefact needs a title'),
+  sections: z.record(z.string(), z.string()).optional(),
+  acceptanceCriteria: z.array(z.string()).optional(),
+  tags: z.array(z.string()).optional(),
+  pointers: z.array(ArtefactPointerSchema).optional(),
+  documentType: z.string().optional(),
+})
+
+/**
+ * Schemas a prompt may name in its `outputSchema` front-matter (§9.4).
+ *
+ * A registry rather than a free-form schema in the prompt file: a prompt is
+ * text, and a schema expressed as text would be a second definition of a shape
+ * `core` already owns. Naming one keeps the single definition single.
+ */
+export const OUTPUT_SCHEMAS = {
+  artefact_draft: ArtefactDraftSchema,
+} as const
+
+export type OutputSchemaName = keyof typeof OUTPUT_SCHEMAS
+
+export function isOutputSchemaName(value: unknown): value is OutputSchemaName {
+  return typeof value === 'string' && value in OUTPUT_SCHEMAS
 }

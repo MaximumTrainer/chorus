@@ -3,6 +3,7 @@ import {
   CONTRACT_CHUNKS,
   CONTRACT_USAGE,
   CONTRACT_VECTORS,
+  CONTRACT_VALUE,
   type ModelProviderHarness,
 } from '../../src/testing/contract-kit.js'
 import { createOpenAiCompatibleProvider } from '../../src/providers/openai-compatible.js'
@@ -54,6 +55,20 @@ function providerWith(
   })
 }
 
+/** A non-streaming completion carrying `content`, which is where JSON arrives. */
+function completion(content: string): Response {
+  return new Response(
+    JSON.stringify({
+      choices: [{ message: { content } }],
+      usage: {
+        prompt_tokens: CONTRACT_USAGE.inputTokens,
+        completion_tokens: CONTRACT_USAGE.outputTokens,
+      },
+    }),
+    { status: 200, headers: { 'content-type': 'application/json' } },
+  )
+}
+
 const harness: ModelProviderHarness = {
   ref: { provider: 'openai-compatible', model: 'test-mid-1' },
 
@@ -75,6 +90,20 @@ const harness: ModelProviderHarness = {
           status: 200,
           headers: { 'content-type': 'text/event-stream' },
         }),
+    ),
+
+  generating: () => providerWith(() => completion(JSON.stringify(CONTRACT_VALUE))),
+
+  generatingInvalid: () =>
+    providerWith(() => completion(JSON.stringify({ tags: ['billing'] }))),
+
+  generatingWithProse: () =>
+    providerWith(() =>
+      completion(`Here is the draft:
+
+${JSON.stringify(CONTRACT_VALUE)}
+
+Hope that helps.`),
     ),
 
   leaking: (apiKey: string) =>

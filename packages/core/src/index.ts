@@ -166,7 +166,15 @@ export type {
   TemplateProblem,
   DocumentSection,
 } from './documents.js'
-export { ARTEFACT_KINDS, isArtefactKind, ArtefactRefusedError } from './artefacts.js'
+export {
+  ARTEFACT_KINDS,
+  isArtefactKind,
+  ArtefactRefusedError,
+  ArtefactDraftSchema,
+  ArtefactPointerSchema,
+  OUTPUT_SCHEMAS,
+  isOutputSchemaName,
+} from './artefacts.js'
 export type {
   ArtefactKind,
   ArtefactPointer,
@@ -174,6 +182,7 @@ export type {
   EmittedArtefact,
   ArtefactContext,
   ArtefactWriter,
+  OutputSchemaName,
 } from './artefacts.js'
 export {
   bodyFromTemplate,

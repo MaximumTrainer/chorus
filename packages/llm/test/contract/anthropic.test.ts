@@ -2,6 +2,7 @@ import {
   describeModelProviderContract,
   CONTRACT_CHUNKS,
   CONTRACT_USAGE,
+  CONTRACT_VALUE,
   type ModelProviderHarness,
 } from '../../src/testing/contract-kit.js'
 import { createAnthropicProvider } from '../../src/providers/anthropic.js'
@@ -89,6 +90,25 @@ function streamResponse(body: string): Response {
   })
 }
 
+/** A non-streaming message, where structured output arrives as a text block. */
+function message(text: string): Response {
+  return new Response(
+    JSON.stringify({
+      id: 'msg_contract_2',
+      type: 'message',
+      role: 'assistant',
+      model: 'claude-test-1',
+      content: [{ type: 'text', text }],
+      stop_reason: 'end_turn',
+      usage: {
+        input_tokens: CONTRACT_USAGE.inputTokens,
+        output_tokens: CONTRACT_USAGE.outputTokens,
+      },
+    }),
+    { status: 200, headers: { 'content-type': 'application/json' } },
+  )
+}
+
 const harness: ModelProviderHarness = {
   ref: { provider: 'anthropic', model: 'claude-test-1' },
 
@@ -102,6 +122,19 @@ const harness: ModelProviderHarness = {
 
   // The connection ends after one delta: no `message_delta`, no `message_stop`.
   truncated: () => providerWith(() => streamResponse(sse([START, BLOCK_START, DELTAS[0]!]))),
+
+  generating: () => providerWith(() => message(JSON.stringify(CONTRACT_VALUE))),
+
+  generatingInvalid: () => providerWith(() => message(JSON.stringify({ tags: ['billing'] }))),
+
+  generatingWithProse: () =>
+    providerWith(() =>
+      message(`Here is the draft:
+
+${JSON.stringify(CONTRACT_VALUE)}
+
+Hope that helps.`),
+    ),
 
   leaking: (apiKey: string) =>
     providerWith(

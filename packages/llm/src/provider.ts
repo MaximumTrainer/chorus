@@ -1,3 +1,4 @@
+import type { ZodType } from 'zod'
 import type { CallContext, ModelRef, TokenUsage } from './types.js'
 
 /**
@@ -40,9 +41,49 @@ export type StreamEvent =
   | { readonly type: 'done'; readonly usage: TokenUsage }
   | { readonly type: 'error'; readonly message: string }
 
+/**
+ * A request for output the caller can rely on the shape of (§9.1).
+ *
+ * The schema is sent to the provider, not merely checked on the way back. That
+ * is the whole difference: asking in prose and parsing afterwards makes every
+ * malformed reply a caller's problem to detect, and the detection that stood
+ * here before returned `undefined` — indistinguishable, downstream, from a
+ * model that had nothing to say.
+ */
+export interface GenerateRequest<T> {
+  readonly model: ModelRef
+  readonly messages: readonly ChatMessage[]
+  readonly context: CallContext
+  /** Validated on the way back, and sent as a constraint on the way out. */
+  readonly schema: ZodType<T>
+  /**
+   * What to call the schema on the wire.
+   *
+   * Providers require a name for the format they are given, and it appears in
+   * provider-side errors — so a meaningful one is the difference between a
+   * diagnosable failure and `schema_0 was not satisfied`.
+   */
+  readonly schemaName: string
+  readonly maxOutputTokens?: number
+  readonly signal?: AbortSignal
+}
+
+export interface GenerateResult<T> {
+  readonly value: T
+  readonly usage: TokenUsage
+}
+
 export interface ModelProvider {
   readonly name: string
   stream(request: ChatRequest): AsyncIterable<StreamEvent>
+  /**
+   * Structured output, validated against `schema` before it returns.
+   *
+   * Throws rather than returning a partial value. A caller that receives a
+   * `GenerateResult` may rely on its shape, which is the only property that
+   * makes this worth having over `stream`.
+   */
+  generate<T>(request: GenerateRequest<T>): Promise<GenerateResult<T>>
   /** One vector per text, in order. */
   embed(texts: readonly string[], model: ModelRef): Promise<number[][]>
 }

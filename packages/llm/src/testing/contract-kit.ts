@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { z } from 'zod'
 import type { ModelProvider } from '../provider.js'
 import type { ModelRef, TokenUsage } from '../types.js'
 
@@ -27,6 +28,16 @@ export const CONTRACT_CHUNKS: readonly string[] = ['The parser ', 'does three jo
 
 /** The usage a rigged streaming provider must report on `done`. */
 export const CONTRACT_USAGE: TokenUsage = { inputTokens: 11, outputTokens: 7 }
+
+/** The schema a rigged `generate` provider is asked for, and its name. */
+export const CONTRACT_SCHEMA = z.object({
+  title: z.string().min(1, 'an artefact needs a title'),
+  tags: z.array(z.string()).optional(),
+})
+export const CONTRACT_SCHEMA_NAME = 'contract_draft'
+
+/** The value a rigged `generate` provider must return. */
+export const CONTRACT_VALUE = { title: 'The invoice parser does three jobs', tags: ['billing'] }
 
 /** The vectors a rigged embedding provider must return, for two inputs. */
 export const CONTRACT_VECTORS: readonly number[][] = [
@@ -59,6 +70,27 @@ export interface ModelProviderHarness {
    * consumer waiting forever.
    */
   truncated(): ModelProvider
+
+  /** Returns `CONTRACT_VALUE` as structured output. */
+  generating(): ModelProvider
+
+  /**
+   * Returns an object of the wrong shape — `title` missing.
+   *
+   * The failure path is the reason `generate` exists at all, so a provider that
+   * could not be rigged into it would leave the behaviour that matters
+   * untested.
+   */
+  generatingInvalid(): ModelProvider
+
+  /**
+   * Returns the object with prose wrapped around it.
+   *
+   * Providers do ignore a format instruction and explain themselves first, and
+   * losing a good draft to a preamble helps nobody. Tolerated deliberately, so
+   * it is asserted rather than accidental.
+   */
+  generatingWithProse(): ModelProvider
 
   /** Returns `CONTRACT_VECTORS`, out of order, each tagged with its index. */
   embedding?(): ModelProvider
@@ -162,6 +194,46 @@ export function describeModelProviderContract(name: string, harness: ModelProvid
       const { errors } = await drain(harness.leaking(apiKey), ref)
 
       expect(errors.join(' ')).not.toContain(apiKey)
+    })
+
+    it('NFR-2: generate returns a value validated against the schema', async () => {
+      const result = await harness.generating().generate({
+        model: ref,
+        messages: [{ role: 'user', content: 'Draft it.' }],
+        context: CONTEXT,
+        schema: CONTRACT_SCHEMA,
+        schemaName: CONTRACT_SCHEMA_NAME,
+      })
+
+      expect(result.value).toEqual(CONTRACT_VALUE)
+      expect(result.usage).toEqual(CONTRACT_USAGE)
+    })
+
+    it('NFR-2: generate rejects output of the wrong shape, naming the field', async () => {
+      // Rejecting rather than returning a partial value is the entire contract.
+      // A caller holding a result may rely on its shape; one holding a
+      // half-populated object has to re-check everything `generate` promised.
+      await expect(
+        harness.generatingInvalid().generate({
+          model: ref,
+          messages: [{ role: 'user', content: 'Draft it.' }],
+          context: CONTEXT,
+          schema: CONTRACT_SCHEMA,
+          schemaName: CONTRACT_SCHEMA_NAME,
+        }),
+      ).rejects.toThrow(/title/i)
+    })
+
+    it('NFR-2: generate recovers an object wrapped in prose', async () => {
+      const result = await harness.generatingWithProse().generate({
+        model: ref,
+        messages: [{ role: 'user', content: 'Draft it.' }],
+        context: CONTEXT,
+        schema: CONTRACT_SCHEMA,
+        schemaName: CONTRACT_SCHEMA_NAME,
+      })
+
+      expect(result.value).toEqual(CONTRACT_VALUE)
     })
 
     if (harness.embedding) {

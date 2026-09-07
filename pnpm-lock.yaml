@@ -464,6 +464,9 @@ importers:
       yaml:
         specifier: 2.6.0
         version: 2.6.0
+      zod:
+        specifier: 4.5.4
+        version: 4.5.4
     devDependencies:
       '@chorus/config':
         specifier: workspace:*
