@@ -53,6 +53,7 @@ export default tseslint.config(
       'website/**/*.mjs',
       'website/**/*.ts',
       'scripts/**/*.mjs',
+      'scripts/**/*.ts',
       // A framework config file is read by the framework's own CLI, in Node,
       // before any bundle exists.
       'apps/*/next.config.mjs',
