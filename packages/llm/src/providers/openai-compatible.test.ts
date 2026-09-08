@@ -203,6 +203,53 @@ describe('NFR-2 OpenAI-compatible provider', () => {
     expect(seen!.auth).toBe('Bearer k')
   })
 
+  it('NFR-8: the request bounds its output even when the caller names none', async () => {
+    // Found by a live call, not by a cassette. Omitting `max_tokens` does not
+    // mean "a sensible default" — it means the endpoint picks, and endpoints
+    // pick their model's maximum. OpenRouter refused a request outright with
+    // "you requested up to 64000 tokens", a number no caller had asked for.
+    //
+    // Unbounded output is unbounded cost (NFR-8), and the Anthropic provider
+    // already bounds it for the same reason. A caller that needs more says so.
+    let seen: Record<string, unknown> | undefined
+    const provider = createOpenAiCompatibleProvider({
+      baseUrl: 'http://models.test/v1',
+      fetch: async (_url, init) => {
+        seen = JSON.parse(String(init?.body)) as Record<string, unknown>
+        return sseBody('[DONE]')
+      },
+    })
+
+    await collect(
+      provider.stream({ model: ref, messages: [{ role: 'user', content: 'hi' }], context }),
+    )
+
+    expect(typeof seen!.max_tokens).toBe('number')
+    expect(seen!.max_tokens as number).toBeGreaterThan(0)
+  })
+
+  it('NFR-8: a caller that names an output limit gets the one it asked for', async () => {
+    let seen: Record<string, unknown> | undefined
+    const provider = createOpenAiCompatibleProvider({
+      baseUrl: 'http://models.test/v1',
+      fetch: async (_url, init) => {
+        seen = JSON.parse(String(init?.body)) as Record<string, unknown>
+        return sseBody('[DONE]')
+      },
+    })
+
+    await collect(
+      provider.stream({
+        model: ref,
+        messages: [{ role: 'user', content: 'hi' }],
+        context,
+        maxOutputTokens: 256,
+      }),
+    )
+
+    expect(seen!.max_tokens).toBe(256)
+  })
+
   it('NFR-2: a local endpoint needs no key', async () => {
     // Ollama and LM Studio take no credential, and requiring one would make the
     // local profile impossible — which is the profile NFR-1 turns on.

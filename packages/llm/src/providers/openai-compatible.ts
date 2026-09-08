@@ -96,6 +96,21 @@ function parseArguments(json: string): Record<string, unknown> {
  */
 const CHARS_PER_TOKEN = 4
 
+/**
+ * The output ceiling when a caller names none.
+ *
+ * Omitting `max_tokens` does not mean "a sensible default" — it means the
+ * endpoint chooses, and endpoints choose their model's maximum. That is
+ * unbounded cost (NFR-8) and, on a quota-limited account, an outright refusal:
+ * a live smoke call was rejected with "you requested up to 64000 tokens", a
+ * number no caller had asked for.
+ *
+ * Matches the Anthropic provider's default so the two behave the same way, and
+ * is deliberately conservative: every endpoint this provider reaches accepts at
+ * least this much. A caller that needs more says so.
+ */
+const DEFAULT_MAX_OUTPUT_TOKENS = 8192
+
 export function createOpenAiCompatibleProvider(
   options: OpenAiCompatibleOptions,
 ): ModelProvider {
@@ -121,7 +136,7 @@ export function createOpenAiCompatibleProvider(
             // rather than failing.
             stream_options: { include_usage: true },
             ...(toolsFor(request.tools) ? { tools: toolsFor(request.tools) } : {}),
-            ...(request.maxOutputTokens ? { max_tokens: request.maxOutputTokens } : {}),
+            max_tokens: request.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
           }),
           ...(request.signal ? { signal: request.signal } : {}),
         })
@@ -269,7 +284,7 @@ export function createOpenAiCompatibleProvider(
               schema: jsonSchemaFor(request.schema as never),
             },
           },
-          ...(request.maxOutputTokens ? { max_tokens: request.maxOutputTokens } : {}),
+          max_tokens: request.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
         }),
         ...(request.signal ? { signal: request.signal } : {}),
       })
