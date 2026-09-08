@@ -121,28 +121,23 @@ export interface SandboxRunner {
 }
 
 /**
- * Variables every job needs regardless of adapter.
- *
- * `PATH` and `HOME` are carried from the host because a container without them
- * cannot run anything, and neither is a credential. Every other host variable
- * is dropped.
- */
-const CARRIED_FROM_HOST = ['PATH', 'HOME'] as const
-
-/**
  * The environment a sandbox gets (AC1).
  *
- * Built as an **allow-list**, never as the host environment minus the ones we
- * thought of. The difference is the whole control: a subtractive version is
+ * Built **only from the spec**. Not the host environment minus the ones we
+ * thought of, and not the host environment at all: a subtractive version is
  * correct until somebody adds a variable, and then it is silently wrong in the
- * direction that leaks. Nothing here reads `process.env` implicitly — the host
- * environment is a parameter so a test can hand it a realistic one and
- * enumerate the result.
+ * direction that leaks.
+ *
+ * Nothing is carried from the host, including `PATH` and `HOME`. An earlier
+ * version carried those two, reasoning that a container without them cannot run
+ * anything — which is false. The image sets its own, from its Dockerfile, and
+ * the host's are at best irrelevant. A real container found this the hard way:
+ * on a Windows host the inherited `PATH` was a semicolon-separated Windows path
+ * that meant nothing to a Linux container and broke the run outright. The
+ * environment being derived from the spec alone is both more correct and
+ * strictly smaller, which is the direction a security control should move.
  */
-export function buildSandboxEnvironment(
-  spec: SandboxSpec,
-  hostEnv: Readonly<Record<string, string | undefined>>,
-): Record<string, string> {
+export function buildSandboxEnvironment(spec: SandboxSpec): Record<string, string> {
   // A deployment that configured no egress policy must not silently get none.
   // Refusing here rather than at the runtime means the mistake is found when
   // the job is prepared, not after the container has already reached the
@@ -160,11 +155,6 @@ export function buildSandboxEnvironment(
     CHORUS_JOB_ID: spec.jobId,
     CHORUS_API_URL: spec.apiUrl,
     CHORUS_JOB_TOKEN: spec.jobToken,
-  }
-
-  for (const name of CARRIED_FROM_HOST) {
-    const value = hostEnv[name]
-    if (value !== undefined) env[name] = value
   }
 
   // Exactly what the adapter declared. A second adapter's key here would be a

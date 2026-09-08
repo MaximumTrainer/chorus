@@ -38,3 +38,5 @@ export type {
   LaunchOutcome,
   CompleteRequest,
 } from './jobs.js'
+export { createDockerSandboxRunner } from './runtime/docker.js'
+export type { DockerSandboxOptions } from './runtime/docker.js'

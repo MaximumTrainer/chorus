@@ -923,7 +923,7 @@ Non-negotiable properties, asserted by a dedicated security test suite:
 - **only** the target repository, cloned with a short-lived repository-scoped token (a GitHub App installation token or a GitLab project token)
 - environment contains the adapter's model key, `CHORUS_JOB_ID` and `CHORUS_API_URL` with a **job-scoped token** that can only post job events and read its own brief — it cannot read tasks, documents or the brain
 - no platform database credentials, no workspace integration credentials, no other repository
-- egress restricted to an allow-list: git host, model endpoint, package registries; everything else refused at the network layer
+- egress restricted to an allow-list: git host, model endpoint, package registries; everything else refused at the network layer. The mechanism is topology, not cooperation ([ADR-0019](docs/adr/0019-sandbox-egress-via-an-internal-network-and-a-filtering-proxy.md)): the sandbox joins an **internal** network with no route off the host, and a dual-homed proxy holds the only path out and answers `CONNECT` for allow-listed hosts alone. The internal network is the control and the proxy is the convenience — a proxy on its own would work exactly as long as the job honoured the environment it was given, and an adapter is precisely the thing that might be compromised
 - CPU, memory, disk, process and wall-clock limits; logs and diff streamed to object storage
 - results validated before a PR is opened: diff size within limits, no changes outside the repository's configured path allow-list, no modification of CI configuration unless explicitly permitted
 

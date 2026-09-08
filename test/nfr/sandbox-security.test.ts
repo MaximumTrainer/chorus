@@ -65,7 +65,7 @@ const HOST_ENV = {
 
 describe('CODE-4 sandbox security', () => {
   it('CODE-4 AC1: the environment contains no platform or workspace credential', () => {
-    const env = buildSandboxEnvironment(BASE_SPEC, HOST_ENV)
+    const env = buildSandboxEnvironment(BASE_SPEC)
 
     // Enumerated, not spot-checked. A test that looked for three known names
     // would pass the day somebody added a fourth.
@@ -78,13 +78,13 @@ describe('CODE-4 sandbox security', () => {
   })
 
   it('CODE-4 AC1: the environment is exactly what was declared, and nothing else', () => {
-    const env = buildSandboxEnvironment(BASE_SPEC, HOST_ENV)
+    const env = buildSandboxEnvironment(BASE_SPEC)
 
     // An allow-list, asserted as a whole. The failure this prevents is not a
     // leak somebody added on purpose; it is a variable that arrived because the
     // construction was "host environment, minus the ones we thought of".
     expect(Object.keys(env).sort()).toEqual(
-      ['ANTHROPIC_API_KEY', 'CHORUS_API_URL', 'CHORUS_JOB_ID', 'CHORUS_JOB_TOKEN', 'HOME', 'PATH'].sort(),
+      ['ANTHROPIC_API_KEY', 'CHORUS_API_URL', 'CHORUS_JOB_ID', 'CHORUS_JOB_TOKEN'].sort(),
     )
   })
 
@@ -102,7 +102,7 @@ describe('CODE-4 sandbox security', () => {
   })
 
   it('CODE-4 AC4: the environment names one repository and carries no other clone URL', () => {
-    const env = buildSandboxEnvironment(BASE_SPEC, HOST_ENV)
+    const env = buildSandboxEnvironment(BASE_SPEC)
 
     // The clone URL carries the scoped token, so it must not appear in the
     // environment at all: an environment is readable by every process in the
@@ -185,7 +185,7 @@ describe('CODE-4 sandbox security', () => {
     const env = await sandbox.environment()
 
     expect(Object.keys(env).sort()).toEqual(
-      Object.keys(buildSandboxEnvironment(BASE_SPEC, { PATH: '/usr/bin', HOME: '/home/agent' })).sort(),
+      Object.keys(buildSandboxEnvironment(BASE_SPEC)).sort(),
     )
     expect(env.CHORUS_JOB_TOKEN).toBe(BASE_SPEC.jobToken)
     expect(Object.keys(env)).not.toContain('CHORUS_DB_PASSWORD')
@@ -198,7 +198,7 @@ describe('CODE-4 sandbox security', () => {
     // deployment that forgot to configure egress must not silently get none.
     expect(BASE_SPEC.egressAllowList.length).toBeGreaterThan(0)
     expect(() =>
-      buildSandboxEnvironment({ ...BASE_SPEC, egressAllowList: [] }, HOST_ENV),
+      buildSandboxEnvironment({ ...BASE_SPEC, egressAllowList: [] }),
     ).toThrow(/egress/i)
   })
 })

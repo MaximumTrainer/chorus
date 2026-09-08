@@ -62,7 +62,7 @@ export function createFakeSandbox(
   // The same construction the real runner uses, so an adapter that relies on a
   // variable the runner would never provide fails in a test rather than in a
   // container nobody is watching.
-  const environment = buildSandboxEnvironment(spec, { PATH: '/usr/bin', HOME: '/home/agent' })
+  const environment = buildSandboxEnvironment(spec)
 
   return {
     jobId: spec.jobId,
