@@ -33,7 +33,14 @@ import { createTokenCountCache } from './token-count-cache.js'
 
 export interface AnthropicOptions {
   readonly apiKey: string
-  /** Overridden by a gateway or a proxy; defaults to the public API. */
+  /**
+   * Overridden by a gateway or a proxy; defaults to the public API.
+   *
+   * **Without the version path.** The SDK appends `/v1/messages` itself, so a
+   * base URL that already ends in `/v1` produces `/v1/v1/messages` and a 404 —
+   * the opposite convention to the OpenAI-compatible provider, whose base URL
+   * does include it. For OpenRouter that means `https://openrouter.ai/api`.
+   */
   readonly baseUrl?: string
   /** Injected so the contract kit drives the parser without a server. */
   readonly fetch?: typeof fetch
@@ -121,6 +128,34 @@ function toolsFor(tools: readonly ToolSpec[] | undefined): unknown[] | undefined
     description: tool.description,
     input_schema: jsonSchemaFor(tool.inputSchema),
   }))
+}
+
+/**
+ * Whether an error means "this endpoint does not exist here".
+ *
+ * Narrow on purpose: anything broader would absorb real failures into a
+ * fallback and make them invisible.
+ */
+function isNotImplemented(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'status' in error &&
+    (error as { status?: unknown }).status === 404
+  )
+}
+
+/**
+ * A conservative estimate, when the endpoint cannot count.
+ *
+ * Four characters per token is the usual rule of thumb for the byte-pair
+ * encodings in use, and it rounds **up**, so a spend guard errs toward asking
+ * rather than toward overspending. It is an estimate and is documented as one;
+ * the alternative is bundling a tokeniser we would then have to keep in step
+ * with models we do not control.
+ */
+function estimateTokens(text: string): number {
+  return Math.max(1, Math.ceil(text.length / 4))
 }
 
 export function createAnthropicProvider(options: AnthropicOptions): ModelProvider {
@@ -292,15 +327,32 @@ export function createAnthropicProvider(options: AnthropicOptions): ModelProvide
     },
 
     async countTokens(text: string, model: ModelRef): Promise<number> {
-      // Exact, from the model's own tokeniser. A local approximation drifts as
-      // models change, and a spend guard built on a drifting number is one that
-      // stops guarding without anybody noticing.
+      // Exact, from the model's own tokeniser, wherever the endpoint offers
+      // one. A local approximation drifts as models change, and a spend guard
+      // built on a drifting number stops guarding without anybody noticing.
       return tokenCounts.get(model, text, async () => {
-        const response = await client.messages.countTokens({
-          model: model.model,
-          messages: [{ role: 'user', content: text }],
-        })
-        return response.input_tokens
+        try {
+          const response = await client.messages.countTokens({
+            model: model.model,
+            messages: [{ role: 'user', content: text }],
+          })
+          return response.input_tokens
+        } catch (error) {
+          // `count_tokens` is Anthropic's own endpoint, and a gateway speaking
+          // the Anthropic wire format need not implement it — OpenRouter's does
+          // not, and returns 404. That is a capability gap rather than a
+          // failure, and the difference matters: the spend guard is built on
+          // counting, so throwing here would make every model-calling job fail
+          // before it started. A guard failing closed is not obviously better
+          // than no guard, and is a great deal more confusing.
+          //
+          // Only 404 is absorbed. A 401 means the credential is wrong and a 429
+          // means the account is throttled; returning a plausible number for
+          // either would hide a broken deployment behind a guard that looked
+          // like it was working.
+          if (!isNotImplemented(error)) throw error
+          return estimateTokens(text)
+        }
       })
     },
 
