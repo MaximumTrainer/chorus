@@ -220,7 +220,11 @@ async function counting(models: ModelProvider, model: ModelRef): Promise<void> {
   }
 }
 
-async function caching(models: ModelProvider, model: ModelRef): Promise<void> {
+async function caching(
+  models: ModelProvider,
+  model: ModelRef,
+  explicitBreakpoint: boolean,
+): Promise<void> {
   async function once(): Promise<TokenUsage | undefined> {
     let usage: TokenUsage | undefined
     for await (const event of models.stream({
@@ -245,11 +249,20 @@ async function caching(models: ModelProvider, model: ModelRef): Promise<void> {
   const second = await once()
   console.log(`    first:  ${JSON.stringify(first)}`)
   console.log(`    second: ${JSON.stringify(second)}`)
-  check(
-    'caching: the second call read from cache',
-    (second?.cachedInputTokens ?? 0) > 0,
-    `cachedInputTokens=${second?.cachedInputTokens ?? 0}`,
-  )
+  const hit = (second?.cachedInputTokens ?? 0) > 0
+  if (explicitBreakpoint) {
+    // The Anthropic provider places a cache breakpoint itself, so a miss is a
+    // bug in where it put it — misplaced, it caches nothing and still pays for
+    // the write, and nothing raises an error. It shows up as a bill.
+    check('caching: the second call read from cache', hit, `cachedInputTokens=${second?.cachedInputTokens ?? 0}`)
+  } else if (hit) {
+    check('caching: cache reads are counted apart from fresh input', true,
+      `cachedInputTokens=${second?.cachedInputTokens ?? 0}, inputTokens=${second?.inputTokens ?? 0}`)
+  } else {
+    // Automatic caching is the endpoint's decision, not ours. A miss here says
+    // the endpoint chose not to cache, which is not a defect in this code.
+    skip('caching', 'the endpoint reported no cache hit; it caches automatically or not at all')
+  }
 }
 
 async function smoke(models: ModelProvider, model: ModelRef, cacheable: boolean): Promise<void> {
@@ -258,13 +271,7 @@ async function smoke(models: ModelProvider, model: ModelRef, cacheable: boolean)
   await structured(models, model)
   await toolCalling(models, model)
   await counting(models, model)
-  if (cacheable) {
-    await caching(models, model)
-  } else {
-    // Only the Anthropic provider marks a cache breakpoint today. Saying so is
-    // better than a silent pass that reads as "caching works here".
-    skip('caching', 'not implemented for this provider')
-  }
+  await caching(models, model, cacheable)
 }
 
 async function main(): Promise<void> {

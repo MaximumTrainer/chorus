@@ -203,6 +203,95 @@ describe('NFR-2 OpenAI-compatible provider', () => {
     expect(seen!.auth).toBe('Bearer k')
   })
 
+  it('NFR-8: cached input tokens are reported separately from fresh ones', async () => {
+    const provider = createOpenAiCompatibleProvider({
+      baseUrl: 'http://models.test/v1',
+      fetch: async () =>
+        sseBody(
+          JSON.stringify({
+            choices: [{ delta: {} }],
+            usage: {
+              prompt_tokens: 2_000,
+              completion_tokens: 50,
+              prompt_tokens_details: { cached_tokens: 1_800 },
+            },
+          }),
+          '[DONE]',
+        ),
+    })
+
+    const events = await collect(
+      provider.stream({ model: ref, messages: [{ role: 'user', content: 'hi' }], context }),
+    )
+    const done = events.find((event) => event.type === 'done')
+
+    expect(done).toMatchObject({ usage: { cachedInputTokens: 1_800 } })
+  })
+
+  it('NFR-8: fresh input excludes the cached part, so nothing is billed twice', async () => {
+    // The trap, and it is a difference between the two APIs rather than a
+    // mistake in either. OpenAI reports `prompt_tokens` as the *total* with
+    // cached tokens as a subset of it; Anthropic reports `input_tokens`
+    // already excluding its cache reads. `TokenUsage.inputTokens` means fresh
+    // input at the full rate, so this provider has to subtract and the other
+    // must not.
+    //
+    // Read straight through, a 2,000-token prompt served almost entirely from
+    // cache would be recorded as 2,000 fresh tokens *plus* 1,800 cached ones —
+    // 3,800 billed for 2,000 sent, and the row would still reconcile with
+    // itself.
+    const provider = createOpenAiCompatibleProvider({
+      baseUrl: 'http://models.test/v1',
+      fetch: async () =>
+        sseBody(
+          JSON.stringify({
+            choices: [{ delta: {} }],
+            usage: {
+              prompt_tokens: 2_000,
+              completion_tokens: 50,
+              prompt_tokens_details: { cached_tokens: 1_800 },
+            },
+          }),
+          '[DONE]',
+        ),
+    })
+
+    const events = await collect(
+      provider.stream({ model: ref, messages: [{ role: 'user', content: 'hi' }], context }),
+    )
+    const done = events.find((event) => event.type === 'done') as
+      | { usage: { inputTokens: number; cachedInputTokens?: number } }
+      | undefined
+
+    expect(done!.usage.inputTokens).toBe(200)
+    expect(done!.usage.inputTokens + (done!.usage.cachedInputTokens ?? 0)).toBe(2_000)
+  })
+
+  it('NFR-8: an endpoint that reports no cache detail is unchanged', async () => {
+    // Most OpenAI-compatible servers — Ollama, LM Studio, vLLM — send no cache
+    // detail at all. Their input must not become zero, and their cached count
+    // must not become a guess.
+    const provider = createOpenAiCompatibleProvider({
+      baseUrl: 'http://models.test/v1',
+      fetch: async () =>
+        sseBody(
+          JSON.stringify({
+            choices: [{ delta: {} }],
+            usage: { prompt_tokens: 300, completion_tokens: 20 },
+          }),
+          '[DONE]',
+        ),
+    })
+
+    const events = await collect(
+      provider.stream({ model: ref, messages: [{ role: 'user', content: 'hi' }], context }),
+    )
+
+    expect(events.find((event) => event.type === 'done')).toMatchObject({
+      usage: { inputTokens: 300, outputTokens: 20, cachedInputTokens: 0 },
+    })
+  })
+
   it('NFR-8: the request bounds its output even when the caller names none', async () => {
     // Found by a live call, not by a cassette. Omitting `max_tokens` does not
     // mean "a sensible default" — it means the endpoint picks, and endpoints

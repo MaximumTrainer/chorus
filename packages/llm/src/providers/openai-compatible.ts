@@ -51,7 +51,12 @@ interface ToolCallDelta {
 
 interface ChatDelta {
   choices?: Array<{ delta?: { content?: string; tool_calls?: ToolCallDelta[] } }>
-  usage?: { prompt_tokens?: number; completion_tokens?: number }
+  usage?: {
+    prompt_tokens?: number
+    completion_tokens?: number
+    /** OpenAI reports cache hits here, as a *subset* of `prompt_tokens`. */
+    prompt_tokens_details?: { cached_tokens?: number }
+  }
 }
 
 /** Tool definitions in the OpenAI-compatible shape, from the one Zod source. */
@@ -110,6 +115,40 @@ const CHARS_PER_TOKEN = 4
  * least this much. A caller that needs more says so.
  */
 const DEFAULT_MAX_OUTPUT_TOKENS = 8192
+
+/**
+ * Splits a reported prompt total into fresh and cached tokens (NFR-8).
+ *
+ * The two APIs disagree, and the disagreement is a trap rather than a mistake
+ * in either. OpenAI reports `prompt_tokens` as the **total**, with
+ * `prompt_tokens_details.cached_tokens` a subset of it. Anthropic reports
+ * `input_tokens` already **excluding** its cache reads.
+ *
+ * `TokenUsage.inputTokens` means fresh input at the full rate, so this provider
+ * subtracts and the Anthropic one must not. Read straight through, a
+ * 2,000-token prompt served almost entirely from cache would be recorded as
+ * 2,000 fresh tokens plus 1,800 cached ones — 3,800 billed for 2,000 sent, in a
+ * row that still reconciles perfectly with itself.
+ *
+ * Most OpenAI-compatible servers — Ollama, LM Studio, vLLM — report no cache
+ * detail at all, and get zero rather than a guess.
+ */
+function splitUsage(usage: {
+  prompt_tokens?: number
+  completion_tokens?: number
+  prompt_tokens_details?: { cached_tokens?: number }
+}): { inputTokens: number; outputTokens: number; cachedInputTokens: number } {
+  const total = usage.prompt_tokens ?? 0
+  // Clamped: an endpoint reporting more cached than total would otherwise
+  // produce a negative charge, and a negative row is harder to notice than a
+  // wrong one.
+  const cached = Math.min(Math.max(usage.prompt_tokens_details?.cached_tokens ?? 0, 0), total)
+  return {
+    inputTokens: total - cached,
+    outputTokens: usage.completion_tokens ?? 0,
+    cachedInputTokens: cached,
+  }
+}
 
 export function createOpenAiCompatibleProvider(
   options: OpenAiCompatibleOptions,
@@ -224,10 +263,7 @@ export function createOpenAiCompatibleProvider(
             }
 
             if (parsed.usage) {
-              usage = {
-                inputTokens: parsed.usage.prompt_tokens ?? 0,
-                outputTokens: parsed.usage.completion_tokens ?? 0,
-              }
+              usage = splitUsage(parsed.usage)
             }
 
             for (const delta of parsed.choices?.[0]?.delta?.tool_calls ?? []) {
@@ -302,16 +338,18 @@ export function createOpenAiCompatibleProvider(
 
       const body = (await response.json()) as {
         choices?: Array<{ message?: { content?: string } }>
-        usage?: { prompt_tokens?: number; completion_tokens?: number }
+        usage?: {
+    prompt_tokens?: number
+    completion_tokens?: number
+    /** OpenAI reports cache hits here, as a *subset* of `prompt_tokens`. */
+    prompt_tokens_details?: { cached_tokens?: number }
+  }
       }
 
       const text = body.choices?.[0]?.message?.content ?? ''
       return {
         value: parseStructured(text, request.schema, request.schemaName),
-        usage: {
-          inputTokens: body.usage?.prompt_tokens ?? 0,
-          outputTokens: body.usage?.completion_tokens ?? 0,
-        },
+        usage: splitUsage(body.usage ?? {}),
       }
     },
 
