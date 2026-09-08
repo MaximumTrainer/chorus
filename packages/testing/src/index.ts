@@ -29,3 +29,5 @@ export type {
 } from './fakes/model-provider.js'
 export { createFakeSandbox, createFakeSandboxRunner } from './fakes/sandbox.js'
 export type { FakeSandbox, FakeSandboxScript } from './fakes/sandbox.js'
+export { createFakeGitHost } from './fakes/git-host.js'
+export type { FakeGitHost, FakeGitHostScript } from './fakes/git-host.js'

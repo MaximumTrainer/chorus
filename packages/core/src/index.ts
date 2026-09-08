@@ -214,3 +214,11 @@ export type {
   SandboxChange,
   SandboxVerdict,
 } from './sandbox.js'
+export type {
+  GitHost,
+  GitHostBranch,
+  GitHostCommit,
+  GitHostPullRequest,
+  OpenPullRequest,
+} from './git-host.js'
+export { PullRequestRefusedError } from './git-host.js'

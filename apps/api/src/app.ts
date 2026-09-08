@@ -1,5 +1,12 @@
 import { Hono } from 'hono'
-import { AppError, NotFoundError, ForbiddenError, ValidationError, ulid } from '@chorus/core'
+import {
+  AppError,
+  ConfigurationError,
+  NotFoundError,
+  ForbiddenError,
+  ValidationError,
+  ulid,
+} from '@chorus/core'
 import type { ModelProvider } from '@chorus/llm'
 import { currentTraceId, withSpan } from '@chorus/telemetry'
 import { withTenant, configFromEnv, type DbConfig } from '@chorus/db'
@@ -27,6 +34,8 @@ import { apiTokenRoutes } from './api-token-routes.js'
 import { createOAuthService, OAuthError } from './oauth.js'
 import { oauthRoutes } from './oauth-routes.js'
 import { createRepositoryService } from './repositories.js'
+import { codingJobRoutes } from './coding-job-routes.js'
+import { createCodingJobService, type CodingJobService } from '@chorus/coding'
 import { repositoryRoutes } from './repository-routes.js'
 import { runRoutes, type RunResumer } from './run-routes.js'
 import { notificationRoutes } from './notification-routes.js'
@@ -126,6 +135,14 @@ export interface AppOptions {
   turn?: TurnRunner
   /** How a document becomes a proposed task tree (DOC-6). */
   decompose?: Decomposer
+  /**
+   * Launching and collecting coding jobs (CODE-1, CODE-5).
+   *
+   * Optional, and its routes are absent without it, because a deployment with
+   * no git host configured cannot launch a coding job — and a route that exists
+   * but always fails is worse than one that is honestly not there.
+   */
+  codingJobs?: CodingJobService
   /**
    * Where a grounded surface reads a stored context bundle (CHAT-3).
    *
@@ -236,6 +253,44 @@ export function routeTable(dbConfig?: DbConfig, models?: ModelProvider): readonl
   return buildRoutes(dbConfig ?? configFromEnv(), models).table
 }
 
+/**
+ * A coding-job service for deployments that have not configured a git host.
+ *
+ * Launching, listing and cancelling need no host — only opening the pull
+ * request does — so those routes work regardless. This exists so the routes are
+ * **unconditional**, which matters more than it looks: `routeTable()` is what
+ * the permission suite enumerates, and a route that appears only when a
+ * dependency happens to be wired is a route the suite never checks. That is the
+ * arrangement the authorisation module exists to prevent — one that reads as a
+ * guarantee and is not one.
+ */
+function defaultCodingJobs(config: DbConfig): CodingJobService {
+  return createCodingJobService(config, {
+    gitHost: {
+      createBranch: () => {
+        throw new ConfigurationError(UNCONFIGURED_GIT_HOST)
+      },
+      commit: () => {
+        throw new ConfigurationError(UNCONFIGURED_GIT_HOST)
+      },
+      openPullRequest: () => {
+        throw new ConfigurationError(UNCONFIGURED_GIT_HOST)
+      },
+    },
+    settings: {
+      defaultAdapter: 'reference',
+      allowedAdapters: ['reference', 'claude-code'],
+      appBaseUrl: 'http://localhost:3000',
+      botName: 'Chorus Agent',
+      botEmail: 'agent@chorus.invalid',
+    },
+  })
+}
+
+const UNCONFIGURED_GIT_HOST =
+  'No git host is configured, so a coding job cannot open a pull request. ' +
+  'Link a repository through a git integration first.'
+
 function buildRoutes(
   config: DbConfig,
   models?: ModelProvider,
@@ -246,6 +301,7 @@ function buildRoutes(
   turn?: TurnRunner,
   retriever?: Retriever,
   decompose?: Decomposer,
+  codingJobs?: CodingJobService,
 ): {
   table: readonly RouteDefinition[]
   deps: AuthorisationDeps
@@ -270,6 +326,7 @@ function buildRoutes(
       ...repositoryRoutes(repositories),
       ...runRoutes(config, resumeRun),
       ...taskRoutes(createTaskService(config)),
+      ...codingJobRoutes(codingJobs ?? defaultCodingJobs(config)),
       ...documentRoutes(
         createDocumentService(config),
         createCollaborationService(config),
@@ -542,6 +599,7 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
           options.turn,
           options.retriever,
           options.decompose,
+          options.codingJobs,
         )
       : undefined
 

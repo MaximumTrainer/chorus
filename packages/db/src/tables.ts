@@ -34,6 +34,7 @@ export const TENANT_TABLES = [
   'notification_deliveries',
   'checkpoint_decision_tokens',
   'notification_digest_settings',
+  'coding_jobs',
   'spend_ledger',
   'context_bundles',
   'tasks',

@@ -24,3 +24,17 @@ export { createReferenceAdapter } from './adapters/reference.js'
 export type { ReferenceAdapterOptions } from './adapters/reference.js'
 export { createClaudeCodeAdapter } from './adapters/claude-code.js'
 export type { ClaudeCodeAdapterOptions } from './adapters/claude-code.js'
+export { evaluateLaunch, branchNameFor, LAUNCH_ROLE } from './launch.js'
+export type { LaunchConditions, LaunchVerdict } from './launch.js'
+export { pullRequestBody, pullRequestTitle } from './pull-request.js'
+export type { PullRequestFacts } from './pull-request.js'
+export { createCodingJobService, ACTIVE_STATUSES } from './jobs.js'
+export type {
+  CodingJob,
+  CodingJobService,
+  CodingJobStatus,
+  CodingJobsConfig,
+  LaunchRequest,
+  LaunchOutcome,
+  CompleteRequest,
+} from './jobs.js'

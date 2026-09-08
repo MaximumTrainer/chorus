@@ -929,6 +929,13 @@ Non-negotiable properties, asserted by a dedicated security test suite:
 
 ### 12.4 Output (CODE-5)
 
+Launching is gated at `senior_member` and the decision is a pure function in `packages/coding`, so the API route and the MCP tool reach the same verdict by construction rather than by two handlers agreeing today. It returns **every** blocking reason rather than the first: somebody who links a repository, retries, and is then told their adapter is not permitted has been made to do the work twice for no reason but the order the checks ran in.
+
+One active job per task is enforced by a partial unique index on `coding_jobs (task_id)` where the status is non-terminal, never by check-then-insert. A policy auto-launch and a user's click race in practice, and check-then-insert loses that race silently — both callers read "no active job", both insert, and one task has two agents editing one branch. The loser of the race is handed the job that won, because the caller wanted a job for this task and there is one.
+
+A branch that already exists is reused rather than force-pushed over: force-pushing is how a colleague's review comments end up attached to a diff that no longer exists. Pull request creation is idempotent on the job id, so a retried collection step does not open a second one, and a refusal (protected branch, rate limit, permissions) leaves the branch and diff pushed and records the specific cause — re-running the agent to rediscover a permissions problem costs money and tells nobody anything new.
+
+
 Branch `chorus/<task-key>-<slug>`; commits authored by the bot identity with `Co-authored-by` for the requesting human; a PR whose body links the task, the source document and the brief, renders the acceptance criteria as a checklist, and includes the agent's summary plus test and lint results. The PR URL is stored on the job and on the task, and the task moves to `in_review`.
 
 ### 12.5 Feedback loop and pre-flight (CODE-7, CODE-8)

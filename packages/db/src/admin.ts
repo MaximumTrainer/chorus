@@ -358,6 +358,15 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
         [ulid(), workspaceId, teamId, runId],
       )
       await owner.query(
+        `INSERT INTO coding_jobs
+           (id, workspace_id, team_id, task_id, repository_id, adapter, requested_by)
+         SELECT $1, $2, $3, t.id, r.id, 'reference', $4
+           FROM tasks t, repositories r
+          WHERE t.workspace_id = $2 AND r.workspace_id = $2
+          LIMIT 1`,
+        [ulid(), workspaceId, teamId, userId],
+      )
+      await owner.query(
         `INSERT INTO notification_digest_settings (id, workspace_id, user_id, enabled)
          VALUES ($1, $2, $3, false)`,
         [ulid(), workspaceId, userId],
@@ -776,6 +785,19 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
                (id, workspace_id, task_id, repository_id, path, line_start, line_end, source)
              VALUES ($1, $2, $3, $4, 'src/a.ts', 1, 2, 'manual')`,
             [id, workspaceId, task?.id ?? id, repo?.id ?? id],
+          )
+          return
+        }
+        case 'coding_jobs': {
+          const [task] = await tx.query<{ id: string; team_id: string }>(
+            `SELECT id, team_id FROM tasks LIMIT 1`,
+          )
+          const [repo] = await tx.query<{ id: string }>(`SELECT id FROM repositories LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO coding_jobs
+               (id, workspace_id, team_id, task_id, repository_id, adapter, requested_by)
+             VALUES ($1, $2, $3, $4, $5, 'reference', $6)`,
+            [id, workspaceId, task?.team_id ?? id, task?.id ?? id, repo?.id ?? id, userId],
           )
           return
         }
