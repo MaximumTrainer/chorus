@@ -24,7 +24,8 @@
     "db:migrate": "tsx packages/db/src/migrate.ts",
     "test:e2e": "playwright test",
     "test:coverage": "vitest run --passWithNoTests --project unit --project integration --project contract --project acceptance --coverage",
-    "smoke:models": "tsx scripts/smoke-models.ts"
+    "smoke:models": "tsx scripts/smoke-models.ts",
+    "smoke:coding-job": "tsx scripts/smoke-coding-job.ts"
   },
   "devDependencies": {
     "@chorus/agent": "workspace:*",

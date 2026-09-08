@@ -76,6 +76,8 @@ export interface RecordedRequest {
   readonly purpose: string
   /** The schema the call was constrained to, when it was a `generate`. */
   readonly schemaName?: string
+  /** The output ceiling the caller asked for, if it named one. */
+  readonly maxOutputTokens?: number
 }
 
 export interface FakeModelProvider extends ModelProvider {
@@ -210,6 +212,9 @@ export function createFakeModelProvider(initial: FakeModelScript = {}): FakeMode
         prompt: request.messages.map((message) => message.content).join('\n\n'),
         workspaceId: request.context.workspaceId,
         purpose: request.context.purpose,
+        ...(request.maxOutputTokens === undefined
+          ? {}
+          : { maxOutputTokens: request.maxOutputTokens }),
       })
 
       if (current.hang) {

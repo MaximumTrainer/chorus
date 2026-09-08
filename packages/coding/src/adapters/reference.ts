@@ -35,6 +35,15 @@ export interface ReferenceAdapterOptions {
   readonly image?: string
   /** How many tool-calling turns before the loop gives up. */
   readonly maxTurns?: number
+  /**
+   * The output ceiling for each turn.
+   *
+   * A coding loop makes many calls, and one large ceiling per turn is both
+   * wasteful and, on a quota-limited gateway, fatal: the ceiling is checked
+   * against the remaining balance before a single token is produced. A live run
+   * refused with "you requested up to 8192 tokens, but can only afford 7150".
+   */
+  readonly maxOutputTokens?: number
 }
 
 /**
@@ -45,6 +54,15 @@ export interface ReferenceAdapterOptions {
  * Stopping on its own terms leaves a summary.
  */
 const DEFAULT_MAX_TURNS = 24
+
+/**
+ * The per-turn output ceiling when a caller names none.
+ *
+ * A turn is a decision plus at most a file's worth of edit, not a document.
+ * Generous enough for a whole small file, small enough that twenty-four of them
+ * is a predictable bill rather than an open one.
+ */
+const DEFAULT_MAX_OUTPUT_TOKENS = 4096
 
 const TOOLS: readonly ToolSpec[] = [
   {
@@ -70,16 +88,34 @@ const TOOLS: readonly ToolSpec[] = [
   },
 ]
 
+/**
+ * The loop's standing instructions.
+ *
+ * The test-command clause is conditional, and it is conditional because a live
+ * run showed what the unconditional version costs. Told to "run the repository
+ * test command" by a brief whose conventions section said none was detected,
+ * the agent finished the actual edit and then spent four of its eight turns
+ * hunting for a `package.json` that did not exist — burning the budget on an
+ * instruction that contradicted the brief it had been given.
+ *
+ * The brief is the authority on the repository. Anything here that restates
+ * what the brief already says is a second source of truth, and the model
+ * follows whichever it read last.
+ */
 const SYSTEM = [
   'You are a coding agent working inside a sandbox on one task.',
   'Read BRIEF.md first: it carries the task, its acceptance criteria, the team charter,',
   'the repository conventions and the code pointers you should start from.',
-  'Satisfy the acceptance criteria and nothing else. Run the repository test command',
-  'before you finish. When you are done, say what you changed and why, in prose.',
+  'Satisfy the acceptance criteria and nothing else.',
+  'If the brief names a test command, run it before you finish; if it says none was',
+  'detected, do not go looking for one — there is not one.',
+  'Stop as soon as the criteria are met: say what you changed and why, in prose,',
+  'and make no further tool calls.',
 ].join(' ')
 
 export function createReferenceAdapter(options: ReferenceAdapterOptions): CodingAdapter {
   const maxTurns = options.maxTurns ?? DEFAULT_MAX_TURNS
+  const maxOutputTokens = options.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS
 
   return {
     id: 'reference',
@@ -133,6 +169,7 @@ export function createReferenceAdapter(options: ReferenceAdapterOptions): Coding
             purpose: 'code',
           },
           tools: TOOLS,
+          maxOutputTokens,
         })) {
           if (event.type === 'token') {
             text += event.text

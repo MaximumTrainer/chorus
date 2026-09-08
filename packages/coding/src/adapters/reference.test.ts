@@ -92,6 +92,44 @@ describe('CODE-3 reference adapter', () => {
     expect(models.requests()[0]!.prompt).toContain('pnpm run test')
   })
 
+  it('NFR-8: every turn bounds its own output', async () => {
+    // A coding loop makes many calls, and an unbounded ceiling on each is both
+    // wasteful and, on a quota-limited gateway, fatal: the ceiling is checked
+    // against the remaining balance before a single token is produced. A live
+    // run against OpenRouter refused with "you requested up to 8192 tokens".
+    const models = createFakeModelProvider()
+    models.script({ chunks: ['Nothing to do.'] })
+    const adapter = createReferenceAdapter({ models, model: MODEL, maxOutputTokens: 1024 })
+    const sandbox = createFakeSandbox(CONTRACT_SPEC)
+
+    const prepared = await adapter.prepare({
+      jobId: CONTRACT_SPEC.jobId,
+      brief: contractBrief(),
+      spec: CONTRACT_SPEC,
+    })
+    await drain(adapter.run(prepared, sandbox))
+
+    expect(models.requests()[0]?.maxOutputTokens).toBe(1024)
+  })
+
+  it('NFR-8: a caller that names no ceiling still gets one', async () => {
+    const models = createFakeModelProvider()
+    models.script({ chunks: ['Nothing to do.'] })
+    const adapter = createReferenceAdapter({ models, model: MODEL })
+    const sandbox = createFakeSandbox(CONTRACT_SPEC)
+
+    const prepared = await adapter.prepare({
+      jobId: CONTRACT_SPEC.jobId,
+      brief: contractBrief(),
+      spec: CONTRACT_SPEC,
+    })
+    await drain(adapter.run(prepared, sandbox))
+
+    const asked = models.requests()[0]?.maxOutputTokens
+    expect(typeof asked).toBe('number')
+    expect(asked as number).toBeGreaterThan(0)
+  })
+
   it('CODE-3 AC2: it needs no secrets, so a local endpoint is enough', () => {
     const adapter = createReferenceAdapter({
       models: createFakeModelProvider(),
