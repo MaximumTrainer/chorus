@@ -225,3 +225,16 @@ not a substitute for reading `CLAUDE.md` and `architecture.md`.
 | `ship` | Finishing: `pnpm verify`, the commit message shape and the two hooks, the push, and watching the remote run to green. |
 | `green-main` | `main` is red, or its state is unknown: find the run, read the real failure, reproduce it locally, land the fix. |
 | `backlog-sync` | Closing issues that a green build actually proves, and filing precise issues for what was deliberately left out. |
+
+## Shared agent skills
+
+Shared skills live in [MaximumTrainer/agent-skills](https://github.com/MaximumTrainer/agent-skills). Before writing a new
+skill, runbook or repeated procedure, check the catalogue - and send genuinely
+general improvements back so the other repositories get them too.
+
+```bash
+python3 .claude/skills/skill-exchange/scripts/skills.py list
+python3 .claude/skills/skill-exchange/scripts/skills.py status
+```
+
+See `.claude/skills/skill-exchange/` for the workflow.
