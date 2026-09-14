@@ -142,6 +142,24 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # NFR-12 AC4: the reference deployment starts Postgres with planner
+      # settings that were measured, and a service container cannot be given a
+      # command — so CI ran on the defaults. A query-plan assertion (BRAIN-4
+      # AC5) then passed on every developer machine and failed here nightly, on
+      # a plan nobody could reproduce. Read from the compose file itself, so
+      # there is one definition of how a Chorus database is tuned, and
+      # test/nfr/bootstrap/database-configuration.test.ts asserts the server
+      # this suite runs against actually carries it.
+      #
+      # Written to a file rather than piped into psql: down a pipe, a script
+      # that failed would feed psql nothing, psql would report success, and CI
+      # would stay on the defaults with this fix silently undone.
+      - name: Configure Postgres as the reference deployment does
+        run: |
+          set -euo pipefail
+          node scripts/reference-db-config.mjs > /tmp/reference-db-config.sql
+          psql "postgres://chorus:chorus@127.0.0.1:5432/chorus" --set ON_ERROR_STOP=1 --file /tmp/reference-db-config.sql
+
       # AGENT-4 AC5 asserts that an exported trace is accepted by a *standard*
       # collector, which can only be shown by sending it to one. Started as a
       # step rather than a service container because the collector needs its
@@ -296,6 +314,15 @@ jobs:
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # The same planner configuration the reference deployment uses, for the
+      # same reason as in `verify` above — and it is this job whose query-plan
+      # assertions depend on it (NFR-12 AC4).
+      - name: Configure Postgres as the reference deployment does
+        run: |
+          set -euo pipefail
+          node scripts/reference-db-config.mjs > /tmp/reference-db-config.sql
+          psql "postgres://chorus:chorus@127.0.0.1:5432/chorus" --set ON_ERROR_STOP=1 --file /tmp/reference-db-config.sql
 
       # The runner is fixed so the numbers are comparable night to night. It is
       # NOT the 4 vCPU / 8 GB reference host §24 states the budget for, so a
