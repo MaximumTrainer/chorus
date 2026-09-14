@@ -12,10 +12,15 @@ import { createRecordingMailer, createTestClient, type TestClient } from '@choru
  * is the worst of both worlds: it reads as a guarantee and is not one, and the
  * two drift the first time someone edits only the handler.
  *
- * Two acceptance criteria cannot be proved here yet, and are not pretended:
+ * AC1 is proved here now that CODE-1 has landed a coding-job route, and it is
+ * proved twice, because the rung and the scope are different guarantees: a
+ * `member` is refused whoever they are, and a credential without `run:coding`
+ * is refused whatever its holder's role. The second half is what #149 found
+ * missing — the route asked for the general write scope, so a token lent for
+ * editing documents could spend money and push a branch.
  *
- * - AC1 (coding jobs require seniority) needs a coding-job route. CODE-1 is
- *   Phase 2. The `senior_member` rung is exercised through AC2 instead.
+ * One acceptance criterion still cannot be proved here, and is not pretended:
+ *
  * - AC5 (MCP and HTTP permit identical sets) needs the MCP server, which is
  *   Phase 1 WP-1.11. The suite that will assert it is table-driven over the
  *   route table already, so adding the tool registry extends it rather than
@@ -178,6 +183,148 @@ describe('WS-4 roles and permission enforcement', () => {
       role: 'admin',
     })
     expect(now.status, 'with a second owner in place, demotion is safe').toBe(204)
+  })
+
+  it('WS-4 AC1: a member cannot launch a coding job and a senior member can', async () => {
+    // The `senior_member` rung exists for this one decision. A coding job
+    // spends money and writes to a repository, and until there was a route
+    // that asked for the rung, nothing was actually standing on it.
+    const owner = await client.signedInUser()
+    const workspace = await owner.createWorkspace('Coding Gate')
+    const [team] = (await (await owner.get(`/workspaces/${workspace.id}/teams`)).json()) as Array<{
+      id: string
+    }>
+
+    // The integration is workspace-level and seeded directly: connecting one is
+    // INT-1's flow, and this test is about the rung, not about that.
+    const [integration] = await db.admin.query<{ id: string }>(
+      `INSERT INTO integrations (id, workspace_id, kind) VALUES ($1, $2, 'github') RETURNING id`,
+      [`int${Date.now()}${Math.floor(Math.random() * 1000)}`, workspace.id],
+    )
+    const linked = await owner.post(
+      `/workspaces/${workspace.id}/teams/${team!.id}/repositories`,
+      {
+        integrationId: integration!.id,
+        provider: 'github',
+        fullName: 'acme/billing',
+        defaultBranch: 'main',
+      },
+    )
+    expect(linked.status, await linked.clone().text()).toBe(201)
+
+    const task = (await (
+      await owner.post(`/workspaces/${workspace.id}/teams/${team!.id}/tasks`, {
+        title: 'Split the invoice parser',
+        acceptanceCriteria: [{ text: 'Parsing is separated from validation' }],
+      })
+    ).json()) as { id: string }
+
+    const member = await client.memberWithRole(owner, workspace.id, 'member')
+    const senior = await client.memberWithRole(owner, workspace.id, 'senior_member')
+
+    const path = `/workspaces/${workspace.id}/teams/${team!.id}/tasks/${task.id}/coding-jobs`
+
+    const refused = await member.post(path, {})
+    expect(
+      refused.status,
+      'a member must not be able to spend money and write to a repository',
+    ).toBe(403)
+
+    const allowed = await senior.post(path, {})
+    expect(
+      allowed.status,
+      `a senior member must be able to launch: ${await allowed.clone().text()}`,
+    ).toBeLessThan(400)
+
+    // AC1 says "refused ... and audited". A 403 nobody can account for later is
+    // half a control.
+    const [denial] = await db.admin.query<{
+      actor_id: string
+      after: { required: string; held: string; path: string }
+    }>(
+      `SELECT actor_id, after FROM audit_events
+        WHERE workspace_id = $1 AND action = 'access.denied' ORDER BY at DESC LIMIT 1`,
+      [workspace.id],
+    )
+    expect(denial, 'the refusal must leave a record').toBeDefined()
+    expect(denial!.actor_id).toBe(member.userId)
+    expect(denial!.after).toMatchObject({ required: 'senior_member', held: 'member' })
+  })
+
+  it('WS-4 AC1: launching a coding job needs the run:coding scope, not a general write', async () => {
+    // The role rung and the scope answer different questions. The rung asks
+    // who the person is; the scope asks what they lent this credential to do.
+    // `run:coding` exists (architecture.md §17) precisely so that a token
+    // handed to a script for editing documents cannot also spend money and
+    // push branches — and it only means that if the coding route asks for it.
+    const owner = await client.signedInUser()
+    const workspace = await owner.createWorkspace('Scoped Coding')
+    const [team] = (await (await owner.get(`/workspaces/${workspace.id}/teams`)).json()) as Array<{
+      id: string
+    }>
+
+    const [integration] = await db.admin.query<{ id: string }>(
+      `INSERT INTO integrations (id, workspace_id, kind) VALUES ($1, $2, 'github') RETURNING id`,
+      [`int${Date.now()}${Math.floor(Math.random() * 1000)}`, workspace.id],
+    )
+    await owner.post(`/workspaces/${workspace.id}/teams/${team!.id}/repositories`, {
+      integrationId: integration!.id,
+      provider: 'github',
+      fullName: 'acme/billing',
+      defaultBranch: 'main',
+    })
+
+    const task = (await (
+      await owner.post(`/workspaces/${workspace.id}/teams/${team!.id}/tasks`, {
+        title: 'Split the invoice parser',
+        acceptanceCriteria: [{ text: 'Parsing is separated from validation' }],
+      })
+    ).json()) as { id: string }
+
+    const path = `/workspaces/${workspace.id}/teams/${team!.id}/tasks/${task.id}/coding-jobs`
+
+    // Given a token from someone whose role permits coding, deliberately
+    // without the coding scope
+    const writeOnly = (await (
+      await owner.post(`/workspaces/${workspace.id}/tokens`, {
+        name: 'documents only',
+        scopes: ['read:artefacts', 'write:artefacts'],
+      })
+    ).json()) as { token: string }
+
+    const refused = await client.bearer(writeOnly.token).post(path, {})
+    expect(
+      refused.status,
+      'a token lent for writing artefacts must not also launch coding jobs',
+    ).toBe(403)
+    expect(JSON.stringify(await refused.json())).toContain('run:coding')
+
+    // And the same holder, with the scope, gets through.
+    const coding = (await (
+      await owner.post(`/workspaces/${workspace.id}/tokens`, {
+        name: 'coding',
+        scopes: ['read:artefacts', 'write:artefacts', 'run:coding'],
+      })
+    ).json()) as { token: string }
+
+    const allowed = await client.bearer(coding.token).post(path, {})
+    expect(
+      allowed.status,
+      `run:coding must be sufficient: ${await allowed.clone().text()}`,
+    ).toBeLessThan(400)
+
+    // Cancelling is the same authority seen from the other side: stopping a
+    // colleague's job halfway leaves a branch and a spend with nothing to show
+    // for them, so it is not something a documents token should be able to do
+    // either.
+    const job = (await allowed.json()) as { id: string }
+    const cancel = `/workspaces/${workspace.id}/coding-jobs/${job.id}/cancel`
+
+    const refusedCancel = await client.bearer(writeOnly.token).post(cancel, {})
+    expect(
+      refusedCancel.status,
+      'a token lent for writing artefacts must not cancel coding jobs either',
+    ).toBe(403)
   })
 
   it('WS-4: a denial is audited with the actor and the role that was required', async () => {

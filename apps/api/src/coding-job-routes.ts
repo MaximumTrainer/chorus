@@ -22,9 +22,16 @@ export function codingJobRoutes(jobs: CodingJobService): RouteDefinition[] {
       method: 'POST',
       path: '/workspaces/:workspaceId/teams/:teamId/tasks/:taskId/coding-jobs',
       summary: 'Launch a coding job for a task.',
-      // CODE-1 AC1: senior_member or above. A coding job spends money and
-      // writes to a repository, which is why this is not `member`.
-      auth: { kind: 'workspace', role: 'senior_member', scopes: ['write:artefacts'] },
+      // CODE-1 AC1 / WS-4 AC1: senior_member or above. A coding job spends
+      // money and writes to a repository, which is why this is not `member`.
+      //
+      // The scope is `run:coding` rather than `write:artefacts` (#149). Role
+      // and scope answer different questions — who the caller is, and what
+      // they lent this credential to do — and architecture.md §17 names
+      // `run:coding` for exactly this. Declaring the general write scope meant
+      // a token handed to a script for editing documents could also spend
+      // money and push a branch.
+      auth: { kind: 'workspace', role: 'senior_member', scopes: ['run:coding'] },
       handler: async (c) => {
         const body = (await c.req.json().catch(() => ({}))) as { adapter?: unknown }
         if (body.adapter !== undefined && typeof body.adapter !== 'string') {
@@ -63,7 +70,7 @@ export function codingJobRoutes(jobs: CodingJobService): RouteDefinition[] {
       method: 'POST',
       path: '/workspaces/:workspaceId/coding-jobs/:jobId/cancel',
       summary: 'Cancel a queued or running coding job.',
-      auth: { kind: 'workspace', role: 'senior_member', scopes: ['write:artefacts'] },
+      auth: { kind: 'workspace', role: 'senior_member', scopes: ['run:coding'] },
       handler: async (c) =>
         c.json(
           await jobs.cancel(
