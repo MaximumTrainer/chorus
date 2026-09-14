@@ -80,7 +80,10 @@ services:
       retries: 20
 
   minio:
-    image: minio/minio:RELEASE.2024-10-13T13-34-11Z
+    # quay.io, not Docker Hub: MinIO withdrew the `minio/minio` repository
+    # there, and the reference stack stopped starting on a pull nobody had
+    # changed. Same project, same pinned release, a registry that serves it.
+    image: quay.io/minio/minio:RELEASE.2024-10-13T13-34-11Z
     restart: unless-stopped
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
