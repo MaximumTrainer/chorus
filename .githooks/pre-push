@@ -5,6 +5,16 @@
 # been run, but its exit code was not read. A machine reads exit codes
 # reliably; a person under momentum does not.
 #
+# The browser journeys run here too, and not inside `pnpm verify` (#159). They
+# are the only suite that executes TypeScript under Node's strip-only mode, so
+# they reject a class of syntax that typecheck, lint and all three vitest
+# projects accept — which is how a constructor parameter property put a red on
+# `main` that nothing local could have caught. Keeping them out of `verify`
+# keeps the inner loop free of a browser; putting them here means the gate
+# before the remote matches the remote, which is what NFR-12 AC4 asks for.
+# `test/nfr/pre-push.test.ts` compares the two sets, so the next suite CI gains
+# cannot be quietly missing from this file.
+#
 # To bypass in a genuine emergency: git push --no-verify (and say so in the PR).
 set -e
 
@@ -13,5 +23,15 @@ if ! pnpm verify; then
   echo ""
   echo "pre-push: verify FAILED - push aborted."
   echo "  Fix the failure, or push with --no-verify and explain why in the PR."
+  exit 1
+fi
+
+echo "pre-push: running the browser journeys (pnpm test:e2e)"
+if ! pnpm test:e2e; then
+  echo ""
+  echo "pre-push: browser journeys FAILED - push aborted."
+  echo "  If the browser itself is missing rather than the journeys failing:"
+  echo "    pnpm exec playwright install --with-deps chromium"
+  echo "  Otherwise fix the failure, or push with --no-verify and say why in the PR."
   exit 1
 fi

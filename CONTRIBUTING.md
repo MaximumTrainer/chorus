@@ -28,7 +28,7 @@ const shown = "ghp_..."                     // pre-commit-allow: documentation e
 
 Each form covers one line only. CI re-runs the secret scan over every tracked file and re-applies the commit-message gate to the commits it receives, because a hook runs on your machine and `--no-verify` is one keystroke.
 
-**`pre-push`** runs `pnpm verify`. That safeguard exists because a commit was once pushed with a failing gate: it had been run, but its exit code was not read.
+**`pre-push`** runs `pnpm verify` and then the browser journeys. That safeguard exists because a commit was once pushed with a failing gate: it had been run, but its exit code was not read.
 
 **`commit-msg`** refuses a commit that touches source but neither updates documentation nor says why it need not. Most source commits genuinely need no documentation, and a gate demanding a pointless edit would only teach people to make pointless edits — so the second option is a line in the commit message:
 
@@ -40,7 +40,7 @@ That is the point of it. "No documentation needed" becomes a claim recorded in h
 
 `pnpm verify` runs typecheck, lint, the unit/integration/contract/acceptance suites **with coverage**, and the non-functional suites. The coverage floor is a floor, not a target: it catches a change that adds code nothing exercises, and it is deliberately a few points under where the repository sits. Do not write tests to raise it — CLAUDE.md §7 explains why that produces worse tests than none. If it passes locally and fails in CI, that divergence is itself a bug (NFR-12 AC4).
 
-**It does not run the browser journeys.** CI runs `pnpm test:e2e` as a separate step, and `pre-push` does not, so a change can pass the gate on your machine and fail on the remote. That gap is real and has caught at least one change: the journeys execute TypeScript under Node's strip-only mode, where syntax the rest of the build accepts — a constructor parameter property, for one — is a `SyntaxError` at import. If you touch anything the journeys import, run them:
+**`verify` does not run the browser journeys; `pre-push` does** (#159). They are kept out of `verify` so the inner loop needs no browser, and run before the remote so the local gate matches it — the journeys execute TypeScript under Node's strip-only mode, where syntax the rest of the build accepts (a constructor parameter property, for one) is a `SyntaxError` at import, and a change only they can reject once reached `main` because of exactly this gap. They add about a minute. To run them alone, or if `pre-push` reports the browser is missing rather than the journeys failing:
 
 ```bash
 pnpm exec playwright install --with-deps chromium   # once
