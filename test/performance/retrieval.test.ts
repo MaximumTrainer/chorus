@@ -2,7 +2,13 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { cpus, totalmem } from 'node:os'
 import { createIsolatedDatabase, type IsolatedDatabase } from '@chorus/db'
 import { ulid } from '@chorus/core'
-import { createRetriever, type Retriever } from '@chorus/brain'
+import {
+  anyTermQuery,
+  createRetriever,
+  LEXICAL_SEARCH_SQL,
+  VECTOR_SEARCH_SQL,
+  type Retriever,
+} from '@chorus/brain'
 import { createFakeModelProvider, type FakeModelProvider } from '@chorus/testing'
 
 /**
@@ -188,10 +194,18 @@ describe('BRAIN-4 AC5 retrieval latency', () => {
     // Asserted on the *plan*, not inferred from timings. A scan and an index
     // lookup are only a few milliseconds apart at twenty thousand rows and a
     // hundredfold apart at a million, so a timing threshold small enough to run
-    // in a minute cannot distinguish them — and four separate defects found
+    // in a minute cannot distinguish them — and five separate defects found
     // while writing this were all of exactly one kind: a query written so the
     // planner could not reach an index. That is a property of the SQL, and the
     // planner will state it directly if asked.
+    //
+    // It is asked about the **exported query strings the retriever runs**. This
+    // assertion used to EXPLAIN a hand-written approximation of them, and the
+    // fifth defect is what that cost: the copy omitted the `code_files` join,
+    // so it reported the HNSW index reached while the real query drove from
+    // files and scanned every chunk of every one — 347ms against 4.5ms at this
+    // corpus size (#155). The copy was never wrong about the string it was
+    // given; it was just not the string the system ran.
     const [repo] = await db.admin.query<{ id: string }>(
       `SELECT id FROM repositories WHERE workspace_id = $1 LIMIT 1`,
       [workspaceId],
@@ -199,36 +213,34 @@ describe('BRAIN-4 AC5 retrieval latency', () => {
     const embedding = `[${models.embedText(queries[0]!).join(',')}]`
 
     const vectorPlan = (
-      await db.admin.query<{ 'QUERY PLAN': string }>(
-        `EXPLAIN SELECT c.id FROM code_chunks c
-          WHERE c.repository_id = ANY($2) AND c.embedding IS NOT NULL
-          ORDER BY c.embedding <=> $1::vector LIMIT 50`,
-        [embedding, [repo!.id]],
-      )
+      await db.admin.query<{ 'QUERY PLAN': string }>(`EXPLAIN ${VECTOR_SEARCH_SQL}`, [
+        embedding,
+        [repo!.id],
+        50,
+        0.6,
+      ])
     )
       .map((row) => row['QUERY PLAN'])
       .join('\n')
 
-    expect(
-      vectorPlan,
-      `the vector search fell back to a scan:\n${vectorPlan}`,
-    ).toContain('code_chunks_embedding')
+    expect(vectorPlan, `the vector search fell back to a scan:\n${vectorPlan}`).toContain(
+      'code_chunks_embedding',
+    )
 
     const lexicalPlan = (
-      await db.admin.query<{ 'QUERY PLAN': string }>(
-        `EXPLAIN SELECT c.id FROM code_chunks c
-          WHERE c.repository_id = ANY($2) AND c.search @@ plainto_tsquery('simple', $1)
-          ORDER BY ts_rank(c.search, plainto_tsquery('simple', $1)) DESC, c.id LIMIT 50`,
-        [queries[0]!, [repo!.id]],
-      )
+      await db.admin.query<{ 'QUERY PLAN': string }>(`EXPLAIN ${LEXICAL_SEARCH_SQL}`, [
+        queries[0]!,
+        [repo!.id],
+        50,
+        anyTermQuery(queries[0]!),
+      ])
     )
       .map((row) => row['QUERY PLAN'])
       .join('\n')
 
-    expect(
-      lexicalPlan,
-      `the lexical search fell back to a scan:\n${lexicalPlan}`,
-    ).toContain('code_chunks_search')
+    expect(lexicalPlan, `the lexical search fell back to a scan:\n${lexicalPlan}`).toContain(
+      'code_chunks_search',
+    )
   })
 
   it('BRAIN-4 AC5: p95 is inside the §24 budget at the measured corpus size', async () => {
