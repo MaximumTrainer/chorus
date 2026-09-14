@@ -152,6 +152,91 @@ describe('CHAT-2 streaming chat', () => {
     expect(assistant[0]!.content.text).toBe('The parser does three jobs, and they can be split.')
   })
 
+  it('CHAT-2 AC3: a reader who hangs up mid-turn leaves a marked partial and no orphan run', async () => {
+    // Given a turn mid-stream
+    const { ada, workspaceId, sessionId } = await session()
+    // The fake holds after the second chunk, so "mid-stream" is a place in the
+    // script rather than a moment on the clock. A test that raced a timer here
+    // would be the flake it was written to prevent.
+    models.script({
+      chunks: ['The parser ', 'does three jobs, ', 'and they can be split.'],
+      holdAfterChunks: 2,
+    })
+
+    const aborter = new AbortController()
+    const response = await ada.request(
+      `/workspaces/${workspaceId}/sessions/${sessionId}/messages`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'Where does the invoice parser do too much?' }),
+        signal: aborter.signal,
+      },
+    )
+    // Deliberately not reading the body to assert on it: the stream is held
+    // open on purpose, so draining it here would wait for the answer this test
+    // exists to interrupt.
+    expect(response.status).toBe(200)
+
+    // Read far enough to be genuinely mid-answer, then hang up.
+    await models.reachedHold()
+
+    // When the user interrupts
+    aborter.abort()
+    models.release()
+
+    // Then the turn stops and settles. Polled on the condition rather than
+    // slept on: the abort unwinds through the executor asynchronously, and the
+    // condition — the partial having been written — is the thing being waited
+    // for, not an interval somebody guessed.
+    const assistantMessages = async (): Promise<
+      Array<{ role: string; runId?: string; interrupted?: boolean; content: { text?: string } }>
+    > => {
+      const body = (await (
+        await ada.get(`/workspaces/${workspaceId}/sessions/${sessionId}`)
+      ).json()) as {
+        messages: Array<{
+          role: string
+          runId?: string
+          interrupted?: boolean
+          content: { text?: string }
+        }>
+      }
+      return body.messages.filter((m) => m.role === 'assistant')
+    }
+
+    await expect
+      .poll(async () => (await assistantMessages()).length, { timeout: 15_000 })
+      .toBe(1)
+    const settled = (await assistantMessages())[0]!
+
+    // the partial message is persisted, and says it is partial
+    expect(settled.content.text, 'what the reader saw must be what is kept').toBe(
+      'The parser does three jobs, ',
+    )
+    expect(
+      settled.interrupted,
+      'an answer that stops halfway must not be indistinguishable from one that finished',
+    ).toBe(true)
+
+    // the run ends in a terminal state — no orphan left running forever
+    const [run] = await db.admin.query<{ status: string }>(
+      `SELECT status FROM runs WHERE id = $1`,
+      [settled.runId],
+    )
+    expect(run!.status, 'a run nobody is waiting for must not stay `running`').toBe('stopped')
+
+    // and the spend up to the interruption is recorded, because it was spent
+    const [spend] = await db.admin.query<{ n: string }>(
+      `SELECT count(*) AS n FROM spend_ledger WHERE run_id = $1`,
+      [settled.runId],
+    )
+    expect(
+      Number(spend!.n),
+      'tokens generated before the hang-up cost money whether or not anyone read them',
+    ).toBeGreaterThan(0)
+  })
+
   it('CHAT-2 AC6: each message names its author, and an agent message names the run behind it', async () => {
     // Given a session with one turn in it
     const { ada, workspaceId, sessionId } = await session()

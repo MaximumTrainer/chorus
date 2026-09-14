@@ -59,6 +59,14 @@ export interface SessionMessage {
   /** The run that produced an agent message, so a reply links to its trace. */
   readonly runId: string | null
   /**
+   * The reader hung up before this answer finished (CHAT-2 AC3).
+   *
+   * Read by the transcript so a partial is not shown as a finished thought,
+   * and by whatever assembles history for a later turn — a model handed a
+   * truncated answer as though it were whole has been misled by its own past.
+   */
+  readonly interrupted: boolean
+  /**
    * What grounded this message (CHAT-3 AC1).
    *
    * The bundle's id rather than a copy of its fragments: a copy is a second
@@ -109,6 +117,8 @@ export interface SessionService {
     authorUserId?: string
     runId?: string
     contextUsed?: Record<string, unknown>
+    /** The reader hung up before this answer finished (CHAT-2 AC3). */
+    interrupted?: boolean
   }): Promise<SessionMessage>
   get(workspaceId: string, sessionId: string): Promise<SessionRecord>
   sources(
@@ -162,9 +172,11 @@ export function createSessionService(config: DbConfig): SessionService {
       author_user_id: string | null
       run_id: string | null
       context_used: Record<string, unknown> | null
+      interrupted: boolean
       created_at: Date
     }>(
-      `SELECT seq, role, content, author_user_id, run_id, context_used, created_at FROM messages
+      `SELECT seq, role, content, author_user_id, run_id, context_used, interrupted, created_at
+         FROM messages
         WHERE session_id = $1 ORDER BY seq`,
       [sessionId],
     )
@@ -183,6 +195,7 @@ export function createSessionService(config: DbConfig): SessionService {
         authorUserId: message.author_user_id,
         runId: message.run_id,
         contextUsed: message.context_used,
+        interrupted: message.interrupted,
         createdAt: message.created_at.toISOString(),
       })),
     }
@@ -200,8 +213,9 @@ export function createSessionService(config: DbConfig): SessionService {
         )
         const [row] = await t.query<{ seq: number; created_at: Date }>(
           `INSERT INTO messages
-             (id, workspace_id, session_id, seq, role, author_user_id, run_id, content, context_used)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb)
+             (id, workspace_id, session_id, seq, role, author_user_id, run_id, content,
+              context_used, interrupted)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10)
            RETURNING seq, created_at`,
           [
             ulid(),
@@ -213,6 +227,7 @@ export function createSessionService(config: DbConfig): SessionService {
             input.runId ?? null,
             JSON.stringify(input.content),
             input.contextUsed ? JSON.stringify(input.contextUsed) : null,
+            input.interrupted ?? false,
           ],
         )
         return {
@@ -222,6 +237,7 @@ export function createSessionService(config: DbConfig): SessionService {
           authorUserId: input.authorUserId ?? null,
           runId: input.runId ?? null,
           contextUsed: input.contextUsed ?? null,
+          interrupted: input.interrupted ?? false,
           createdAt: row!.created_at.toISOString(),
         }
       })

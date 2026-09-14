@@ -34,6 +34,13 @@ export interface TurnResult {
   readonly text: string
   /** What grounded it, recorded on the message so the panel is exact (CHAT-3). */
   readonly bundleId?: string
+  /**
+   * The reader hung up before the turn finished (CHAT-2 AC3).
+   *
+   * Not an error: an interruption is the system doing as it was told. `text`
+   * is then how far the answer got, which is still worth keeping.
+   */
+  readonly interrupted?: boolean
 }
 
 export interface TurnRunner {
@@ -44,6 +51,8 @@ export interface TurnRunner {
       readonly teamId: string
       readonly actorId: string
       readonly text: string
+      /** Aborts the turn when the reader hangs up (CHAT-2 AC3). */
+      readonly signal?: AbortSignal
     },
     onEvent: (event: TurnEvent) => void,
   ): Promise<TurnResult>
@@ -129,7 +138,22 @@ export function createTurnRunner(
         input: { text: input.text, sessionId: input.sessionId },
       })
 
-      const outcome = await executor.run(input.workspaceId, run.id)
+      const outcome = await executor.run(input.workspaceId, run.id, {
+        ...(input.signal ? { signal: input.signal } : {}),
+      })
+
+      // Interruption is not failure. The reader asked for it, the run reached a
+      // terminal state, and how far the answer got is worth keeping — so it is
+      // returned rather than thrown (CHAT-2 AC3).
+      if (outcome.status === 'stopped' && input.signal?.aborted) {
+        return {
+          runId: run.id,
+          text: typeof outcome.output === 'string' ? outcome.output : '',
+          interrupted: true,
+          ...(bundleId ? { bundleId } : {}),
+        }
+      }
+
       if (outcome.status !== 'succeeded') {
         // Carried rather than swallowed: the reader is told why the answer
         // stopped, and the run id goes with it so the trace is reachable.

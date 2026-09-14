@@ -220,7 +220,18 @@ export interface StartInput {
 
 export interface Executor {
   start(input: StartInput): Promise<RunRecord>
-  run(workspaceId: string, runId: string): Promise<RunOutcome>
+  /**
+   * Runs `runId` to completion, or until `signal` aborts.
+   *
+   * An aborted run ends `stopped` rather than being left `running`: the reader
+   * has gone, and a row nobody will ever finish is an orphan that a resume
+   * sweep has to guess about (CHAT-2 AC3).
+   */
+  run(
+    workspaceId: string,
+    runId: string,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<RunOutcome>
 }
 
 /**
@@ -479,7 +490,8 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
       }
     },
 
-    async run(workspaceId, runId) {
+    async run(workspaceId, runId, options = {}) {
+      const signal = options.signal
       const [run] = await tx(workspaceId, (t) =>
         t.query<{
           id: string
@@ -643,6 +655,7 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
                 teamId: run.team_id ?? '',
                 runId,
                 actor: { userId: run.started_by, role: actorRole },
+                ...(signal ? { signal } : {}),
               }),
           )
 
@@ -711,7 +724,20 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
         )
         // Both recorded: the run says why it ended, the step says which one and
         // how, so an ending is diagnosable without reading the logs.
-        return { runId, status, stepsExecuted: executed, stepsSkipped: skipped, error: reason }
+        //
+        // `output` goes with it so an interrupted turn still carries what the
+        // agent had said. The caller persists from the run rather than from the
+        // frames it forwarded — the stream is what a reader saw, the run is
+        // what happened — and without this a stopped run would have nothing to
+        // persist and the partial would be lost (CHAT-2 AC3).
+        return {
+          runId,
+          status,
+          stepsExecuted: executed,
+          stepsSkipped: skipped,
+          error: reason,
+          output: lastOutput,
+        }
       }
 
       const pauseRun = async (): Promise<RunOutcome> => {
@@ -854,6 +880,21 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
 
         const outcome = await runStep(step, step.id)
 
+        // The reader hung up while that step was running. Ended here rather
+        // than carried on to the next one: the point of an interruption is
+        // that the work stops, and a run that finishes its remaining steps
+        // after nobody is listening has spent money to produce an answer for
+        // no one (CHAT-2 AC3).
+        if (signal?.aborted) {
+          // The interrupted step still produced something, and that something
+          // is the answer as far as it got.
+          if (outcome.kind !== 'pause' && outcome.kind !== 'stop' && outcome.kind !== 'failed') {
+            outputs[step.id] = outcome.output
+            lastOutput = outcome.output
+          }
+          return endRun('stopped', 'the reader interrupted the turn')
+        }
+
         if (outcome.kind === 'pause') return pauseRun()
         // Stopped, not failed. A policy of `never`, a rejection or an expiry
         // are all the system working as asked; recording them as failures would
@@ -984,9 +1025,22 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
     teamId: string
     runId: string
     actor: { userId: string; role: 'member' | 'senior_member' | 'admin' | 'owner' }
+    /** Aborts the step's model call when the reader hangs up (CHAT-2 AC3). */
+    signal?: AbortSignal
   }): Promise<StepResult> {
-    const { step, definition, redaction, scope, outputs, startedWith, workspaceId, teamId, runId, actor } =
-      input
+    const {
+      step,
+      definition,
+      redaction,
+      scope,
+      outputs,
+      startedWith,
+      workspaceId,
+      teamId,
+      runId,
+      actor,
+      signal,
+    } = input
     const ctx = { workspaceId, teamId, runId, actor, now }
 
     switch (step.type) {
@@ -1087,11 +1141,21 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
           structured = generated.value
           usage = generated.usage
         } else {
+          // The signal reaches the provider as well as this loop. A provider
+          // that honours it stops the upstream request — the tokens nobody
+          // will read are not generated, which is the half of an interruption
+          // that actually saves money (CHAT-2 AC3).
           for await (const event of deps.models.stream({
             model,
             messages,
             context: { workspaceId, teamId, runId, purpose: 'chat' },
+            ...(signal ? { signal } : {}),
           })) {
+            // Checked before the event is used, not after: a token consumed
+            // here is a token the reader has already stopped listening for,
+            // and appending it would make the persisted partial say more than
+            // they ever saw.
+            if (signal?.aborted) break
             if (event.type === 'token') {
               text += event.text
               deps.onEvent?.({ kind: 'token', text: event.text })
@@ -1101,6 +1165,16 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
             if (event.type === 'done') usage = event.usage
             if (event.type === 'error') throw new Error(event.message)
           }
+        }
+
+        // A stream that ended without `done` reported no usage, and the tokens
+        // it did produce were still generated and still cost money. Recording
+        // a zero there would be a false row rather than a missing one, and
+        // §8.2 is explicit that over-reporting is the recoverable direction —
+        // so the partial is counted instead. Cached by content hash, so the
+        // repeated prefixes this prices are paid for once.
+        if (usage.outputTokens === 0 && text !== '') {
+          usage = { ...usage, outputTokens: await deps.models.countTokens(text, model) }
         }
 
         const latencyMs = Date.now() - startedAt

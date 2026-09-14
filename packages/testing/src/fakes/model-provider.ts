@@ -34,6 +34,16 @@ export interface FakeModelScript {
   readonly failWith?: string
   /** Emits nothing and never completes, so a timeout path can be tested. */
   readonly hang?: boolean
+  /**
+   * Stops the stream after this many chunks until `release()` is called.
+   *
+   * "Mid-stream" has to be a place in the script rather than a moment on the
+   * clock, or every test about interrupting a turn is a race with a timer —
+   * the flake such a test exists to prevent. `reachedHold()` resolves when the
+   * stream has actually stopped there, so a test can act on the fact rather
+   * than on a delay chosen to be long enough.
+   */
+  readonly holdAfterChunks?: number
   readonly usage?: TokenUsage
   /**
    * What a `generate` call returns, already the right shape.
@@ -84,6 +94,10 @@ export interface FakeModelProvider extends ModelProvider {
   /** Replaces the script. Later calls use the new one. */
   script(next: FakeModelScript): void
   requests(): readonly RecordedRequest[]
+  /** Resolves once a stream has stopped at `holdAfterChunks`. */
+  reachedHold(): Promise<void>
+  /** Lets a held stream continue. Safe to call when nothing is held. */
+  release(): void
   /**
    * The same deterministic embedding the provider produces, exposed so a test
    * can index with it and query with it and have the two agree.
@@ -136,15 +150,39 @@ function parseFromChunks(chunks: readonly string[]): unknown {
   }
 }
 
+/** A promise with its settle function, for coordinating a held stream. */
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void
+  const promise = new Promise<void>((settle) => {
+    resolve = settle
+  })
+  return { promise, resolve }
+}
+
 export function createFakeModelProvider(initial: FakeModelScript = {}): FakeModelProvider {
   let current: FakeModelScript = { chunks: ['ok'], ...initial }
   const recorded: RecordedRequest[] = []
+
+  // Rebuilt per script, so one test's hold cannot be left resolved for the
+  // next: a gate that is already open is a hold that silently does nothing.
+  let arrived = deferred()
+  let released = deferred()
 
   return {
     name: 'fake',
 
     script(next) {
       current = next
+      arrived = deferred()
+      released = deferred()
+    },
+
+    reachedHold() {
+      return arrived.promise
+    },
+
+    release() {
+      released.resolve()
     },
 
     requests() {
@@ -231,8 +269,17 @@ export function createFakeModelProvider(initial: FakeModelScript = {}): FakeMode
         return
       }
 
+      let emitted = 0
       for (const text of current.chunks ?? []) {
         yield { type: 'token', text }
+        emitted += 1
+
+        // Stop where the script says, and say so, rather than after a delay
+        // long enough to be probably mid-stream.
+        if (current.holdAfterChunks !== undefined && emitted === current.holdAfterChunks) {
+          arrived.resolve()
+          await released.promise
+        }
       }
 
       for (const call of current.toolCalls ?? []) {

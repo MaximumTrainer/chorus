@@ -81,21 +81,45 @@ export function sessionRoutes(
         const stream = new ReadableStream({
           async start(controller) {
             let id = 0
+            // Once the reader has gone the stream cannot take any more, and
+            // enqueuing into a closed controller throws. That exception would
+            // surface inside the executor — the event sink is called from the
+            // token loop — and turn an interruption into a failed step, losing
+            // the partial answer this whole path exists to keep (CHAT-2 AC3).
+            let open = true
             const send = (event: string, data: unknown): void => {
+              if (!open) return
               // The id is per turn and monotonic, which is what makes
               // resumption possible at all (CHAT-2 AC4).
-              controller.enqueue(
-                encoder.encode(`id: ${++id}
+              try {
+                controller.enqueue(
+                  encoder.encode(`id: ${++id}
 event: ${event}
 data: ${JSON.stringify(data)}
 
 `),
-              )
+                )
+              } catch {
+                // The reader hung up between the check and the write. Nothing
+                // to do about it and nothing worth logging: the turn is about
+                // to notice the same thing through its signal.
+                open = false
+              }
             }
 
             try {
               const result = await turn.run(
-                { workspaceId, sessionId, teamId: session.teamId, actorId, text: body.text as string },
+                {
+                  workspaceId,
+                  sessionId,
+                  teamId: session.teamId,
+                  actorId,
+                  text: body.text as string,
+                  // The reader's connection is the turn's lifetime. When they
+                  // hang up, the work stops rather than finishing an answer
+                  // for nobody (CHAT-2 AC3).
+                  signal: c.req.raw.signal,
+                },
                 (event: TurnEvent) => send(event.kind, event),
               )
 
@@ -108,6 +132,11 @@ data: ${JSON.stringify(data)}
                 role: 'assistant',
                 content: { text: result.text },
                 runId: result.runId,
+                // Stored as partial, not quietly as whole. A truncated answer
+                // that reads as a finished one misleads every later reader,
+                // and is the version a subsequent turn would quote back as
+                // context (CHAT-2 AC3).
+                ...(result.interrupted ? { interrupted: true } : {}),
                 // The bundle's id, not a copy of its fragments: a copy is a
                 // second version of the same fact, and the two disagree the
                 // first time one is written and the other is not (CHAT-3 AC1).
@@ -125,7 +154,12 @@ data: ${JSON.stringify(data)}
                 ...(error instanceof TurnFailed ? { runId: error.runId } : {}),
               })
             } finally {
-              controller.close()
+              open = false
+              try {
+                controller.close()
+              } catch {
+                // Already closed by the reader going away.
+              }
             }
           },
         })
