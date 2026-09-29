@@ -5,10 +5,23 @@
   "type": "module",
   "description": "Shared React components and editor extensions (architecture.md §5.1). Owns the document schema: the node types a Chorus document may contain, and how they round-trip through storage and export.",
   "exports": {
-    ".": "./src/index.ts",
-    "./schema": "./src/document.ts"
+    ".": {
+      "chorus-dist": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "default": "./src/index.ts"
+    },
+    "./schema": {
+      "chorus-dist": {
+        "types": "./dist/document.d.ts",
+        "default": "./dist/document.js"
+      },
+      "default": "./src/document.ts"
+    }
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

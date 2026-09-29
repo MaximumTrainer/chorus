@@ -111,7 +111,7 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
-    command: ["node_modules/.bin/tsx", "packages/db/src/migrate.ts"]
+    command: ["node", "packages/db/dist/migrate.js"]
     restart: "no"
     environment:
       CHORUS_DB_HOST: postgres
@@ -130,7 +130,7 @@ services:
       context: ..
       dockerfile: Dockerfile
     restart: unless-stopped
-    command: ["node_modules/.bin/tsx", "apps/api/src/main.ts"]
+    command: ["node", "apps/api/dist/main.js"]
     environment:
       CHORUS_DB_HOST: postgres
       CHORUS_DB_PORT: "5432"
@@ -174,7 +174,7 @@ services:
       context: ..
       dockerfile: Dockerfile
     restart: unless-stopped
-    command: ["node_modules/.bin/tsx", "apps/worker/src/main.ts"]
+    command: ["node", "apps/worker/dist/main.js"]
     environment:
       CHORUS_DB_HOST: postgres
       CHORUS_DB_PORT: "5432"
@@ -217,7 +217,7 @@ services:
       context: ..
       dockerfile: Dockerfile
     restart: unless-stopped
-    command: ["node_modules/.bin/tsx", "apps/collab/src/main.ts"]
+    command: ["node", "apps/collab/dist/main.js"]
     environment:
       CHORUS_COLLAB_PORT: "1234"
       CHORUS_DB_HOST: postgres

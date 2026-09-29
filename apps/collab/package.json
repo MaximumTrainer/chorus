@@ -5,9 +5,16 @@
   "type": "module",
   "description": "The Hocuspocus collaboration server (architecture.md §5.1, DOC-2). Owns the CRDT channel: authorisation on connect and on membership change, and persistence of document state.",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "chorus-dist": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "default": "./src/index.ts"
+    }
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "start": "tsx src/main.ts"
   },

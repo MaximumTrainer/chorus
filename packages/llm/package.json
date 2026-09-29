@@ -5,9 +5,16 @@
   "type": "module",
   "description": "The only place a provider SDK or a model name may appear (ADR-0005). Provider router, capability matching, cost accounting, embedding cache, prompt registry.",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "chorus-dist": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "default": "./src/index.ts"
+    }
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

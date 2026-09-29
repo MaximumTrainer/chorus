@@ -4,8 +4,19 @@
   "private": true,
   "type": "module",
   "description": "Repository indexing (BRAIN-2): walk, parse, chunk, embed. Code awareness is what makes every downstream feature specific rather than generic.",
-  "exports": { ".": "./src/index.ts" },
-  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json" },
+  "exports": {
+    ".": {
+      "chorus-dist": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
   "dependencies": {
     "@chorus/core": "workspace:*",
     "@chorus/db": "workspace:*",

@@ -5,10 +5,23 @@
   "type": "module",
   "description": "The connector framework (INT-1): credential encryption, cursor-durable sync, verified and replayable webhooks, rate-limit backoff, health, and normalisation into the Signal envelope. Every connector inherits its correctness from here.",
   "exports": {
-    ".": "./src/index.ts",
-    "./testing": "./src/testing/index.ts"
+    ".": {
+      "chorus-dist": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "default": "./src/index.ts"
+    },
+    "./testing": {
+      "chorus-dist": {
+        "types": "./dist/testing/index.d.ts",
+        "default": "./dist/testing/index.js"
+      },
+      "default": "./src/testing/index.ts"
+    }
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { parse as parseYaml } from 'yaml'
 
 const root = join(import.meta.dirname, '..', '..', '..')
 const dockerfile = readFileSync(join(root, 'Dockerfile'), 'utf8')
@@ -43,4 +44,46 @@ describe('NFR-1 AC1 application image', () => {
       ).toContain(`COPY ${workspace}/package.json`)
     },
   )
+})
+
+/**
+ * #153 — production processes run compiled JavaScript.
+ *
+ * `tsx` in the runtime path strips types without checking them and transpiles
+ * the whole dependency graph on every boot. A compiled image fails at build
+ * time, once and visibly, and cannot start with a type error in it at all.
+ *
+ * Asserted on the commands the image and the reference stack actually run,
+ * because "we build to dist" is worth nothing if a service still starts from
+ * `src/`.
+ */
+describe('NFR-1 AC1 compiled production image (#153)', () => {
+  const compose = parseYaml(readFileSync(join(root, 'deploy', 'docker-compose.yml'), 'utf8')) as {
+    services: Record<string, { build?: unknown; command?: string[] }>
+  }
+  const applicationServices = Object.entries(compose.services).filter(([, service]) => service.build)
+
+  it('NFR-1 AC1: the reference stack builds some application services, so this gate is not vacuous', () => {
+    expect(applicationServices.length).toBeGreaterThan(2)
+  })
+
+  it.each(applicationServices.map(([name, service]) => [name, service.command ?? []] as const))(
+    'NFR-1 AC1: %s runs compiled output, not TypeScript through a runtime transpiler',
+    (name, command) => {
+      const rendered = command.join(' ')
+      expect(rendered, `${name} must not start through tsx`).not.toMatch(/tsx/)
+      expect(rendered, `${name} must run a file under dist/`).toMatch(/\/dist\/[^ ]+\.js/)
+      expect(rendered, `${name} must not run source`).not.toMatch(/\/src\/[^ ]+\.ts/)
+    },
+  )
+
+  it('NFR-1 AC1: the image default command runs compiled output', () => {
+    const cmd = dockerfile.split('\n').filter((line) => line.startsWith('CMD')).at(-1) ?? ''
+    expect(cmd).not.toMatch(/tsx/)
+    expect(cmd).toMatch(/\/dist\/[^ "]+\.js/)
+  })
+
+  it('NFR-1 AC1: the image compiles before it runs, so a type error cannot reach a container', () => {
+    expect(dockerfile).toMatch(/^RUN pnpm (run )?build:server/m)
+  })
 })

@@ -59,10 +59,25 @@ COPY apps/web/package.json apps/web/
 RUN pnpm install --frozen-lockfile --prod=false
 
 # ---------------------------------------------------------------------------
+# Compile (#153). Every package the three processes import is emitted to its
+# own `dist/`, in dependency order, by `tsc` — which checks types as it goes, so
+# an image with a type error in it fails here, once and visibly, instead of
+# starting and failing later or not at all.
+# ---------------------------------------------------------------------------
+FROM deps AS build
+COPY . .
+RUN pnpm build:server
+
+# ---------------------------------------------------------------------------
 # The application.
 # ---------------------------------------------------------------------------
 FROM base AS runtime
 ENV NODE_ENV=production
+# Resolve `@chorus/*` to compiled output. Each package's `exports` map sends the
+# `chorus-dist` condition to `dist/` and everything else to `src/`, so tests,
+# `tsx` scripts and editors keep working on source while every `node` in this
+# image — entrypoints and healthchecks alike — runs what `tsc` produced.
+ENV NODE_OPTIONS=--conditions=chorus-dist
 
 # Dependencies from the deps stage — resolved from the lockfile alone, so an
 # image never ships whatever happened to be installed on the machine that built
@@ -71,6 +86,12 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/packages ./packages
 COPY --from=deps /app/apps ./apps
 COPY . .
+# The compiled output. Source stays alongside it because some of it is data the
+# processes read at runtime by relative path — migrations, prompts, workflow
+# definitions — and `dist/` sits at the same depth as `src/`, so those paths
+# resolve identically from either.
+COPY --from=build /app/packages ./packages
+COPY --from=build /app/apps ./apps
 
 # Unprivileged: nothing here needs root, and a container that runs as root is
 # one exploit away from being a host problem.
@@ -79,4 +100,4 @@ USER chorus
 
 # tini reaps the zombies a Node process spawning `git` would otherwise leave.
 ENTRYPOINT ["/sbin/tini", "--"]
-CMD ["node_modules/.bin/tsx", "apps/api/src/main.ts"]
+CMD ["node", "apps/api/dist/main.js"]

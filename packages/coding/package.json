@@ -5,9 +5,16 @@
   "type": "module",
   "description": "Coding-agent execution (architecture.md §12). The one brief builder (CODE-2): a sandbox job and a local agent over MCP receive byte-identical context, or the CLI is a second-class citizen.",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "chorus-dist": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "default": "./src/index.ts"
+    }
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
