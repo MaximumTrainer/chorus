@@ -80,10 +80,14 @@ services:
       retries: 20
 
   minio:
-    # quay.io, not Docker Hub: MinIO withdrew the `minio/minio` repository
-    # there, and the reference stack stopped starting on a pull nobody had
-    # changed. Same project, same pinned release, a registry that serves it.
-    image: quay.io/minio/minio:RELEASE.2024-10-13T13-34-11Z
+    # MinIO, Inc. no longer publishes community images anywhere. `minio/minio`
+    # left Docker Hub first; `quay.io/minio/minio` followed, and the stack
+    # stopped starting on a pull nobody had changed (`unauthorized`, nightly
+    # from 2026-09-25). `pgsty/minio` is a maintained fork of the same server:
+    # same S3 API, same environment variables, same `server` entrypoint, and an
+    # `mc` alias for the healthcheck below — so nothing downstream changes.
+    # Pinned to a release tag like everything else here.
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
     restart: unless-stopped
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
