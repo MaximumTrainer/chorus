@@ -1,0 +1,88 @@
+name: Deploy (Fly.io)
+
+# The deployment pipeline (#144), with Fly.io as the first target.
+#
+# Three gates, in order, and each is a thing somebody can see:
+#
+#   1. CI is green on the exact commit. This workflow only ever starts from a
+#      successful CI run on main, and deploys that run's head SHA — never
+#      whatever main has moved on to since.
+#   2. A human says yes. The job runs in the `production` environment; give it
+#      required reviewers in Settings → Environments and every deploy waits for
+#      an approval that is recorded against the run.
+#   3. The release proves itself. Migrations run as Fly's release command and a
+#      failure aborts the release with the old version still serving; after the
+#      rollout, the public /readyz must answer before the run is green.
+#
+# Until FLY_API_TOKEN exists as an environment secret this workflow skips, with
+# a notice, rather than failing — a fork or a fresh clone has no Fly account,
+# and a red deploy job for a deployment nobody configured is noise.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  # One deploy at a time, and never cancel one half-way through a rollout.
+  group: deploy-fly
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: deploy to Fly.io
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://chorus.fly.dev
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - name: Skip unless a Fly token is configured
+        id: configured
+        run: |
+          if [ -z "$FLY_API_TOKEN" ]; then
+            echo "::notice::FLY_API_TOKEN is not set on the production environment; skipping the deploy. See docs/deploy/fly.md."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.configured.outputs.ready == 'true'
+        with:
+          ref: ${{ env.SHA }}
+
+      - uses: superfly/flyctl-actions/setup-flyctl@v1
+        if: steps.configured.outputs.ready == 'true'
+
+      - name: Deploy
+        if: steps.configured.outputs.ready == 'true'
+        run: >-
+          flyctl deploy
+          --config deploy/fly/chorus.fly.toml
+          --remote-only
+          --image-label "$SHA"
+          --wait-timeout 10m
+
+      - name: The public endpoint is ready
+        if: steps.configured.outputs.ready == 'true'
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error https://chorus.fly.dev/readyz; then
+              echo; echo "ready after $attempt attempt(s)"; exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::https://chorus.fly.dev/readyz never answered ready"
+          exit 1

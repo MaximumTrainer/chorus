@@ -1,0 +1,29 @@
+# Chorus on Fly.io — Redis, for BullMQ and pub/sub (#144).
+#
+# The same image and the same append-only persistence as the compose stack,
+# run as a private Fly app with a volume. The queue client speaks plain TCP
+# with a password, so Redis lives on the organisation's private network rather
+# than behind a TLS-only managed endpoint.
+#
+#   fly deploy --config deploy/fly/redis.fly.toml
+
+app = "chorus-redis"
+primary_region = "lhr"
+
+[build]
+  image = "redis:7.4-alpine"
+
+# Through a shell so the password comes from a secret at start rather than
+# being written into this file. REDIS_PASSWORD is set with `fly secrets set`
+# on this app, equal to CHORUS_REDIS_PASSWORD on the application. Back through
+# the image's own entrypoint, which drops root before starting the server.
+[processes]
+  redis = "/bin/sh -c 'exec docker-entrypoint.sh redis-server --appendonly yes --dir /data --requirepass \"$REDIS_PASSWORD\"'"
+
+[mounts]
+  source = "chorus_redis_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
