@@ -33,6 +33,8 @@ import { createApiTokenService } from './api-tokens.js'
 import { apiTokenRoutes } from './api-token-routes.js'
 import { createOAuthService, OAuthError } from './oauth.js'
 import { oauthRoutes } from './oauth-routes.js'
+import { createMcpEndpoint, type McpEndpointOptions } from './mcp.js'
+import { isMcpPath, mcpChallenge, mcpRoutes } from './mcp-routes.js'
 import { createRepositoryService } from './repositories.js'
 import { codingJobRoutes } from './coding-job-routes.js'
 import { createCodingJobService, type CodingJobService } from '@chorus/coding'
@@ -158,6 +160,8 @@ export interface AppOptions {
    * runtime takes its provider through the model router instead.
    */
   models?: ModelProvider
+  /** MCP session settings (MCP-1 AC5): idle timeout, and a clock for tests. */
+  mcp?: McpEndpointOptions
 }
 
 /**
@@ -302,6 +306,10 @@ function buildRoutes(
   retriever?: Retriever,
   decompose?: Decomposer,
   codingJobs?: CodingJobService,
+  mcp?: McpEndpointOptions,
+  dispatch: (request: Request) => Promise<Response> = () => {
+    throw new Error('MCP requests need the app to dispatch through; this table was built without one')
+  },
 ): {
   table: readonly RouteDefinition[]
   deps: AuthorisationDeps
@@ -384,6 +392,7 @@ function buildRoutes(
       // the metadata document a client discovers names the host it actually
       // reached — a mismatch there is what makes discovery fail unattended.
       ...oauthRoutes(oauth, workspaces, (c) => c.get('baseUrl')),
+      ...mcpRoutes(createMcpEndpoint(mcp), dispatch),
     ],
     deps: { workspaces, teams, tokens, oauth, dbConfig: config },
   }
@@ -600,6 +609,8 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
           options.retriever,
           options.decompose,
           options.codingJobs,
+          options.mcp,
+          (request) => Promise.resolve(app.fetch(request)),
         )
       : undefined
 
@@ -637,7 +648,13 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
     }
 
     if (error instanceof AppError) {
-      return problem(error, requestId)
+      const response = problem(error, requestId)
+      // MCP-1: a client that has never seen this server learns where to
+      // authenticate from this header, and from nothing else it is sent.
+      if (error.status === 401 && isMcpPath(c.req.path)) {
+        response.headers.set('www-authenticate', mcpChallenge(c.get('baseUrl'), c.req.path))
+      }
+      return response
     }
 
     // An unexpected error's message may contain anything at all, so it is

@@ -102,8 +102,11 @@ describe('WS-4 AC4 route authorisation is declared, not remembered', () => {
       (r) => `${r.method} ${r.path}`,
     )
     expect(capabilities.sort()).toEqual([
+      'DELETE /mcp',
       'GET /checkpoint-decisions/:token',
+      'GET /mcp',
       'POST /checkpoint-decisions/:token',
+      'POST /mcp',
     ])
   })
 

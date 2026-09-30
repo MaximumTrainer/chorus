@@ -4,6 +4,7 @@
 - **Date:** 2026-09-02
 - **Requirement:** WS-5 (AC3), and ahead of MCP-1
 - **Supersedes:** nothing. Refines the stack decision in `architecture.md` §5.1.
+- **Extended by:** ADR-0020, which makes the SDK a runtime dependency of `apps/api` for the MCP server (MCP-1).
 
 ## Context
 
