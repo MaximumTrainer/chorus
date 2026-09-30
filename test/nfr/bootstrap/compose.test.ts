@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, it, expect } from 'vitest'
 import { parse as parseYaml } from 'yaml'
@@ -77,5 +77,53 @@ describe('NFR-1 reference deployment', () => {
     for (const name of ['postgres', 'redis', 'minio']) {
       expect(services[name].volumes, `${name} must persist state`).toBeDefined()
     }
+  })
+})
+
+/**
+ * #182 — a variable the reference stack sets is one the code reads.
+ *
+ * Compose passed `CHORUS_DB_OWNER_*` to every process while the database
+ * client read `CHORUS_DB_USER`/`CHORUS_DB_PASSWORD`. Nothing failed, because
+ * the client's defaults happened to match Postgres's — so an operator setting
+ * a real password got a database with it and services still connecting with
+ * the default. A misspelt setting is silent by construction; this makes it
+ * loud.
+ */
+describe('NFR-1 reference deployment configuration (#182)', () => {
+  const sourceRoots = ['apps', 'packages'].flatMap((group) =>
+    readdirSync(join(root, group)).map((name) => join(root, group, name, 'src')),
+  )
+  const read = (dir: string): string[] => {
+    if (!existsSync(dir)) return []
+    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const path = join(dir, entry.name)
+      if (entry.isDirectory()) return read(path)
+      return /\.tsx?$/.test(entry.name) && !entry.name.endsWith('.test.ts') ? [readFileSync(path, 'utf8')] : []
+    })
+  }
+  const source = sourceRoots.flatMap(read).join('\n')
+
+  const set = Object.entries(services).flatMap(([name, service]) =>
+    Object.keys((service.environment ?? {}) as Record<string, string>)
+      .filter((key) => key.startsWith('CHORUS_'))
+      .map((key) => [name, key] as const),
+  )
+
+  it('NFR-1: a reserved variable is still unread, so the exemption cannot outlive its reason', () => {
+    for (const key of reserved) expect(source, `${key} now has a reader; drop it from reserved`).not.toContain(key)
+  })
+
+  it('NFR-1: the stack sets some CHORUS_ variables, so this gate is not vacuous', () => {
+    expect(set.length).toBeGreaterThan(10)
+  })
+
+  // Declared ahead of their first reader, and named here so that stays a
+  // decision: object storage is in the reference stack (architecture.md §5) but
+  // nothing reads or writes a bucket yet. Remove an entry when its reader lands.
+  const reserved = new Set(['CHORUS_S3_ENDPOINT', 'CHORUS_S3_ACCESS_KEY', 'CHORUS_S3_SECRET_KEY'])
+
+  it.each(set.filter(([, key]) => !reserved.has(key)))('NFR-1: %s sets %s, and the code reads it', (_service, key) => {
+    expect(source, `${key} is set by compose but read nowhere in apps/*/src or packages/*/src`).toContain(key)
   })
 })

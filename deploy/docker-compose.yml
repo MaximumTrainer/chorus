@@ -119,8 +119,8 @@ services:
       CHORUS_DB_NAME: ${CHORUS_DB_NAME:-chorus}
       CHORUS_DB_APP_USER: ${CHORUS_DB_APP_USER:-chorus_app}
       CHORUS_DB_APP_PASSWORD: ${CHORUS_DB_APP_PASSWORD:-chorus-dev-secret}
-      CHORUS_DB_OWNER_USER: ${CHORUS_DB_OWNER_USER:-chorus}
-      CHORUS_DB_OWNER_PASSWORD: ${CHORUS_DB_OWNER_PASSWORD:-chorus-dev-secret}
+      CHORUS_DB_USER: ${CHORUS_DB_USER:-chorus}
+      CHORUS_DB_PASSWORD: ${CHORUS_DB_PASSWORD:-chorus}
     depends_on:
       postgres:
         condition: service_healthy
@@ -137,8 +137,8 @@ services:
       CHORUS_DB_NAME: ${CHORUS_DB_NAME:-chorus}
       CHORUS_DB_APP_USER: ${CHORUS_DB_APP_USER:-chorus_app}
       CHORUS_DB_APP_PASSWORD: ${CHORUS_DB_APP_PASSWORD:-chorus-dev-secret}
-      CHORUS_DB_OWNER_USER: ${CHORUS_DB_OWNER_USER:-chorus}
-      CHORUS_DB_OWNER_PASSWORD: ${CHORUS_DB_OWNER_PASSWORD:-chorus-dev-secret}
+      CHORUS_DB_USER: ${CHORUS_DB_USER:-chorus}
+      CHORUS_DB_PASSWORD: ${CHORUS_DB_PASSWORD:-chorus}
       CHORUS_REDIS_HOST: redis
       CHORUS_REDIS_PORT: "6379"
       CHORUS_S3_ENDPOINT: http://minio:9000
@@ -181,8 +181,8 @@ services:
       CHORUS_DB_NAME: ${CHORUS_DB_NAME:-chorus}
       CHORUS_DB_APP_USER: ${CHORUS_DB_APP_USER:-chorus_app}
       CHORUS_DB_APP_PASSWORD: ${CHORUS_DB_APP_PASSWORD:-chorus-dev-secret}
-      CHORUS_DB_OWNER_USER: ${CHORUS_DB_OWNER_USER:-chorus}
-      CHORUS_DB_OWNER_PASSWORD: ${CHORUS_DB_OWNER_PASSWORD:-chorus-dev-secret}
+      CHORUS_DB_USER: ${CHORUS_DB_USER:-chorus}
+      CHORUS_DB_PASSWORD: ${CHORUS_DB_PASSWORD:-chorus}
       CHORUS_REDIS_HOST: redis
       CHORUS_REDIS_PORT: "6379"
       CHORUS_S3_ENDPOINT: http://minio:9000
@@ -225,8 +225,8 @@ services:
       CHORUS_DB_NAME: ${CHORUS_DB_NAME:-chorus}
       CHORUS_DB_APP_USER: ${CHORUS_DB_APP_USER:-chorus_app}
       CHORUS_DB_APP_PASSWORD: ${CHORUS_DB_APP_PASSWORD:-chorus-dev-secret}
-      CHORUS_DB_OWNER_USER: ${CHORUS_DB_OWNER_USER:-chorus}
-      CHORUS_DB_OWNER_PASSWORD: ${CHORUS_DB_OWNER_PASSWORD:-chorus-dev-secret}
+      CHORUS_DB_USER: ${CHORUS_DB_USER:-chorus}
+      CHORUS_DB_PASSWORD: ${CHORUS_DB_PASSWORD:-chorus}
     ports:
       - "${CHORUS_COLLAB_PORT:-1234}:1234"
     depends_on:
