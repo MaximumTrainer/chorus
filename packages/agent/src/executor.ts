@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import {
   ConfigurationError,
   DEFAULT_REDACTION_LEVEL,
+  LimitExceededError,
   NotFoundError,
   OUTPUT_SCHEMAS,
   ValidationError,
@@ -9,8 +10,12 @@ import {
   redactBody,
   scrubSecrets,
   resolveCheckpointPolicy,
+  evaluateSpendGuard,
+  periodStart,
   ulid,
   type CheckpointKind,
+  type ScopedSpend,
+  type SpendPeriod,
   type NotificationSink,
   type PolicyRule,
   type ArtefactDraft,
@@ -654,6 +659,7 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
                 workspaceId,
                 teamId: run.team_id ?? '',
                 runId,
+                recordAs,
                 actor: { userId: run.started_by, role: actorRole },
                 ...(signal ? { signal } : {}),
               }),
@@ -1024,6 +1030,8 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
     workspaceId: string
     teamId: string
     runId: string
+    /** The identity the run records this step by: `id`, or `id#n` in a loop. */
+    recordAs: string
     actor: { userId: string; role: 'member' | 'senior_member' | 'admin' | 'owner' }
     /** Aborts the step's model call when the reader hangs up (CHAT-2 AC3). */
     signal?: AbortSignal
@@ -1038,6 +1046,7 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
       workspaceId,
       teamId,
       runId,
+      recordAs,
       actor,
       signal,
     } = input
@@ -1108,6 +1117,23 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
         // The trace records what was sent as one text, so a reader sees the
         // whole prompt rather than reassembling it from parts.
         const content = messages.map((message) => message.content).join('\n\n---\n\n')
+
+        // NFR-8 §9.3: priced and checked here, before the provider is asked,
+        // for every model step whether or not its workflow declared a
+        // checkpoint. A guard a workflow has to opt into is one the fourth
+        // workflow forgets.
+        const guarded = await spendGuard({
+          messages,
+          model,
+          definition,
+          outputs,
+          workspaceId,
+          teamId,
+          runId,
+          recordAs,
+          startedBy: actor.userId,
+        })
+        if (guarded) return guarded
 
         const startedAt = Date.now()
         let text = ''
@@ -1421,6 +1447,133 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
   }
 
   /**
+   * The spend guard (NFR-8, architecture.md §9.3).
+   *
+   * Runs before a model step's provider call: the call is counted and priced,
+   * and the result is weighed against the workspace's and the team's spend
+   * this period. Nothing is returned when the call may go ahead. Over a hard
+   * limit it throws, which fails the run with the limit and the period named.
+   * Over a soft limit it raises a `before_spend_over` checkpoint through the
+   * ordinary gate, so the team's policy for that kind still decides whether
+   * anybody is asked.
+   *
+   * A soft checkpoint approved once holds for the rest of the run. Asking again
+   * at every later model step would put the same question to the same person
+   * about the same budget, and a gate that nags is one people learn to click
+   * through.
+   */
+  async function spendGuard(input: {
+    messages: ReadonlyArray<{ readonly content: string }>
+    model: ModelRef
+    definition: WorkflowDefinition
+    outputs: Readonly<Record<string, unknown>>
+    workspaceId: string
+    teamId: string
+    runId: string
+    recordAs: string
+    startedBy: string
+  }): Promise<StepResult | undefined> {
+    const { messages, model, workspaceId, teamId, runId, recordAs } = input
+
+    const limits = await tx(workspaceId, (t) =>
+      t.query<{
+        team_id: string | null
+        period: SpendPeriod
+        soft_limit_cents: number | null
+        hard_limit_cents: number | null
+      }>(
+        `SELECT team_id, period, soft_limit_cents, hard_limit_cents
+           FROM spend_limits
+          WHERE team_id IS NULL OR team_id = $1`,
+        [teamId || null],
+      ),
+    )
+    // No limits, nothing to price: counting costs something too, and a
+    // deployment that set no budget should not pay it on every call.
+    if (limits.length === 0) return undefined
+
+    const scopes: ScopedSpend[] = []
+    for (const limit of limits) {
+      const start = periodStart(limit.period, now())
+      const [row] = await tx(workspaceId, (t) =>
+        t.query<{ spent: string }>(
+          limit.team_id === null
+            ? `SELECT coalesce(sum(cost_cents), 0) AS spent FROM spend_ledger WHERE at >= $1`
+            : `SELECT coalesce(sum(cost_cents), 0) AS spent FROM spend_ledger
+                WHERE at >= $1 AND team_id = $2`,
+          limit.team_id === null ? [start.toISOString()] : [start.toISOString(), limit.team_id],
+        ),
+      )
+      scopes.push({
+        scope: limit.team_id === null ? 'workspace' : 'team',
+        period: limit.period,
+        periodStart: start,
+        spentCents: Number(row?.spent ?? 0),
+        ...(limit.soft_limit_cents === null ? {} : { softLimitCents: limit.soft_limit_cents }),
+        ...(limit.hard_limit_cents === null ? {} : { hardLimitCents: limit.hard_limit_cents }),
+      })
+    }
+
+    // Counted message by message rather than as one joined text, so the stable
+    // prefix (the charter) is the same text every time and the provider's
+    // content-hash cache answers it without a round trip (NFR-8 AC5).
+    let counted = 0
+    for (const message of messages) counted += await deps.models.countTokens(message.content, model)
+    const projected = deps.priceFor
+      ? deps.priceFor(model, { inputTokens: counted, outputTokens: 0 })
+      : 0
+
+    const verdict = evaluateSpendGuard(scopes, projected)
+    if (verdict.verdict === 'allow') return undefined
+
+    if (verdict.verdict === 'hard') {
+      throw new LimitExceededError(verdict.message, {
+        scope: verdict.scope,
+        period: verdict.period,
+        periodStart: verdict.periodStart.toISOString(),
+        limitCents: verdict.limitCents,
+        spentCents: verdict.spentCents,
+        estimatedCallCents: verdict.projectedCents,
+      })
+    }
+
+    const [approved] = await tx(workspaceId, (t) =>
+      t.query<{ id: string }>(
+        `SELECT id FROM checkpoints
+          WHERE run_id = $1 AND kind = 'before_spend_over' AND step_id LIKE '%:spend_guard'
+            AND status = 'approved'
+          LIMIT 1`,
+        [runId],
+      ),
+    )
+    if (approved) return undefined
+
+    const result = await gate({
+      step: `${recordAs}:spend_guard`,
+      kind: 'before_spend_over',
+      definition: input.definition,
+      outputs: input.outputs,
+      workspaceId,
+      teamId,
+      runId,
+      startedBy: input.startedBy,
+      detail: {
+        scope: verdict.scope,
+        period: verdict.period,
+        periodStart: verdict.periodStart.toISOString(),
+        periodSpendCents: verdict.spentCents,
+        softLimitCents: verdict.limitCents,
+        countedInputTokens: counted,
+        estimatedCallCents: verdict.projectedCents,
+        reason: verdict.message,
+      },
+    })
+    // Approved — now, by an `auto` policy, or on the way back from a person —
+    // means the call goes ahead. Anything else is the gate's own answer.
+    return result.kind === 'output' ? undefined : result
+  }
+
+  /**
    * The gate (AGENT-3).
    *
    * Reached twice in the life of a paused run: once on the way in, when it
@@ -1438,6 +1591,8 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
     teamId: string
     runId: string
     startedBy: string
+    /** What the platform knows about this gate that the definition does not. */
+    detail?: Readonly<Record<string, unknown>>
   }): Promise<StepResult> {
     const { step, kind, definition, outputs, workspaceId, teamId, runId, startedBy } = input
 
@@ -1464,15 +1619,18 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
       }
     }
 
-    const payload = await proposalFor({
-      kind,
-      step,
-      definition,
-      outputs,
-      workspaceId,
-      runId,
-      policy,
-    })
+    const payload = {
+      ...(await proposalFor({
+        kind,
+        step,
+        definition,
+        outputs,
+        workspaceId,
+        runId,
+        policy,
+      })),
+      ...input.detail,
+    }
     const auto = policy.mode === 'auto'
     const expiresAt = new Date(
       now().getTime() + (deps.checkpointTtlMs ?? DEFAULT_CHECKPOINT_TTL_MS),

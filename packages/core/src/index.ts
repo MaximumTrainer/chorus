@@ -79,6 +79,8 @@ export type {
   PolicySource,
   ResolvedPolicy,
 } from './policies.js'
+export { evaluateSpendGuard, periodStart } from './spend-guard.js'
+export type { ScopedSpend, SpendPeriod, SpendVerdict } from './spend-guard.js'
 export {
   NOTIFICATION_CHANNELS,
   NOTIFICATION_KINDS,
