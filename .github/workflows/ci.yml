@@ -242,7 +242,7 @@ jobs:
           curl --fail --silent --show-error http://localhost:3000/readyz | tee /dev/stderr | grep -q '"status":"ready"'
 
           echo "--- migrations actually ran"
-          docker compose -f deploy/docker-compose.yml exec -T postgres             psql -U "${CHORUS_DB_OWNER_USER:-chorus}" -d "${CHORUS_DB_NAME:-chorus}" -tAc             "select count(*) from information_schema.tables where table_schema='public' and table_name in ('workspaces','code_chunks','oauth_grants')"             | grep -qx 3
+          docker compose -f deploy/docker-compose.yml exec -T postgres             psql -U "${CHORUS_DB_USER:-chorus}" -d "${CHORUS_DB_NAME:-chorus}" -tAc             "select count(*) from information_schema.tables where table_schema='public' and table_name in ('workspaces','code_chunks','oauth_grants')"             | grep -qx 3
 
           echo "--- the app is wired, not merely listening: an unauthenticated write is refused"
           status=$(curl --silent --output /dev/null --write-out '%{http_code}'             -X POST http://localhost:3000/workspaces             -H 'content-type: application/json' -d '{"name":"smoke"}')
