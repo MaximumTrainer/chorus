@@ -180,6 +180,12 @@ pnpm docs:sync     # rewrite the README progress block from them
 pnpm site          # build the website into website/dist
 ```
 
+### Deploying
+
+`docker compose` on one host is the reference deployment. The same stack on
+Fly.io, with a gated pipeline from green `main`, is described in
+[docs/deploy/fly.md](docs/deploy/fly.md).
+
 ---
 
 ## How this project is built

@@ -1,0 +1,97 @@
+# Chorus on Fly.io — the application (#144).
+#
+# The same image and the same three processes as deploy/docker-compose.yml:
+# one build, three process groups, so `api`, `worker` and `collab` scale
+# independently on separate Machines and can never run different code.
+# test/nfr/bootstrap/fly.test.ts holds every command here equal to its compose
+# counterpart, so the two deployments cannot drift apart.
+#
+# Postgres and Redis are their own Fly apps (postgres.fly.toml, redis.fly.toml),
+# reached over the organisation's private network. See docs/deploy/fly.md.
+#
+#   fly deploy --config deploy/fly/chorus.fly.toml
+
+app = "chorus"
+primary_region = "lhr"
+
+[build]
+  dockerfile = "../../Dockerfile"
+
+# Forward migrations run once per release, on a temporary Machine, before any
+# new process starts — the same guarantee compose's `migrate` job gives with
+# `service_completed_successfully`. A failed migration aborts the release and
+# leaves the running version untouched.
+[deploy]
+  release_command = "node packages/db/dist/migrate.js"
+  strategy = "rolling"
+
+[env]
+  NODE_ENV = "production"
+  CHORUS_BASE_URL = "https://chorus.fly.dev"
+  CHORUS_PORT = "3000"
+  CHORUS_COLLAB_PORT = "1234"
+  CHORUS_DB_HOST = "chorus-postgres.internal"
+  CHORUS_DB_PORT = "5432"
+  CHORUS_DB_NAME = "chorus"
+  CHORUS_DB_USER = "chorus"
+  CHORUS_DB_APP_USER = "chorus_app"
+  CHORUS_REDIS_HOST = "chorus-redis.internal"
+  CHORUS_REDIS_PORT = "6379"
+  # Secrets, set with `fly secrets set` and never here: CHORUS_DB_PASSWORD,
+  # CHORUS_DB_APP_PASSWORD, CHORUS_REDIS_PASSWORD, CHORUS_AUTH_SECRET,
+  # CHORUS_MASTER_KEY_ID, CHORUS_MASTER_KEY, and the model endpoint
+  # (CHORUS_MODEL_BASE_URL, CHORUS_MODEL_API_KEY, CHORUS_MODEL_TIERS).
+
+[processes]
+  api = "node apps/api/dist/main.js"
+  worker = "node apps/worker/dist/main.js"
+  collab = "node apps/collab/dist/main.js"
+
+# The API is the only process on the public HTTPS edge. Machines are not
+# auto-stopped: a stopped API is a checkpoint notification nobody receives.
+[http_service]
+  processes = ["api"]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  # Readiness, as in compose: a Machine that is alive but cannot reach its
+  # database is taken out of rotation rather than sent traffic.
+  [[http_service.checks]]
+    method = "GET"
+    path = "/readyz"
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "20s"
+
+# The CRDT channel (DOC-2), on its own port with TLS terminated at the edge:
+# wss://chorus.fly.dev:1234.
+[[services]]
+  processes = ["collab"]
+  internal_port = 1234
+  protocol = "tcp"
+  auto_stop_machines = "off"
+  min_machines_running = 1
+
+  [[services.ports]]
+    port = 1234
+    handlers = ["tls", "http"]
+
+  [[services.tcp_checks]]
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "20s"
+
+# architecture.md §24's reference host is 4 vCPU / 8 GB for all of it; split
+# across three process groups, these are a starting point for a small team.
+[[vm]]
+  processes = ["api", "collab"]
+  size = "shared-cpu-1x"
+  memory = "1gb"
+
+[[vm]]
+  processes = ["worker"]
+  size = "shared-cpu-2x"
+  memory = "2gb"
