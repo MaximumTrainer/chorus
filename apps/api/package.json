@@ -5,9 +5,16 @@
   "type": "module",
   "description": "HTTP/SSE API, OAuth 2.1 server, MCP endpoint, webhook receivers. Enqueues everything long-running (architecture.md §6).",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "chorus-dist": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "default": "./src/index.ts"
+    }
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

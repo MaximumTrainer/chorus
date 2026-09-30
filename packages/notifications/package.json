@@ -5,9 +5,16 @@
   "type": "module",
   "description": "Notification dispatch (SLACK-6). Knows recipients, kinds, preferences and channels — and nothing about what raised the event.",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "chorus-dist": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "default": "./src/index.ts"
+    }
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

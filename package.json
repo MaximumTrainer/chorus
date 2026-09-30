@@ -9,6 +9,7 @@
   },
   "scripts": {
     "build": "turbo run build",
+    "build:server": "pnpm --filter \"@chorus/api...\" --filter \"@chorus/worker...\" --filter \"@chorus/collab...\" run build",
     "typecheck": "turbo run typecheck",
     "lint": "eslint .",
     "test": "vitest run --passWithNoTests --project unit --project integration --project contract",

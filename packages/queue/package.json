@@ -5,9 +5,16 @@
   "type": "module",
   "description": "The only place BullMQ may be imported (ADR-0004). A queue abstraction whose step interface does not leak its backend, so Temporal remains swappable.",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "chorus-dist": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "default": "./src/index.ts"
+    }
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

@@ -1309,6 +1309,8 @@ flowchart TB
 
 **Kubernetes.** The Helm chart replaces `sandbox-runner`'s Docker driver with a Job-based executor, scales workers per queue, and uses network policies for sandbox egress rules.
 **Backups.** Postgres logical backups plus object-storage replication. The compiled wiki repository is itself an off-box copy of the context layer.
+**The image runs compiled JavaScript (#153).** The Dockerfile's `build` stage runs `pnpm build:server`, which emits every package the `api`, `worker` and `collab` processes import to its own `dist/` with `tsc`, in dependency order; the runtime runs `node <app>/dist/main.js`. Each package's `exports` map sends a custom `chorus-dist` condition to `dist/` and falls back to `src/`, and the image sets `NODE_OPTIONS=--conditions=chorus-dist`. Tests, `tsx` scripts and editors therefore keep resolving source with no build step, while nothing in the image can start with a type error in it or pay to transpile its dependency graph on boot. `dist/` sits at the same depth as `src/`, so data read by relative path at runtime (migrations, prompts, workflow definitions) resolves identically from either.
+
 **Upgrades.** Migrations run as a pre-deploy job; the API refuses to start against an older schema than it requires; rolling restarts are safe because workers are idempotent.
 
 ---

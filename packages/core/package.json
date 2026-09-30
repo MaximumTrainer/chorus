@@ -5,9 +5,16 @@
   "type": "module",
   "description": "Domain vocabulary shared by every package: types, errors, permissions, state machines, ids. Depends on nothing internal (architecture.md §7).",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "chorus-dist": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "default": "./src/index.ts"
+    }
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {

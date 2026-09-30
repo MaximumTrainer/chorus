@@ -80,10 +80,14 @@ services:
       retries: 20
 
   minio:
-    # quay.io, not Docker Hub: MinIO withdrew the `minio/minio` repository
-    # there, and the reference stack stopped starting on a pull nobody had
-    # changed. Same project, same pinned release, a registry that serves it.
-    image: quay.io/minio/minio:RELEASE.2024-10-13T13-34-11Z
+    # MinIO, Inc. no longer publishes community images anywhere. `minio/minio`
+    # left Docker Hub first; `quay.io/minio/minio` followed, and the stack
+    # stopped starting on a pull nobody had changed (`unauthorized`, nightly
+    # from 2026-09-25). `pgsty/minio` is a maintained fork of the same server:
+    # same S3 API, same environment variables, same `server` entrypoint, and an
+    # `mc` alias for the healthcheck below — so nothing downstream changes.
+    # Pinned to a release tag like everything else here.
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
     restart: unless-stopped
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
@@ -107,7 +111,7 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
-    command: ["node_modules/.bin/tsx", "packages/db/src/migrate.ts"]
+    command: ["node", "packages/db/dist/migrate.js"]
     restart: "no"
     environment:
       CHORUS_DB_HOST: postgres
@@ -126,7 +130,7 @@ services:
       context: ..
       dockerfile: Dockerfile
     restart: unless-stopped
-    command: ["node_modules/.bin/tsx", "apps/api/src/main.ts"]
+    command: ["node", "apps/api/dist/main.js"]
     environment:
       CHORUS_DB_HOST: postgres
       CHORUS_DB_PORT: "5432"
@@ -170,7 +174,7 @@ services:
       context: ..
       dockerfile: Dockerfile
     restart: unless-stopped
-    command: ["node_modules/.bin/tsx", "apps/worker/src/main.ts"]
+    command: ["node", "apps/worker/dist/main.js"]
     environment:
       CHORUS_DB_HOST: postgres
       CHORUS_DB_PORT: "5432"
@@ -213,7 +217,7 @@ services:
       context: ..
       dockerfile: Dockerfile
     restart: unless-stopped
-    command: ["node_modules/.bin/tsx", "apps/collab/src/main.ts"]
+    command: ["node", "apps/collab/dist/main.js"]
     environment:
       CHORUS_COLLAB_PORT: "1234"
       CHORUS_DB_HOST: postgres

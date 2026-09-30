@@ -1,0 +1,40 @@
+# Chorus on Fly.io — Postgres with pgvector (#144).
+#
+# The same image and the same server settings as the compose stack, run as a
+# private Fly app with a volume. Not Fly's managed Postgres, deliberately: the
+# migrator creates the application role it later connects as, which needs a
+# role with CREATEROLE, and retrieval's query plans depend on
+# `random_page_cost` (architecture.md §23.5) — a setting this file controls and
+# a managed service may not let us. test/nfr/bootstrap/fly.test.ts holds both
+# the image and the settings equal to deploy/docker-compose.yml.
+#
+# No public service: the application reaches it at chorus-postgres.internal
+# over the organisation's private network.
+#
+#   fly deploy --config deploy/fly/postgres.fly.toml
+
+app = "chorus-postgres"
+primary_region = "lhr"
+
+[build]
+  image = "pgvector/pgvector:pg16"
+
+[env]
+  POSTGRES_USER = "chorus"
+  POSTGRES_DB = "chorus"
+  # A subdirectory, because a fresh Fly volume carries `lost+found` at its root
+  # and initdb refuses a non-empty directory.
+  PGDATA = "/var/lib/postgresql/data/pgdata"
+  # POSTGRES_PASSWORD is a secret: `fly secrets set` on this app, equal to
+  # CHORUS_DB_PASSWORD on the application.
+
+[processes]
+  db = "postgres -c random_page_cost=1.1"
+
+[mounts]
+  source = "chorus_postgres_data"
+  destination = "/var/lib/postgresql/data"
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "2gb"
