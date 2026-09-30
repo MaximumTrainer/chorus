@@ -392,7 +392,7 @@ function buildRoutes(
       // the metadata document a client discovers names the host it actually
       // reached — a mismatch there is what makes discovery fail unattended.
       ...oauthRoutes(oauth, workspaces, (c) => c.get('baseUrl')),
-      ...mcpRoutes(createMcpEndpoint(mcp), dispatch),
+      ...mcpRoutes(createMcpEndpoint(mcp, dispatch), dispatch),
     ],
     deps: { workspaces, teams, tokens, oauth, dbConfig: config },
   }

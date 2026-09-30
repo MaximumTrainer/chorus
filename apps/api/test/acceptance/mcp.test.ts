@@ -197,8 +197,15 @@ describe('MCP-1 Streamable HTTP endpoint', () => {
 
     // Then it is connected, and can ask what the server offers
     const tools = await mcp.listTools()
-    expect(tools.tools).toEqual([])
+    expect(tools.tools.map((tool) => tool.name)).toContain('list_tasks')
     expect(mcp.getServerCapabilities()?.tools, 'tools must be advertised').toBeDefined()
+
+    // and a call made through /mcp is answered with the access token it carries
+    const teams = (await (await ada.get(`/workspaces/${workspace.id}/teams`)).json()) as Array<{
+      id: string
+    }>
+    const listed = await mcp.callTool({ name: 'list_tasks', arguments: { teamId: teams[0]!.id } })
+    expect(listed.isError, JSON.stringify(listed.content)).toBeFalsy()
     await mcp.close()
   })
 
@@ -257,7 +264,7 @@ describe('MCP-1 Streamable HTTP endpoint', () => {
 
     const mcp = await connectedWithToken(`${ISSUER}/workspaces/${workspace.id}/mcp`, token)
 
-    expect((await mcp.listTools()).tools).toEqual([])
+    expect((await mcp.listTools()).tools.map((tool) => tool.name)).toContain('get_task')
     await mcp.close()
   })
 
@@ -340,7 +347,7 @@ describe('MCP-1 Streamable HTTP endpoint', () => {
 
     expect(hijack.status).toBe(404)
     // And Ada's session is untouched by the attempt
-    expect((await adas.listTools()).tools).toEqual([])
+    expect((await adas.listTools()).tools.map((tool) => tool.name)).toContain('get_task')
     await adas.close()
   })
 

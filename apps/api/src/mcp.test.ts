@@ -56,7 +56,7 @@ describe('MCP-1 session ownership', () => {
     const response = await endpoint.handle(listTools(id), ada)
 
     expect(response.status).toBe(200)
-    expect(await response.json()).toMatchObject({ result: { tools: [] } })
+    expect(await response.json()).toMatchObject({ result: { tools: expect.any(Array) } })
   })
 
   it('MCP-1 AC5: the same user in another workspace does not reach it', async () => {
