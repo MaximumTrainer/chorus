@@ -50,6 +50,7 @@ COPY packages/agent/package.json packages/agent/
 COPY packages/coding/package.json packages/coding/
 COPY packages/brain/package.json packages/brain/
 COPY packages/notifications/package.json packages/notifications/
+COPY packages/mcp/package.json packages/mcp/
 COPY packages/testing/package.json packages/testing/
 COPY packages/ui/package.json packages/ui/
 COPY apps/api/package.json apps/api/

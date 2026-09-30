@@ -1,0 +1,32 @@
+{
+  "name": "@chorus/mcp",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP definitions shared by the api's endpoint and the chorus-mcp stdio binary (architecture.md §14). Today: the stdio proxy.",
+  "exports": {
+    ".": {
+      "chorus-dist": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "default": "./src/index.ts"
+    }
+  },
+  "bin": {
+    "chorus-mcp": "./dist/bin/chorus-mcp.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0"
+  },
+  "devDependencies": {
+    "@chorus/config": "workspace:*",
+    "@types/node": "22.7.5",
+    "typescript": "5.6.3",
+    "vitest": "2.1.3"
+  }
+}
