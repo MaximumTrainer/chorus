@@ -36,6 +36,7 @@ export const TENANT_TABLES = [
   'notification_digest_settings',
   'coding_jobs',
   'spend_ledger',
+  'spend_limits',
   'context_bundles',
   'tasks',
   'task_counters',

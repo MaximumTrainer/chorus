@@ -358,6 +358,11 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
         [ulid(), workspaceId, teamId, runId],
       )
       await owner.query(
+        `INSERT INTO spend_limits (id, workspace_id, team_id, period, soft_limit_cents)
+         VALUES ($1, $2, $3, 'month', 1000000)`,
+        [ulid(), workspaceId, teamId],
+      )
+      await owner.query(
         `INSERT INTO coding_jobs
            (id, workspace_id, team_id, task_id, repository_id, adapter, requested_by)
          SELECT $1, $2, $3, t.id, r.id, 'reference', $4
@@ -812,6 +817,13 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
           await tx.execute(
             `INSERT INTO spend_ledger (id, workspace_id, provider, model, purpose)
              VALUES ($1, $2, 'fake', 'fake-1', 'chat')`,
+            [id, workspaceId],
+          )
+          return
+        case 'spend_limits':
+          await tx.execute(
+            `INSERT INTO spend_limits (id, workspace_id, period, hard_limit_cents)
+             VALUES ($1, $2, 'month', 1000000)`,
             [id, workspaceId],
           )
           return
