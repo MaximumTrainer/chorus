@@ -962,6 +962,8 @@ A prototype is the same pipeline as a coding job with a different brief and a di
 
 Built on the official TypeScript MCP SDK, mounted at `/mcp` in `api` over **Streamable HTTP**, and also shipped as a stdio binary (`chorus-mcp`) that proxies to the API for clients preferring a local process.
 
+**Two doors, one server (ADR-0020).** `/mcp` serves OAuth access tokens, which name the workspace they were granted for; it reads the workspace from the token and hands the request to `/workspaces/{workspaceId}/mcp`, which accepts OAuth tokens and personal API tokens alike and is authorised by the same route middleware as every other route. A personal token names no workspace, so at `/mcp` it is refused with a message naming the workspace URL. Both publish RFC 9728 protected-resource metadata, and a 401 on either carries `WWW-Authenticate: Bearer resource_metadata=…`, which is how a client that has never seen the server finds the authorization server. A session is bound to the user and workspace that opened it; any other caller presenting its id is answered 404, and a session idle past its timeout (30 minutes by default) is closed. Sessions are held in the API process, so several API machines need sticky routing on `mcp-session-id` before they can share this endpoint.
+
 ### 18.1 The walking skeleton (WP-0.6, temporary)
 
 `POST /workspaces/{id}/ask` is a **deliberately disposable** route satisfying Phase 0's exit criterion — a question about connected code, answered as a stream with citations to real files at a real commit. It is one retrieval call over code chunks, one model call and one streamed reply: no workflow engine, no checkpoints, no sessions, no artefacts. plan.md §2.5 requires it to be replaced by AGENT-1, BRAIN-4 and CHAT-2 in Phase 1, and names the failure mode — "the temptation to keep it is the failure mode" — so `test/nfr/walking-skeleton.test.ts` pins the directory's contents, its size and the fact that nothing else imports it. Throwaway code is never kept by a decision to keep it; it is kept by one reasonable addition at a time, and only a failing build stops that.
@@ -1215,6 +1217,7 @@ POST   /teams/graph-notifications           Graph change notifications + validat
 
 GET    /search                              global search (NAV-1)
 ALL    /mcp                                 MCP Streamable HTTP
+ALL    /workspaces/{id}/mcp                 MCP Streamable HTTP, personal API tokens and OAuth
 GET    /healthz  /readyz  /metrics
 ```
 
