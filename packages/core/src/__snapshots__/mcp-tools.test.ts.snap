@@ -2,6 +2,26 @@
 
 exports[`MCP-2 read tool definitions > MCP-2: the input schemas are a stable, reviewed contract 1`] = `
 {
+  "get_coding_job": {
+    "additionalProperties": false,
+    "properties": {
+      "jobId": {
+        "description": "The coding job to read.",
+        "minLength": 1,
+        "type": "string",
+      },
+      "offset": {
+        "description": "Only when a previous call was truncated: the offset its last line gave. Omit it otherwise.",
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer",
+      },
+    },
+    "required": [
+      "jobId",
+    ],
+    "type": "object",
+  },
   "get_document": {
     "additionalProperties": false,
     "properties": {
@@ -19,6 +39,26 @@ exports[`MCP-2 read tool definitions > MCP-2: the input schemas are a stable, re
     },
     "required": [
       "documentId",
+    ],
+    "type": "object",
+  },
+  "get_session": {
+    "additionalProperties": false,
+    "properties": {
+      "offset": {
+        "description": "Only when a previous call was truncated: the offset its last line gave. Omit it otherwise.",
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer",
+      },
+      "sessionId": {
+        "description": "The session to read. A task or document that came from one links to it.",
+        "minLength": 1,
+        "type": "string",
+      },
+    },
+    "required": [
+      "sessionId",
     ],
     "type": "object",
   },

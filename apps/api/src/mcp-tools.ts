@@ -94,6 +94,22 @@ const ROUTES: Readonly<Record<McpReadToolName, ReadRoute>> = {
       `Not found: there is no document with id ${String(args.documentId)} in this workspace that you can see. ` +
       'Check the id, or use list_documents to find the document.',
   },
+  get_session: {
+    list: false,
+    path: (workspaceId, args) =>
+      `/workspaces/${segment(workspaceId)}/sessions/${segment(args.sessionId)}`,
+    notFound: (args) =>
+      `Not found: there is no session with id ${String(args.sessionId)} in this workspace that you can see. ` +
+      'Check the id; a task or document that came from a session links to it.',
+  },
+  get_coding_job: {
+    list: false,
+    path: (workspaceId, args) =>
+      `/workspaces/${segment(workspaceId)}/coding-jobs/${segment(args.jobId)}`,
+    notFound: (args) =>
+      `Not found: there is no coding job with id ${String(args.jobId)} in this workspace that you can see. ` +
+      'Check the id; it is the one returned when the job was launched.',
+  },
 }
 
 /** The tools as `tools/list` presents them. */

@@ -67,6 +67,18 @@ export function codingJobRoutes(jobs: CodingJobService): RouteDefinition[] {
     }),
 
     route({
+      method: 'GET',
+      path: '/workspaces/:workspaceId/coding-jobs/:jobId',
+      summary: 'Read one coding job: its status, branch, pull request and failure.',
+      // The read behind MCP's `get_coding_job` (MCP-2, ADR-0021). An agent
+      // that handed work to a job needs to see how it went, and a tool can
+      // only offer what a route offers.
+      auth: { kind: 'workspace', role: 'member', scopes: ['read:artefacts'] },
+      handler: async (c) =>
+        c.json(await jobs.get(c.req.param('workspaceId'), c.req.param('jobId'))),
+    }),
+
+    route({
       method: 'POST',
       path: '/workspaces/:workspaceId/coding-jobs/:jobId/cancel',
       summary: 'Cancel a queued or running coding job.',

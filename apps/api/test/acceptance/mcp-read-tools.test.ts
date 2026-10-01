@@ -156,7 +156,14 @@ describe('MCP-2 read tools', () => {
     const { tools } = await mcp.listTools()
 
     expect(tools.map((tool) => tool.name).sort()).toEqual(
-      ['get_document', 'get_task', 'list_documents', 'list_tasks'].sort(),
+      [
+        'get_coding_job',
+        'get_document',
+        'get_session',
+        'get_task',
+        'list_documents',
+        'list_tasks',
+      ].sort(),
     )
     for (const tool of tools) {
       // Written for an agent: what it is for, and what to do next (#86).
@@ -305,6 +312,94 @@ describe('MCP-2 read tools', () => {
     // Then the two answers are the same, apart from the id the agent itself sent (AC6)
     expect((foreign as ToolResult).isError).toBe(true)
     expect(textOf(foreign).replace(task.id, '<id>')).toBe(
+      textOf(absent).replace('01JZZZZZZZZZZZZZZZZZZZZZZZ', '<id>'),
+    )
+    await mcp.close()
+  })
+
+  /**
+   * A coding job on a task, arranged directly: launching one needs a connected
+   * repository and an adapter, and what is under test here is reading it back.
+   */
+  async function aCodingJob(
+    workspaceId: string,
+    teamId: string,
+    taskId: string,
+    requestedBy: string,
+  ): Promise<string> {
+    const id = (suffix: string) => `${taskId.slice(0, 20)}${suffix}`
+    await db.admin.execute(
+      `INSERT INTO integrations (id, workspace_id, kind) VALUES ($1, $2, 'reference')`,
+      [id('INTG01'), workspaceId],
+    )
+    await db.admin.execute(
+      `INSERT INTO repositories (id, workspace_id, team_id, integration_id, provider, full_name)
+       VALUES ($1, $2, $3, $4, 'github', 'acme/billing')`,
+      [id('REPO01'), workspaceId, teamId, id('INTG01')],
+    )
+    await db.admin.execute(
+      `INSERT INTO coding_jobs
+         (id, workspace_id, team_id, task_id, repository_id, adapter, status, branch, requested_by)
+       VALUES ($1, $2, $3, $4, $5, 'reference', 'running', 'chorus/split-the-parser', $6)`,
+      [id('JOB001'), workspaceId, teamId, taskId, id('REPO01'), requestedBy],
+    )
+    return id('JOB001')
+  }
+
+  it('MCP-2: an MCP client reads a session and a coding job', async () => {
+    // Given a shaping session, and a task with a coding job running
+    const w = await world()
+    const session = (await (
+      await w.ada.post(`/workspaces/${w.workspaceId}/teams/${w.teamId}/sessions`, {
+        entryPoint: 'idea',
+        seed: 'Invoices take finance a day a week to reconcile.',
+      })
+    ).json()) as { id: string }
+    const task = (await (
+      await w.ada.post(`/workspaces/${w.workspaceId}/teams/${w.teamId}/tasks`, {
+        title: 'Split the invoice parser',
+      })
+    ).json()) as { id: string }
+    const jobId = await aCodingJob(w.workspaceId, w.teamId, task.id, w.ada.userId)
+
+    // When an agent reads both
+    const mcp = await connected(w.workspaceId, w.token)
+    const readSession = dataOf(
+      await mcp.callTool({ name: 'get_session', arguments: { sessionId: session.id } }),
+    )
+    const readJob = dataOf<{ status: string }>(
+      await mcp.callTool({ name: 'get_coding_job', arguments: { jobId } }),
+    )
+
+    // Then each is exactly what the API gives the same person (AC1)
+    expect(readSession).toEqual(
+      await apiJson(w.ada, `/workspaces/${w.workspaceId}/sessions/${session.id}`),
+    )
+    expect(readJob).toEqual(await apiJson(w.ada, `/workspaces/${w.workspaceId}/coding-jobs/${jobId}`))
+    expect(readJob.status).toBe('running')
+    await mcp.close()
+  })
+
+  it("MCP-2: another workspace's coding job is indistinguishable from a missing one", async () => {
+    const theirs = await world()
+    const task = (await (
+      await theirs.ada.post(`/workspaces/${theirs.workspaceId}/teams/${theirs.teamId}/tasks`, {
+        title: 'Not yours',
+      })
+    ).json()) as { id: string }
+    const jobId = await aCodingJob(theirs.workspaceId, theirs.teamId, task.id, theirs.ada.userId)
+
+    const mine = await world()
+    const mcp = await connected(mine.workspaceId, mine.token)
+    const foreign = await mcp.callTool({ name: 'get_coding_job', arguments: { jobId } })
+    const absent = await mcp.callTool({
+      name: 'get_coding_job',
+      arguments: { jobId: '01JZZZZZZZZZZZZZZZZZZZZZZZ' },
+    })
+
+    expect((foreign as ToolResult).isError).toBe(true)
+    expect(textOf(foreign)).toMatch(/not found/i)
+    expect(textOf(foreign).replace(jobId, '<id>')).toBe(
       textOf(absent).replace('01JZZZZZZZZZZZZZZZZZZZZZZZ', '<id>'),
     )
     await mcp.close()
