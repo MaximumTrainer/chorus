@@ -35,6 +35,7 @@ import { createOAuthService, OAuthError } from './oauth.js'
 import { oauthRoutes } from './oauth-routes.js'
 import { createMcpEndpoint, type McpEndpointOptions } from './mcp.js'
 import { isMcpPath, mcpChallenge, mcpRoutes } from './mcp-routes.js'
+import { idempotent } from './idempotency.js'
 import { createRepositoryService } from './repositories.js'
 import { codingJobRoutes } from './coding-job-routes.js'
 import { createCodingJobService, type CodingJobService } from '@chorus/coding'
@@ -622,7 +623,15 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
     // here, from the same data the permission suite enumerates — a route
     // cannot be mounted without the check its declaration describes.
     if (built) {
-      app.on(definition.method, definition.path, authorise(definition, built.deps), definition.handler)
+      app.on(
+        definition.method,
+        definition.path,
+        authorise(definition, built.deps),
+        // After authorisation, so a key is only ever claimed by a caller the
+        // route admits, and is scoped to who they turned out to be.
+        idempotent(definition, built.deps.dbConfig),
+        definition.handler,
+      )
     } else {
       app.on(definition.method, definition.path, definition.handler)
     }

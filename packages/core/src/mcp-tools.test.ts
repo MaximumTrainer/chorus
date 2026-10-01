@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import {
-  MCP_READ_TOOLS,
+  MCP_TOOLS,
   mcpToolInputSchema,
   parseMcpToolArguments,
-  type McpReadToolName,
+  type McpToolName,
 } from './mcp-tools.js'
 
 /**
@@ -15,9 +15,9 @@ import {
  * than a surprise.
  */
 
-const names = Object.keys(MCP_READ_TOOLS) as McpReadToolName[]
+const names = Object.keys(MCP_TOOLS) as McpToolName[]
 
-describe('MCP-2 read tool definitions', () => {
+describe('MCP-2 and MCP-3 tool definitions', () => {
   it('MCP-2: the input schemas are a stable, reviewed contract', () => {
     expect(Object.fromEntries(names.map((name) => [name, mcpToolInputSchema(name)]))).toMatchSnapshot()
   })
@@ -47,5 +47,20 @@ describe('MCP-2 read tool definitions', () => {
   it('MCP-2: a page limit above the maximum is refused', () => {
     expect(parseMcpToolArguments('list_tasks', { teamId: 't', limit: 101 }).ok).toBe(false)
     expect(parseMcpToolArguments('list_tasks', { teamId: 't', limit: 100 }).ok).toBe(true)
+  })
+
+  it('MCP-3: every create takes an idempotency key, and an update does not need one', () => {
+    for (const name of names) {
+      const properties = Object.keys(mcpToolInputSchema(name).properties as object)
+      expect(properties.includes('idempotencyKey'), name).toBe(name.startsWith('create_'))
+    }
+  })
+
+  it('MCP-3: create_task takes exactly the fields the API does, plus where to put it', () => {
+    expect(parseMcpToolArguments('create_task', { teamId: 't', title: 'x', estimate: 3 })).toMatchObject({
+      ok: false,
+      problem: expect.stringContaining('estimate'),
+    })
+    expect(parseMcpToolArguments('create_task', { teamId: 't', title: 'x', priority: 'high' }).ok).toBe(true)
   })
 })

@@ -153,18 +153,17 @@ describe('MCP-2 read tools', () => {
     const w = await world()
     const mcp = await connected(w.workspaceId, w.token)
 
-    const { tools } = await mcp.listTools()
+    const reads = [
+      'get_coding_job',
+      'get_document',
+      'get_session',
+      'get_task',
+      'list_documents',
+      'list_tasks',
+    ]
+    const tools = (await mcp.listTools()).tools.filter((tool) => reads.includes(tool.name))
 
-    expect(tools.map((tool) => tool.name).sort()).toEqual(
-      [
-        'get_coding_job',
-        'get_document',
-        'get_session',
-        'get_task',
-        'list_documents',
-        'list_tasks',
-      ].sort(),
-    )
+    expect(tools.map((tool) => tool.name).sort()).toEqual(reads.sort())
     for (const tool of tools) {
       // Written for an agent: what it is for, and what to do next (#86).
       expect(tool.description?.length, `${tool.name} has no real description`).toBeGreaterThan(80)
