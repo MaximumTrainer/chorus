@@ -1,7 +1,155 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`MCP-2 read tool definitions > MCP-2: the input schemas are a stable, reviewed contract 1`] = `
+exports[`MCP-2 and MCP-3 tool definitions > MCP-2: the input schemas are a stable, reviewed contract 1`] = `
 {
+  "create_document": {
+    "additionalProperties": false,
+    "properties": {
+      "idempotencyKey": {
+        "description": "A key you choose, unique to this one create, such as your run id and a step number. If you are unsure whether a call went through, repeat it with the same key: you get the original back rather than a duplicate.",
+        "maxLength": 255,
+        "minLength": 1,
+        "type": "string",
+      },
+      "teamId": {
+        "description": "The team to create the document in.",
+        "minLength": 1,
+        "type": "string",
+      },
+      "title": {
+        "description": "The document title.",
+        "maxLength": 500,
+        "minLength": 1,
+        "type": "string",
+      },
+      "type": {
+        "description": "The kind of document, which decides its template.",
+        "enum": [
+          "prd",
+          "spec",
+          "strategy",
+          "freeform",
+          "gap_spec",
+        ],
+        "type": "string",
+      },
+    },
+    "required": [
+      "teamId",
+      "type",
+      "title",
+    ],
+    "type": "object",
+  },
+  "create_task": {
+    "additionalProperties": false,
+    "properties": {
+      "acceptanceCriteria": {
+        "default": [],
+        "items": {
+          "properties": {
+            "checked": {
+              "default": false,
+              "type": "boolean",
+            },
+            "id": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "text": {
+              "maxLength": 2000,
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "text",
+          ],
+          "type": "object",
+        },
+        "maxItems": 100,
+        "type": "array",
+      },
+      "assigneeId": {
+        "minLength": 1,
+        "type": "string",
+      },
+      "description": {
+        "additionalProperties": {},
+        "default": {},
+        "propertyNames": {
+          "type": "string",
+        },
+        "type": "object",
+      },
+      "idempotencyKey": {
+        "description": "A key you choose, unique to this one create, such as your run id and a step number. If you are unsure whether a call went through, repeat it with the same key: you get the original back rather than a duplicate.",
+        "maxLength": 255,
+        "minLength": 1,
+        "type": "string",
+      },
+      "parentId": {
+        "minLength": 1,
+        "type": "string",
+      },
+      "priority": {
+        "default": "normal",
+        "enum": [
+          "low",
+          "normal",
+          "high",
+          "urgent",
+        ],
+        "type": "string",
+      },
+      "size": {
+        "enum": [
+          "XS",
+          "S",
+          "M",
+          "L",
+          "XL",
+        ],
+        "type": "string",
+      },
+      "status": {
+        "default": "todo",
+        "enum": [
+          "todo",
+          "in_progress",
+          "blocked",
+          "in_review",
+          "done",
+          "cancelled",
+        ],
+        "type": "string",
+      },
+      "tags": {
+        "default": [],
+        "items": {
+          "maxLength": 100,
+          "type": "string",
+        },
+        "maxItems": 50,
+        "type": "array",
+      },
+      "teamId": {
+        "description": "The team to create the task in. A task read with get_task carries its teamId.",
+        "minLength": 1,
+        "type": "string",
+      },
+      "title": {
+        "maxLength": 500,
+        "minLength": 1,
+        "type": "string",
+      },
+    },
+    "required": [
+      "title",
+      "teamId",
+    ],
+    "type": "object",
+  },
   "get_coding_job": {
     "additionalProperties": false,
     "properties": {
@@ -156,6 +304,166 @@ exports[`MCP-2 read tool definitions > MCP-2: the input schemas are a stable, re
     },
     "required": [
       "teamId",
+    ],
+    "type": "object",
+  },
+  "update_document": {
+    "additionalProperties": false,
+    "properties": {
+      "documentId": {
+        "description": "The document to write to.",
+        "minLength": 1,
+        "type": "string",
+      },
+      "sections": {
+        "description": "The sections to replace.",
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "content": {
+              "description": "The new content of that section, in Markdown.",
+              "type": "string",
+            },
+            "key": {
+              "description": "The section key, as get_document shows it.",
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "key",
+            "content",
+          ],
+          "type": "object",
+        },
+        "minItems": 1,
+        "type": "array",
+      },
+    },
+    "required": [
+      "documentId",
+      "sections",
+    ],
+    "type": "object",
+  },
+  "update_task": {
+    "additionalProperties": false,
+    "properties": {
+      "acceptanceCriteria": {
+        "items": {
+          "properties": {
+            "checked": {
+              "default": false,
+              "type": "boolean",
+            },
+            "id": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "text": {
+              "maxLength": 2000,
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "text",
+          ],
+          "type": "object",
+        },
+        "maxItems": 100,
+        "type": "array",
+      },
+      "assigneeId": {
+        "anyOf": [
+          {
+            "minLength": 1,
+            "type": "string",
+          },
+          {
+            "type": "null",
+          },
+        ],
+      },
+      "description": {
+        "additionalProperties": {},
+        "propertyNames": {
+          "type": "string",
+        },
+        "type": "object",
+      },
+      "parentId": {
+        "anyOf": [
+          {
+            "minLength": 1,
+            "type": "string",
+          },
+          {
+            "type": "null",
+          },
+        ],
+      },
+      "position": {
+        "type": "number",
+      },
+      "priority": {
+        "enum": [
+          "low",
+          "normal",
+          "high",
+          "urgent",
+        ],
+        "type": "string",
+      },
+      "size": {
+        "anyOf": [
+          {
+            "enum": [
+              "XS",
+              "S",
+              "M",
+              "L",
+              "XL",
+            ],
+            "type": "string",
+          },
+          {
+            "type": "null",
+          },
+        ],
+      },
+      "status": {
+        "enum": [
+          "todo",
+          "in_progress",
+          "blocked",
+          "in_review",
+          "done",
+          "cancelled",
+        ],
+        "type": "string",
+      },
+      "tags": {
+        "items": {
+          "maxLength": 100,
+          "type": "string",
+        },
+        "maxItems": 50,
+        "type": "array",
+      },
+      "taskId": {
+        "description": "The task to change.",
+        "minLength": 1,
+        "type": "string",
+      },
+      "title": {
+        "maxLength": 500,
+        "minLength": 1,
+        "type": "string",
+      },
+    },
+    "required": [
+      "taskId",
     ],
     "type": "object",
   },

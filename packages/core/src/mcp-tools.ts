@@ -1,4 +1,6 @@
 import { z } from 'zod'
+import { DOCUMENT_TYPES } from './documents.js'
+import { CreateTaskSchema, UpdateTaskSchema } from './tasks.js'
 
 /**
  * The MCP read tools' names, inputs and descriptions (MCP-2, architecture.md §14).
@@ -143,16 +145,122 @@ export const MCP_READ_TOOLS = {
 
 export type McpReadToolName = keyof typeof MCP_READ_TOOLS
 
+/**
+ * A key the agent chooses for a create, so a retry after a lost reply returns
+ * the original instead of making a second one (MCP-3 AC4). It travels to the
+ * API as an `Idempotency-Key` header, so the guarantee is the API's.
+ */
+const idempotencyKey = {
+  idempotencyKey: z
+    .string()
+    .min(1)
+    .max(255)
+    .optional()
+    .describe(
+      'A key you choose, unique to this one create, such as your run id and a step number. ' +
+        'If you are unsure whether a call went through, repeat it with the same key: you get ' +
+        'the original back rather than a duplicate.',
+    ),
+}
+
+/**
+ * The MCP write tools for tasks and documents (MCP-3).
+ *
+ * Their fields are the API's own schemas, extended only with what addresses
+ * the artefact, so a field the product accepts is a field an agent may send
+ * and nothing else is. Strict, so a misspelt field is refused by name rather
+ * than silently dropped (AC5).
+ */
+export const MCP_WRITE_TOOLS = {
+  create_task: {
+    title: 'Create a task',
+    description:
+      'Creates a task in a team, exactly as a person creating it in Chorus would: it is given ' +
+      "the team's next key and is recorded in the audit log as done by the person you act for. " +
+      'Write acceptance criteria as checkable statements, since they are what the work is ' +
+      'reviewed against. Pass an idempotencyKey so a retry cannot create a duplicate. Returns ' +
+      'the task, including its id and key.',
+    input: CreateTaskSchema.extend({
+      teamId: id('The team to create the task in. A task read with get_task carries its teamId.'),
+      ...idempotencyKey,
+    }).strict(),
+  },
+  update_task: {
+    title: 'Update a task',
+    description:
+      "Changes a task's fields: title, description, acceptance criteria, tags, status, " +
+      'priority, size, assignee or parent. Only the fields you send change. Use it to move a ' +
+      'task through its statuses as you work, and to tick acceptance criteria you have met. ' +
+      'Send null for size, assigneeId or parentId to clear them. Returns the updated task.',
+    input: UpdateTaskSchema.extend({
+      taskId: id('The task to change.'),
+    }).strict(),
+  },
+  create_document: {
+    title: 'Create a document',
+    description:
+      "Creates a document of a given type (prd, spec, strategy, freeform, gap_spec) from the team's " +
+      'current template for that type, so it starts with the sections the team expects. Fill ' +
+      'them with update_document using the section keys in the result. Pass an idempotencyKey ' +
+      'so a retry cannot create a duplicate.',
+    input: z
+      .object({
+        teamId: id('The team to create the document in.'),
+        type: z.enum(DOCUMENT_TYPES).describe('The kind of document, which decides its template.'),
+        title: z.string().trim().min(1).max(500).describe('The document title.'),
+        ...idempotencyKey,
+      })
+      .strict(),
+  },
+  update_document: {
+    title: 'Write document sections',
+    description:
+      "Writes content into a document's sections, addressed by their keys (read the document " +
+      'with get_document to see them). Each section you send is replaced whole, and sections ' +
+      'you do not send are left alone. Write Markdown. Returns the document as it now stands.',
+    input: z
+      .object({
+        documentId: id('The document to write to.'),
+        sections: z
+          .array(
+            z
+              .object({
+                key: z.string().min(1).describe('The section key, as get_document shows it.'),
+                content: z.string().describe('The new content of that section, in Markdown.'),
+              })
+              .strict(),
+          )
+          .min(1)
+          .describe('The sections to replace.'),
+      })
+      .strict(),
+  },
+} as const
+
+export type McpWriteToolName = keyof typeof MCP_WRITE_TOOLS
+
+/** Every tool the server offers, reads first. */
+export const MCP_TOOLS = { ...MCP_READ_TOOLS, ...MCP_WRITE_TOOLS } as const
+export type McpToolName = keyof typeof MCP_TOOLS
+
+export function isMcpTool(name: string): name is McpToolName {
+  return Object.hasOwn(MCP_TOOLS, name)
+}
+
+export function isMcpWriteTool(name: string): name is McpWriteToolName {
+  return Object.hasOwn(MCP_WRITE_TOOLS, name)
+}
+
 export function isMcpReadTool(name: string): name is McpReadToolName {
   return Object.hasOwn(MCP_READ_TOOLS, name)
 }
 
 /** A tool's input as JSON Schema, the form an MCP client is given. */
-export function mcpToolInputSchema(name: McpReadToolName): {
+export function mcpToolInputSchema(name: McpToolName): {
   type: 'object'
   [key: string]: unknown
 } {
-  const schema = z.toJSONSchema(MCP_READ_TOOLS[name].input, { io: 'input' }) as Record<
+  const schema = z.toJSONSchema(MCP_TOOLS[name].input, { io: 'input' }) as Record<
     string,
     unknown
   >
@@ -168,13 +276,13 @@ export function mcpToolInputSchema(name: McpReadToolName): {
  * The message is written to be read by the agent that sent them, so it names
  * the argument and the expectation rather than dumping a schema error (AC5).
  */
-export function parseMcpToolArguments<N extends McpReadToolName>(
+export function parseMcpToolArguments<N extends McpToolName>(
   name: N,
   args: unknown,
-): { ok: true; value: z.output<(typeof MCP_READ_TOOLS)[N]['input']> } | { ok: false; problem: string } {
-  const parsed = MCP_READ_TOOLS[name].input.safeParse(args ?? {})
+): { ok: true; value: z.output<(typeof MCP_TOOLS)[N]['input']> } | { ok: false; problem: string } {
+  const parsed = MCP_TOOLS[name].input.safeParse(args ?? {})
   if (parsed.success) {
-    return { ok: true, value: parsed.data as z.output<(typeof MCP_READ_TOOLS)[N]['input']> }
+    return { ok: true, value: parsed.data as z.output<(typeof MCP_TOOLS)[N]['input']> }
   }
   const problem = parsed.error.issues
     .map((issue) => `${issue.path.join('.') || 'arguments'}: ${issue.message}`)

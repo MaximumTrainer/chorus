@@ -1,26 +1,29 @@
 import {
   MCP_PAGE_LIMIT,
-  MCP_READ_TOOLS,
+  MCP_TOOLS,
   ValidationError,
   decodeCursor,
-  isMcpReadTool,
+  isMcpTool,
+  isMcpWriteTool,
   mcpToolInputSchema,
   pageOf,
   parseMcpToolArguments,
   truncated,
-  type McpReadToolName,
+  type McpToolName,
 } from '@chorus/core'
 
 /**
- * The MCP read tools, executed (MCP-2, ADR-0021).
+ * The MCP tools, executed (MCP-2, MCP-3, ADR-0021).
  *
- * A tool call is answered by the API route that serves the same read to the
- * web UI, dispatched in-process with the caller's own credential. So a tool
- * cannot return different data from its route (AC1), and it cannot be
- * permitted where the route is refused: the route's declared role and scope,
- * the team override and the audited refusal all apply unchanged (MCP-5 AC1).
- * What is added here is only what an agent needs and a browser does not:
- * bounded results (AC2) and errors that say what to do next (AC5).
+ * A tool call is answered by the API route that serves the same operation to
+ * the web UI, dispatched in-process with the caller's own credential. So a
+ * tool cannot return different data from its route (MCP-2 AC1), a write
+ * cannot differ from the product's in defaults, key allocation or audit
+ * (MCP-3 AC1), and nothing is permitted where the route is refused: the
+ * route's declared role and scope, the team override and the audited refusal
+ * all apply unchanged (MCP-5 AC1). What is added here is only what an agent
+ * needs and a browser does not: bounded results, retry-safe creates, and
+ * errors that say what to do next.
  */
 
 export interface ToolCallContext {
@@ -39,8 +42,12 @@ export interface ToolResult {
   isError?: boolean
 }
 
-interface ReadRoute {
+interface ToolRoute {
+  /** GET unless said otherwise. */
+  readonly method?: 'POST' | 'PATCH'
   readonly path: (workspaceId: string, args: Record<string, unknown>) => string
+  /** The request body: the arguments, less those that address the artefact. */
+  readonly body?: (args: Record<string, unknown>) => unknown
   /** Served a page at a time: the route returns an array. */
   readonly list: boolean
   /**
@@ -56,7 +63,15 @@ interface ReadRoute {
 
 const segment = (value: unknown) => encodeURIComponent(String(value))
 
-const ROUTES: Readonly<Record<McpReadToolName, ReadRoute>> = {
+/** Arguments that address an artefact or steer the call, never sent as fields. */
+const without =
+  (...fields: string[]) =>
+  (args: Record<string, unknown>) =>
+    Object.fromEntries(
+      Object.entries(args).filter(([field]) => !fields.includes(field) && field !== 'idempotencyKey'),
+    )
+
+const ROUTES: Readonly<Record<McpToolName, ToolRoute>> = {
   list_tasks: {
     list: true,
     path: (workspaceId, args) => {
@@ -110,18 +125,65 @@ const ROUTES: Readonly<Record<McpReadToolName, ReadRoute>> = {
       `Not found: there is no coding job with id ${String(args.jobId)} in this workspace that you can see. ` +
       'Check the id; it is the one returned when the job was launched.',
   },
+  create_task: {
+    list: false,
+    method: 'POST',
+    path: (workspaceId, args) =>
+      `/workspaces/${segment(workspaceId)}/teams/${segment(args.teamId)}/tasks`,
+    body: without('teamId'),
+    notFound: (args) =>
+      `Not found: there is no team with id ${String(args.teamId)} in this workspace that you can see. ` +
+      'Read a task with get_task to find the teamId it belongs to.',
+  },
+  update_task: {
+    list: false,
+    method: 'PATCH',
+    path: (workspaceId, args) => `/workspaces/${segment(workspaceId)}/tasks/${segment(args.taskId)}`,
+    body: without('taskId'),
+    notFound: (args) =>
+      `Not found: there is no task with id ${String(args.taskId)} in this workspace that you can see. ` +
+      'Check the id, or use list_tasks to find the task.',
+  },
+  create_document: {
+    list: false,
+    method: 'POST',
+    path: (workspaceId, args) =>
+      `/workspaces/${segment(workspaceId)}/teams/${segment(args.teamId)}/documents`,
+    body: without('teamId'),
+    notFound: (args) =>
+      `Not found: there is no team with id ${String(args.teamId)} in this workspace that you can see. ` +
+      'Read a task with get_task to find the teamId it belongs to.',
+  },
+  update_document: {
+    list: false,
+    method: 'PATCH',
+    path: (workspaceId, args) =>
+      `/workspaces/${segment(workspaceId)}/documents/${segment(args.documentId)}`,
+    body: without('documentId'),
+    notFound: (args) =>
+      `Not found: there is no document with id ${String(args.documentId)} in this workspace that you can see. ` +
+      'Check the id, or use list_documents to find the document.',
+  },
 }
 
 /** The tools as `tools/list` presents them. */
-export function readToolList() {
-  return (Object.keys(MCP_READ_TOOLS) as McpReadToolName[]).map((name) => ({
+export function toolList() {
+  return (Object.keys(MCP_TOOLS) as McpToolName[]).map((name) => ({
     name,
-    title: MCP_READ_TOOLS[name].title,
-    description: MCP_READ_TOOLS[name].description,
+    title: MCP_TOOLS[name].title,
+    description: MCP_TOOLS[name].description,
     inputSchema: mcpToolInputSchema(name),
-    // Hints for a client deciding whether to ask the person first. Every one
-    // of these only reads, and reads only this workspace.
-    annotations: { readOnlyHint: true, openWorldHint: false },
+    // Hints for a client deciding whether to ask the person first. Every tool
+    // acts only in this workspace, and none deletes anything. Updates are
+    // idempotent by nature; creates are made so by their key.
+    annotations: isMcpWriteTool(name)
+      ? {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: ROUTES[name].method === 'PATCH',
+          openWorldHint: false,
+        }
+      : { readOnlyHint: true, openWorldHint: false },
   }))
 }
 
@@ -140,9 +202,9 @@ async function problemDetail(response: Response): Promise<{ detail: string; reas
   }
 }
 
-/** A refused read, turned into an answer an agent can act on (AC5). */
+/** A refused call, turned into an answer an agent can act on (MCP-2 AC5, MCP-3 AC5). */
 async function refusal(
-  tool: McpReadToolName,
+  tool: McpToolName,
   response: Response,
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
@@ -152,6 +214,12 @@ async function refusal(
   switch (response.status) {
     case 400:
       return failure(`Invalid arguments for ${tool}: ${detail}. Correct them and call again.`)
+    case 409:
+      return failure(
+        `Conflict: ${detail}. Read the artefact again for its current state before retrying.`,
+      )
+    case 422:
+      return failure(`Refused: ${detail}.`)
     case 401:
       return failure(
         `Not authenticated: ${detail}. The credential this connection uses has expired or been ` +
@@ -174,12 +242,12 @@ async function refusal(
 }
 
 /** Answers a `tools/call`, or returns undefined for a tool this module does not serve. */
-export async function callReadTool(
+export async function callTool(
   name: string,
   rawArgs: unknown,
   context: ToolCallContext,
 ): Promise<ToolResult | undefined> {
-  if (!isMcpReadTool(name)) return undefined
+  if (!isMcpTool(name)) return undefined
 
   const parsed = parseMcpToolArguments(name, rawArgs)
   if (!parsed.ok) {
@@ -196,8 +264,16 @@ export async function callReadTool(
       const value = context.credentials.get(header)
       if (value) headers.set(header, value)
     }
+    if (route.body) headers.set('content-type', 'application/json')
+    // The key is the API's to honour (architecture.md §19), so a script and
+    // an agent retrying the same create get the same protection.
+    if (typeof args.idempotencyKey === 'string') headers.set('idempotency-key', args.idempotencyKey)
     const response = await context.dispatch(
-      new Request(`${context.origin}${route.path(context.workspaceId, args)}`, { headers }),
+      new Request(`${context.origin}${route.path(context.workspaceId, args)}`, {
+        method: route.method ?? 'GET',
+        headers,
+        ...(route.body ? { body: JSON.stringify(route.body(args)) } : {}),
+      }),
     )
     if (!response.ok) return await refusal(name, response, args)
 

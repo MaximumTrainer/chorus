@@ -363,6 +363,11 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
         [ulid(), workspaceId, teamId],
       )
       await owner.query(
+        `INSERT INTO idempotency_keys (id, workspace_id, user_id, key, request_hash)
+         VALUES ($1, $2, $3, 'seed', 'seed')`,
+        [ulid(), workspaceId, userId],
+      )
+      await owner.query(
         `INSERT INTO coding_jobs
            (id, workspace_id, team_id, task_id, repository_id, adapter, requested_by)
          SELECT $1, $2, $3, t.id, r.id, 'reference', $4
@@ -818,6 +823,13 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
             `INSERT INTO spend_ledger (id, workspace_id, provider, model, purpose)
              VALUES ($1, $2, 'fake', 'fake-1', 'chat')`,
             [id, workspaceId],
+          )
+          return
+        case 'idempotency_keys':
+          await tx.execute(
+            `INSERT INTO idempotency_keys (id, workspace_id, user_id, key, request_hash)
+             VALUES ($1, $2, $3, $1, 'seed')`,
+            [id, workspaceId, userId],
           )
           return
         case 'spend_limits':

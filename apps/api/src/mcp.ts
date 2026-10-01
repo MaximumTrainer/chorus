@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
-import { callReadTool, readToolList } from './mcp-tools.js'
+import { callTool, toolList } from './mcp-tools.js'
 
 /**
  * The MCP endpoint's sessions (MCP-1, architecture.md §14).
@@ -91,9 +91,9 @@ function protocolServer(environment: ToolEnvironment): Server {
     { name: 'chorus', version: '0.0.0' },
     { capabilities: { tools: { listChanged: false } } },
   )
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: readToolList() }))
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: toolList() }))
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
-    const result = await callReadTool(request.params.name, request.params.arguments, {
+    const result = await callTool(request.params.name, request.params.arguments, {
       ...environment,
       credentials: headersOf(extra.requestInfo?.headers),
     })
