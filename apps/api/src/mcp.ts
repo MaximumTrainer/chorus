@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
-import { ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
+import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
+import { callReadTool, readToolList } from './mcp-tools.js'
 
 /**
  * The MCP endpoint's sessions (MCP-1, architecture.md §14).
@@ -30,6 +31,14 @@ export interface McpEndpointOptions {
   readonly idleTimeoutMs?: number
   /** Injected so expiry is testable without waiting (CLAUDE.md §5). */
   readonly now?: () => number
+  /**
+   * The most characters one tool result may carry (MCP-2 AC2).
+   *
+   * About 12,000 tokens by default: enough for a long task or a whole PRD
+   * section by section, small enough that one call cannot fill an agent's
+   * context window with a single answer.
+   */
+  readonly maxResultChars?: number
 }
 
 /** Who a request is from, once the route has authorised it. */
@@ -49,22 +58,56 @@ interface Session {
 }
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000
+const DEFAULT_MAX_RESULT_CHARS = 48_000
+
+/** What a session's tools need to answer: whose workspace, and how to reach the API. */
+interface ToolEnvironment {
+  readonly workspaceId: string
+  readonly origin: string
+  readonly dispatch: (request: Request) => Promise<Response>
+  readonly maxResultChars: number
+}
+
+/** The headers of the request a call arrived on, as a `Headers`. */
+function headersOf(raw: Record<string, string | string[] | undefined> | undefined): Headers {
+  const headers = new Headers()
+  for (const [name, value] of Object.entries(raw ?? {})) {
+    if (typeof value === 'string') headers.set(name, value)
+    else if (Array.isArray(value)) for (const each of value) headers.append(name, each)
+  }
+  return headers
+}
 
 /**
  * The protocol server one session talks to.
  *
- * Tools are advertised and currently empty: MCP-2 and MCP-3 fill the list. The
- * capability is declared now, rather than when the first tool arrives, so a
- * client can ask for tools today and be answered honestly with none — a server
- * that does not advertise the capability answers `tools/list` with "method not
- * found", which reads to a client as a broken server rather than an empty one.
+ * A tool call is authorised afresh with the credential on the request that
+ * carries it, not the one that opened the session: a token revoked mid-session
+ * stops working at its next call rather than when the session expires
+ * (MCP-5 AC5).
  */
-function protocolServer(): Server {
+function protocolServer(environment: ToolEnvironment): Server {
   const server = new Server(
     { name: 'chorus', version: '0.0.0' },
     { capabilities: { tools: { listChanged: false } } },
   )
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [] }))
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: readToolList() }))
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+    const result = await callReadTool(request.params.name, request.params.arguments, {
+      ...environment,
+      credentials: headersOf(extra.requestInfo?.headers),
+    })
+    if (result) return result
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `There is no tool called ${request.params.name}. Call tools/list to see the tools this server offers.`,
+        },
+      ],
+      isError: true,
+    }
+  })
   return server
 }
 
@@ -80,8 +123,15 @@ function sessionNotFound(): Response {
   )
 }
 
-export function createMcpEndpoint(options: McpEndpointOptions = {}): McpEndpoint {
+export function createMcpEndpoint(
+  options: McpEndpointOptions = {},
+  /** Hands a tool's read to the API route that serves it (ADR-0021). */
+  dispatch: (request: Request) => Promise<Response> = () => {
+    throw new Error('MCP tools need the app to dispatch through; this endpoint was built without one')
+  },
+): McpEndpoint {
   const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS
+  const maxResultChars = options.maxResultChars ?? DEFAULT_MAX_RESULT_CHARS
   const now = options.now ?? Date.now
   const sessions = new Map<string, Session>()
 
@@ -148,7 +198,12 @@ export function createMcpEndpoint(options: McpEndpointOptions = {}): McpEndpoint
           sessions.set(id, { transport, caller, lastSeen: now() })
         },
       })
-      await protocolServer().connect(transport)
+      await protocolServer({
+        workspaceId: caller.workspaceId,
+        origin: new URL(request.url).origin,
+        dispatch,
+        maxResultChars,
+      }).connect(transport)
 
       const response = await transport.handleRequest(request)
       // Refused before a session existed, so nothing will ever use it again.

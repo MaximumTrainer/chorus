@@ -1,0 +1,123 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`MCP-2 read tool definitions > MCP-2: the input schemas are a stable, reviewed contract 1`] = `
+{
+  "get_document": {
+    "additionalProperties": false,
+    "properties": {
+      "documentId": {
+        "description": "The document to read. get_task lists the documents a task came from; list_documents finds others.",
+        "minLength": 1,
+        "type": "string",
+      },
+      "offset": {
+        "description": "Only when a previous call was truncated: the offset its last line gave. Omit it otherwise.",
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer",
+      },
+    },
+    "required": [
+      "documentId",
+    ],
+    "type": "object",
+  },
+  "get_task": {
+    "additionalProperties": false,
+    "properties": {
+      "offset": {
+        "description": "Only when a previous call was truncated: the offset its last line gave. Omit it otherwise.",
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer",
+      },
+      "taskId": {
+        "description": "The task to read. Find one with list_tasks if you do not have its id.",
+        "minLength": 1,
+        "type": "string",
+      },
+    },
+    "required": [
+      "taskId",
+    ],
+    "type": "object",
+  },
+  "list_documents": {
+    "additionalProperties": false,
+    "properties": {
+      "cursor": {
+        "description": "The nextCursor from the previous page, exactly as given. Omit it for the first page.",
+        "minLength": 1,
+        "type": "string",
+      },
+      "limit": {
+        "description": "How many items to return, at most 100; 25 by default. A page may hold fewer when its items are large.",
+        "maximum": 100,
+        "minimum": 1,
+        "type": "integer",
+      },
+      "offset": {
+        "description": "Only when a previous call was truncated: the offset its last line gave. Omit it otherwise.",
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer",
+      },
+      "teamId": {
+        "description": "The team whose documents to list. A task read with get_task carries its teamId.",
+        "minLength": 1,
+        "type": "string",
+      },
+    },
+    "required": [
+      "teamId",
+    ],
+    "type": "object",
+  },
+  "list_tasks": {
+    "additionalProperties": false,
+    "properties": {
+      "assigneeId": {
+        "description": "Only tasks assigned to this user.",
+        "minLength": 1,
+        "type": "string",
+      },
+      "cursor": {
+        "description": "The nextCursor from the previous page, exactly as given. Omit it for the first page.",
+        "minLength": 1,
+        "type": "string",
+      },
+      "limit": {
+        "description": "How many items to return, at most 100; 25 by default. A page may hold fewer when its items are large.",
+        "maximum": 100,
+        "minimum": 1,
+        "type": "integer",
+      },
+      "offset": {
+        "description": "Only when a previous call was truncated: the offset its last line gave. Omit it otherwise.",
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer",
+      },
+      "status": {
+        "description": "Only tasks in this status, e.g. "todo".",
+        "minLength": 1,
+        "type": "string",
+      },
+      "tag": {
+        "description": "Only tasks carrying this tag.",
+        "minLength": 1,
+        "type": "string",
+      },
+      "teamId": {
+        "description": "The team whose tasks to list. A task read with get_task carries its teamId.",
+        "minLength": 1,
+        "type": "string",
+      },
+    },
+    "required": [
+      "teamId",
+    ],
+    "type": "object",
+  },
+}
+`;

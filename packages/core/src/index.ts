@@ -224,3 +224,13 @@ export type {
   OpenPullRequest,
 } from './git-host.js'
 export { PullRequestRefusedError } from './git-host.js'
+export { encodeCursor, decodeCursor, pageOf, truncated } from './mcp-results.js'
+export type { Page, Truncated } from './mcp-results.js'
+export {
+  MCP_READ_TOOLS,
+  MCP_PAGE_LIMIT,
+  isMcpReadTool,
+  mcpToolInputSchema,
+  parseMcpToolArguments,
+} from './mcp-tools.js'
+export type { McpReadToolName } from './mcp-tools.js'

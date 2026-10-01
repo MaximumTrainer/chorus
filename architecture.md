@@ -986,7 +986,7 @@ Every issued secret — code, access token, refresh token — **names the worksp
 
 Consent screens name scopes in plain language, because a scope string is not a user interface and nobody can meaningfully agree to `run:coding`. Client names arrive through dynamic registration, which anyone may perform, so they are escaped before rendering — the consent screen is the one page whose entire purpose is that the reader trusts it.
 
-**Tools** map one-to-one onto the API service layer, so behaviour and permissions are identical to the web UI (ADR-0007):
+**Tools** map one-to-one onto the API service layer, so behaviour and permissions are identical to the web UI (ADR-0007). A tool call is answered by the route that serves the same operation, dispatched in-process with the caller's own credential, so the route's role, scope, team override and audited refusal apply unchanged (ADR-0021). The MCP layer adds only bounds and guidance: lists are paged behind an opaque cursor, any result over the limit (48,000 characters by default) is cut with a last line naming the `offset` to read on, and a refusal is returned as a tool error that says whether the id, the arguments, the token's scope or the caller's role is at fault. Not-found is composed from the agent's own arguments, so another workspace's id reads exactly like one that never existed (MCP-2 AC6). The task and document read tools ship first; the brain-backed ones follow their routes.
 
 - *read:* `search`, `get_task`, `list_tasks`, `get_document`, `list_documents`, `get_session`, `get_entity`, `get_wiki_page`, `get_repo_context`, `get_coding_job`
 - *write:* `create_task`, `update_task`, `create_document`, `update_document`, `add_comment`, `link_artefacts`, `start_coding_job`, `report_pr`, `log_decision`
