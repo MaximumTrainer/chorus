@@ -110,6 +110,35 @@ export const MCP_READ_TOOLS = {
       })
       .strict(),
   },
+  get_session: {
+    title: 'Read a session',
+    description:
+      'Reads one shaping session: how it started, its status, and the transcript of what people ' +
+      'and the product agent said. Use it to recover the reasoning and the decisions behind a ' +
+      'task or document that came out of a conversation, which the artefact itself may not ' +
+      'record. A long transcript arrives in parts; when a result ends with a truncation note, ' +
+      'call again with the offset it gives.',
+    input: z
+      .object({
+        sessionId: id('The session to read. A task or document that came from one links to it.'),
+        ...continuation,
+      })
+      .strict(),
+  },
+  get_coding_job: {
+    title: 'Read a coding job',
+    description:
+      'Reads one coding job: whether it is queued, running, succeeded, failed or cancelled, its ' +
+      'branch, its pull request once opened, its summary, and why it failed if it did. Use it to ' +
+      'check on work handed to a sandboxed coding agent before starting the same task yourself, ' +
+      'and read the failure before retrying, because it says what went wrong in plain words.',
+    input: z
+      .object({
+        jobId: id('The coding job to read.'),
+        ...continuation,
+      })
+      .strict(),
+  },
 } as const
 
 export type McpReadToolName = keyof typeof MCP_READ_TOOLS
