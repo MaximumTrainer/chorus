@@ -47,6 +47,12 @@ export interface AppEnv {
      */
     workspaceRole?: Role
     effectiveRole?: Role
+    /**
+     * True when the caller authenticated with a token (an API token or an MCP
+     * grant) rather than an interactive session. A token is lent to software,
+     * so what it does was not clicked by a person (CODE-1 AC4).
+     */
+    viaToken?: boolean
     mailer?: MailSender
     baseUrl: string
   }

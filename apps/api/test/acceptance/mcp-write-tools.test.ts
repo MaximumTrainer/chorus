@@ -23,9 +23,9 @@ import {
  * (AC2, journey J7): the pull request it opened is attached to the task, the
  * task moves to review, and the work is recorded as done outside the platform.
  *
- * `start_coding_job` and `log_decision` are not offered until they can be
- * honoured in full (plan.md §2.3): the first needs the `before_coding_job`
- * checkpoint on launch (AC6), the second the Decision entities of CHAT-10.
+ * `start_coding_job` and its `before_coding_job` gate (AC6) are proven in
+ * agent-launch-gate.test.ts. `log_decision` is not offered until the Decision
+ * entities of CHAT-10 exist (plan.md §2.3).
  */
 
 const ISSUER = 'http://localhost:3000'
@@ -152,7 +152,7 @@ describe('MCP-3 write tools', () => {
       expect(Object.keys(tool.inputSchema.properties ?? {}), name).toContain('idempotencyKey')
     }
     // Not offered until it can be honoured in full (#87's phasing note).
-    expect(tools.map((tool) => tool.name)).not.toContain('start_coding_job')
+    // start_coding_job now is, with its gate: agent-launch-gate.test.ts.
     expect(tools.map((tool) => tool.name)).not.toContain('log_decision')
     await w.mcp.close()
   })

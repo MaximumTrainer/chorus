@@ -242,6 +242,7 @@ export function authorise(definition: RouteDefinition, deps: AuthorisationDeps) 
     c.set('user', user)
     c.set('workspaceRole', workspaceRole!)
     c.set('effectiveRole', effectiveRole!)
+    c.set('viaToken', tokenScopes !== undefined)
     await next()
   }
 }

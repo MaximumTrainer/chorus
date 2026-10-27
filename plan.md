@@ -71,7 +71,7 @@ This matters because **J7 — an engineer's own agent implements a task over MCP
 **Resolution, three parts:**
 
 - **Move CODE-2 (brief builder, #76) to Phase 1.** It has no sandbox dependency — it is deterministic assembly of artefacts that already exist by mid-Phase 1. Its optional inputs (CHAT-10 decisions, EXT-5 capture evidence) degrade gracefully to empty sections. This makes J7 genuinely work at the MVP, which is the point of the phase.
-- **Defer `start_coding_job` from MCP-3 to Phase 2**, shipping the other eight write tools in Phase 1. Record it as a known gap in the MCP tool list rather than a stub that fails.
+- **Defer `start_coding_job` from MCP-3 to Phase 2**, shipping the other eight write tools in Phase 1. Record it as a known gap in the MCP tool list rather than a stub that fails. *(Restored early, 2026-10-27: CODE-1 shipped, and `start_coding_job` is the first agent-initiated launch #170 was waiting for, so it ships with the `before_coding_job` gate at launch — architecture.md §12.)*
 - **Defer `log_decision` from MCP-3 to Phase 4** (added 2026-10-27). A decision is a CHAT-10 Decision entity with required rationale and evidence, and those entities need the brain graph (BRAIN-3). Recording decisions in a table of their own now would be a second decision log for CHAT-10 to migrate or reconcile. So seven write tools ship in Phase 1, and `log_decision` arrives with CHAT-10. J7 does not need it: `report_pr` is what closes that loop.
 - **Defer the `chorus://wiki/{slug}` resource to Phase 4**, with task and document resources shipping in Phase 1.
 
