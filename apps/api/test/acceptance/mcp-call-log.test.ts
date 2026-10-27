@@ -32,8 +32,7 @@ function textOf(result: unknown): string {
 }
 
 interface Trace {
-  workflowName: string
-  startedBy: string
+  run: { workflow: string; startedBy: string }
   events: Array<{ kind: string; payload: Record<string, unknown> }>
 }
 
@@ -100,7 +99,7 @@ describe('MCP-5 call log and revocation', () => {
 
     // Then the session's trace records both, attributed to Ada and the client
     const trace = await sessionTrace(w.ada, w.workspaceId)
-    expect(trace.startedBy).toBe(w.ada.userId)
+    expect(trace.run).toMatchObject({ workflow: 'mcp-session@1', startedBy: w.ada.userId })
     const calls = trace.events.filter((event) => event.kind === 'tool_call').map((event) => event.payload)
     expect(calls).toEqual([
       expect.objectContaining({ client: 'logging-agent', userId: w.ada.userId, tool: 'create_task', outcome: 'ok' }),

@@ -418,6 +418,39 @@ exports[`MCP-2 and MCP-3 tool definitions > MCP-2: the input schemas are a stabl
     ],
     "type": "object",
   },
+  "search": {
+    "additionalProperties": false,
+    "properties": {
+      "k": {
+        "description": "How many fragments to return, at most 50.",
+        "maximum": 50,
+        "minimum": 1,
+        "type": "integer",
+      },
+      "offset": {
+        "description": "Only when a previous call was truncated: the offset its last line gave. Omit it otherwise.",
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer",
+      },
+      "query": {
+        "description": "What you are looking for: a question, a behaviour, or a symbol name.",
+        "maxLength": 2000,
+        "minLength": 1,
+        "type": "string",
+      },
+      "teamId": {
+        "description": "The team to search as. A task read with get_task carries its teamId.",
+        "minLength": 1,
+        "type": "string",
+      },
+    },
+    "required": [
+      "query",
+      "teamId",
+    ],
+    "type": "object",
+  },
   "start_coding_job": {
     "additionalProperties": false,
     "properties": {

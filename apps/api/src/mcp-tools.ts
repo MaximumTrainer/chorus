@@ -125,6 +125,16 @@ const ROUTES: Readonly<Record<McpToolName, ToolRoute>> = {
       `Not found: there is no coding job with id ${String(args.jobId)} in this workspace that you can see. ` +
       'Check the id; it is the one returned when the job was launched.',
   },
+  search: {
+    list: false,
+    method: 'POST',
+    path: (workspaceId, args) =>
+      `/workspaces/${segment(workspaceId)}/teams/${segment(args.teamId)}/search`,
+    body: without('teamId', 'offset'),
+    notFound: (args) =>
+      `Not found: there is no team with id ${String(args.teamId)} in this workspace that you can see. ` +
+      'Read a task with get_task to find the teamId it belongs to.',
+  },
   create_task: {
     list: false,
     method: 'POST',
@@ -206,6 +216,23 @@ const ROUTES: Readonly<Record<McpToolName, ToolRoute>> = {
       `Not found: either the team ${String(args.teamId)} or the task ${String(args.taskId)} ` +
       'is not in this workspace, or you cannot see it. Read the task with get_task for its teamId.',
   },
+}
+
+/**
+ * The route a tool call is answered by, for given arguments.
+ *
+ * Exported for the parity suite (MCP-5 AC1), which matches it against the
+ * route table to find the declaration a tool must agree with. Deriving it from
+ * the same `ROUTES` the calls use means the suite cannot test a mapping the
+ * server does not have.
+ */
+export function toolRoute(
+  name: McpToolName,
+  workspaceId: string,
+  args: Record<string, unknown>,
+): { method: 'GET' | 'POST' | 'PATCH'; path: string } {
+  const route = ROUTES[name]
+  return { method: route.method ?? 'GET', path: route.path(workspaceId, args).split('?')[0]! }
 }
 
 /** The tools as `tools/list` presents them. */
