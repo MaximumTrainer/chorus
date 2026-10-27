@@ -213,7 +213,13 @@ describe('TASK-2 task views', () => {
     // Scope is expressed as a link rather than a column, so a task can belong
     // to a session *and* a document without the schema growing a field per
     // kind of scope (TASK-1's `artefact_links`).
-    const scopeId = '01ARZ3NDEKTSV4RRFFQ69G5FB9'
+    // A real session: a link must resolve to something the workspace can see
+    // (MCP-3), so a made-up id is refused rather than scoped to.
+    const session = await ada.post(`/workspaces/${workspaceId}/teams/${teamId}/sessions`, {
+      entryPoint: 'nothing',
+    })
+    expect(session.status, await session.clone().text()).toBe(201)
+    const scopeId = ((await session.json()) as { id: string }).id
     for (const id of ids.slice(0, 2)) {
       const linked = await ada.post(`/workspaces/${workspaceId}/tasks/${id}/links`, {
         toType: 'session',

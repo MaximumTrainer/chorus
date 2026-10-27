@@ -2,6 +2,45 @@
 
 exports[`MCP-2 and MCP-3 tool definitions > MCP-2: the input schemas are a stable, reviewed contract 1`] = `
 {
+  "add_comment": {
+    "additionalProperties": false,
+    "properties": {
+      "body": {
+        "description": "The comment, in Markdown.",
+        "minLength": 1,
+        "type": "string",
+      },
+      "documentId": {
+        "description": "The document to comment on.",
+        "minLength": 1,
+        "type": "string",
+      },
+      "mentions": {
+        "description": "User ids to notify. Each must be a member of the workspace.",
+        "items": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "type": "array",
+      },
+      "prefix": {
+        "description": "Text immediately before the quote, when the quote alone is ambiguous.",
+        "minLength": 1,
+        "type": "string",
+      },
+      "quote": {
+        "description": "The exact text the comment is about, copied from the document.",
+        "minLength": 1,
+        "type": "string",
+      },
+    },
+    "required": [
+      "documentId",
+      "quote",
+      "body",
+    ],
+    "type": "object",
+  },
   "create_document": {
     "additionalProperties": false,
     "properties": {
@@ -230,6 +269,41 @@ exports[`MCP-2 and MCP-3 tool definitions > MCP-2: the input schemas are a stabl
     ],
     "type": "object",
   },
+  "link_artefacts": {
+    "additionalProperties": false,
+    "properties": {
+      "relation": {
+        "description": "What the link means, in snake_case: implements, blocked_by, relates_to. relates_to by default.",
+        "pattern": "^[a-z][a-z_]{1,63}$",
+        "type": "string",
+      },
+      "taskId": {
+        "description": "The task the link starts from.",
+        "minLength": 1,
+        "type": "string",
+      },
+      "toId": {
+        "description": "The id of the artefact the link points at.",
+        "minLength": 1,
+        "type": "string",
+      },
+      "toType": {
+        "description": "What kind of artefact the link points at.",
+        "enum": [
+          "task",
+          "document",
+          "session",
+        ],
+        "type": "string",
+      },
+    },
+    "required": [
+      "taskId",
+      "toType",
+      "toId",
+    ],
+    "type": "object",
+  },
   "list_documents": {
     "additionalProperties": false,
     "properties": {
@@ -304,6 +378,43 @@ exports[`MCP-2 and MCP-3 tool definitions > MCP-2: the input schemas are a stabl
     },
     "required": [
       "teamId",
+    ],
+    "type": "object",
+  },
+  "report_pr": {
+    "additionalProperties": false,
+    "properties": {
+      "status": {
+        "description": "The state the pull request is in now.",
+        "enum": [
+          "open",
+          "draft",
+          "merged",
+          "closed",
+        ],
+        "type": "string",
+      },
+      "taskId": {
+        "description": "The task the pull request implements.",
+        "minLength": 1,
+        "type": "string",
+      },
+      "title": {
+        "description": "The pull request’s title.",
+        "maxLength": 500,
+        "minLength": 1,
+        "type": "string",
+      },
+      "url": {
+        "description": "The pull request’s web address, e.g. https://github.com/acme/widgets/pull/42 or https://gitlab.com/acme/widgets/-/merge_requests/42.",
+        "format": "uri",
+        "type": "string",
+      },
+    },
+    "required": [
+      "url",
+      "status",
+      "taskId",
     ],
     "type": "object",
   },

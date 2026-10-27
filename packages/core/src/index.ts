@@ -231,10 +231,22 @@ export {
   MCP_WRITE_TOOLS,
   MCP_TOOLS,
   MCP_PAGE_LIMIT,
+  LINK_TARGET_TYPES,
   isMcpReadTool,
   isMcpWriteTool,
   isMcpTool,
   mcpToolInputSchema,
   parseMcpToolArguments,
 } from './mcp-tools.js'
-export type { McpReadToolName, McpWriteToolName, McpToolName } from './mcp-tools.js'
+export type { McpReadToolName, McpWriteToolName, McpToolName, LinkTargetType } from './mcp-tools.js'
+export {
+  PULL_REQUEST_STATUSES,
+  ReportPullRequestSchema,
+  parsePullRequestUrl,
+} from './pull-requests.js'
+export type {
+  PullRequestStatus,
+  ReportPullRequest,
+  TaskPullRequest,
+  ParsedPullRequestUrl,
+} from './pull-requests.js'
