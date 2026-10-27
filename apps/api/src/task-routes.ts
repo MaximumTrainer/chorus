@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import {
   ConflictError,
   CreateTaskSchema,
+  ReportPullRequestSchema,
   UpdateTaskSchema,
   ValidationError,
   type ChildDisposition,
@@ -170,6 +171,35 @@ export function taskRoutes(tasks: TaskService): RouteDefinition[] {
           ...(typeof body.relation === 'string' ? { relation: body.relation } : {}),
         })
         return c.json({ ok: true }, 201)
+      },
+    }),
+
+    route({
+      method: 'POST',
+      path: '/workspaces/:workspaceId/tasks/:taskId/pull-requests',
+      summary: 'Report a pull request opened outside the platform for a task.',
+      // MCP-3 AC2: `write:artefacts`, not `run:coding`. Reporting attaches a
+      // link and moves the task to review; it spends nothing and pushes
+      // nothing, which is what `run:coding` exists to guard.
+      auth: { kind: 'workspace', role: 'member', scopes: ['write:artefacts'] },
+      handler: async (c) => {
+        const parsed = ReportPullRequestSchema.strict().safeParse(
+          await c.req.json().catch(() => ({})),
+        )
+        if (!parsed.success) {
+          throw new ValidationError(parsed.error.issues[0]?.message ?? 'Invalid report', {
+            field: parsed.error.issues[0]?.path.join('.') || 'body',
+          })
+        }
+
+        return c.json(
+          await tasks.reportPullRequest({
+            workspaceId: c.req.param('workspaceId'),
+            taskId: c.req.param('taskId'),
+            actorId: caller(c).userId,
+            report: parsed.data,
+          }),
+        )
       },
     }),
 

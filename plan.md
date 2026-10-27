@@ -62,6 +62,7 @@ The cycles are real at the issue level but not at the code level: they are mutua
 | Issue | Depends on | Stated phase of dependency |
 |---|---|---|
 | MCP-3 `start_coding_job` (#87) | CODE-1 (#75) | Phase 2 |
+| MCP-3 `log_decision` (#87) | CHAT-10 (#34) | Phase 4 |
 | MCP-4 `implement-task` prompt (#88) | CODE-2 (#76) | Phase 2 |
 | MCP-4 `chorus://wiki/{slug}` (#88) | BRAIN-5 (#60) | Phase 4 |
 
@@ -71,6 +72,7 @@ This matters because **J7 — an engineer's own agent implements a task over MCP
 
 - **Move CODE-2 (brief builder, #76) to Phase 1.** It has no sandbox dependency — it is deterministic assembly of artefacts that already exist by mid-Phase 1. Its optional inputs (CHAT-10 decisions, EXT-5 capture evidence) degrade gracefully to empty sections. This makes J7 genuinely work at the MVP, which is the point of the phase.
 - **Defer `start_coding_job` from MCP-3 to Phase 2**, shipping the other eight write tools in Phase 1. Record it as a known gap in the MCP tool list rather than a stub that fails.
+- **Defer `log_decision` from MCP-3 to Phase 4** (added 2026-10-27). A decision is a CHAT-10 Decision entity with required rationale and evidence, and those entities need the brain graph (BRAIN-3). Recording decisions in a table of their own now would be a second decision log for CHAT-10 to migrate or reconcile. So seven write tools ship in Phase 1, and `log_decision` arrives with CHAT-10. J7 does not need it: `report_pr` is what closes that loop.
 - **Defer the `chorus://wiki/{slug}` resource to Phase 4**, with task and document resources shipping in Phase 1.
 
 Pulling CODE-2 forward has a second benefit: it forces the "sandbox brief and MCP prompt are byte-identical" assertion (CODE-2 AC2 / MCP-4 AC2) to be written before the sandbox exists, so the sandbox is built to match an already-tested contract rather than the reverse.
@@ -93,7 +95,7 @@ Pulling CODE-2 forward has a second benefit: it forces the "sandbox brief and MC
 |---|---|
 | #76 CODE-2 | Milestone moved Phase 2 → **Phase 1** (§2.3) |
 | #107 SLACK-6 | Milestone moved Phase 2 → **Phase 1** (§2.2) |
-| #87 MCP-3 | Scope note: `start_coding_job` deferred to Phase 2; the other eight write tools ship in Phase 1 |
+| #87 MCP-3 | Scope note: `start_coding_job` deferred to Phase 2 and `log_decision` to Phase 4 (with CHAT-10); the other seven write tools ship in Phase 1 |
 | #88 MCP-4 | Scope note: `chorus://wiki/{slug}` deferred to Phase 4; task and document resources and all three prompts ship in Phase 1 |
 
 The two deferred capabilities are **absent from the advertised MCP tool and resource lists** until their phase, rather than present as stubs that fail. An agent must be able to trust that an advertised tool works.

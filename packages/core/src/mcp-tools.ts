@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { DOCUMENT_TYPES } from './documents.js'
+import { ReportPullRequestSchema } from './pull-requests.js'
 import { CreateTaskSchema, UpdateTaskSchema } from './tasks.js'
 
 /**
@@ -163,8 +164,12 @@ const idempotencyKey = {
     ),
 }
 
+/** What a task may be linked to (`artefact_links.to_type`). */
+export const LINK_TARGET_TYPES = ['task', 'document', 'session'] as const
+export type LinkTargetType = (typeof LINK_TARGET_TYPES)[number]
+
 /**
- * The MCP write tools for tasks and documents (MCP-3).
+ * The MCP write tools (MCP-3).
  *
  * Their fields are the API's own schemas, extended only with what addresses
  * the artefact, so a field the product accepts is a field an agent may send
@@ -234,6 +239,69 @@ export const MCP_WRITE_TOOLS = {
           .describe('The sections to replace.'),
       })
       .strict(),
+  },
+  add_comment: {
+    title: 'Comment on a document',
+    description:
+      'Starts a comment thread on a document, anchored to a phrase in it, exactly as a person ' +
+      'highlighting that phrase in Chorus would. Use it to ask the author a question or flag a ' +
+      'problem rather than rewriting their words yourself. The quote must appear in the ' +
+      'document exactly once; if it appears more than once, also send the text just before it ' +
+      'as prefix. Mentioned users are notified. Returns the thread.',
+    input: z
+      .object({
+        documentId: id('The document to comment on.'),
+        quote: z
+          .string()
+          .min(1)
+          .describe('The exact text the comment is about, copied from the document.'),
+        prefix: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Text immediately before the quote, when the quote alone is ambiguous.'),
+        body: z.string().trim().min(1).describe('The comment, in Markdown.'),
+        mentions: z
+          .array(z.string().min(1))
+          .optional()
+          .describe('User ids to notify. Each must be a member of the workspace.'),
+      })
+      .strict(),
+  },
+  link_artefacts: {
+    title: 'Link a task to another artefact',
+    description:
+      'Records that a task is connected to another task, a document or a session, and how: for ' +
+      'example that it implements a spec, is blocked by another task, or came out of a ' +
+      'conversation. Use it when you find a connection the task does not already show, so the ' +
+      'next person reading either side can follow it. Linking twice with the same relation ' +
+      'changes nothing.',
+    input: z
+      .object({
+        taskId: id('The task the link starts from.'),
+        toType: z.enum(LINK_TARGET_TYPES).describe('What kind of artefact the link points at.'),
+        toId: id('The id of the artefact the link points at.'),
+        relation: z
+          .string()
+          .regex(/^[a-z][a-z_]{1,63}$/, 'must be snake_case, such as implements or blocked_by')
+          .optional()
+          .describe(
+            'What the link means, in snake_case: implements, blocked_by, relates_to. relates_to by default.',
+          ),
+      })
+      .strict(),
+  },
+  report_pr: {
+    title: 'Report a pull request',
+    description:
+      'Tells Chorus about a pull request you opened for a task, so the task, its brief and the ' +
+      'code stay connected. Call it as soon as the pull request exists, and again whenever its ' +
+      'state changes (for example when it is merged). The task moves to in_review, and the pull ' +
+      'request is shown on it as work done outside the platform. The pull request must be in a ' +
+      'repository the workspace has connected. Returns the task.',
+    input: ReportPullRequestSchema.extend({
+      taskId: id('The task the pull request implements.'),
+    }).strict(),
   },
 } as const
 

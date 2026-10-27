@@ -164,6 +164,38 @@ const ROUTES: Readonly<Record<McpToolName, ToolRoute>> = {
       `Not found: there is no document with id ${String(args.documentId)} in this workspace that you can see. ` +
       'Check the id, or use list_documents to find the document.',
   },
+  add_comment: {
+    list: false,
+    method: 'POST',
+    path: (workspaceId, args) =>
+      `/workspaces/${segment(workspaceId)}/documents/${segment(args.documentId)}/comments`,
+    body: without('documentId'),
+    notFound: (args) =>
+      `Not found: there is no document with id ${String(args.documentId)} in this workspace that you can see. ` +
+      'Check the id, or use list_documents to find the document.',
+  },
+  link_artefacts: {
+    list: false,
+    method: 'POST',
+    path: (workspaceId, args) =>
+      `/workspaces/${segment(workspaceId)}/tasks/${segment(args.taskId)}/links`,
+    body: without('taskId'),
+    // Either end may be the missing one, and saying which would tell the
+    // agent that the other exists somewhere.
+    notFound: (args) =>
+      `Not found: either the task ${String(args.taskId)} or the ${String(args.toType)} ` +
+      `${String(args.toId)} is not in this workspace, or you cannot see it. Check both ids.`,
+  },
+  report_pr: {
+    list: false,
+    method: 'POST',
+    path: (workspaceId, args) =>
+      `/workspaces/${segment(workspaceId)}/tasks/${segment(args.taskId)}/pull-requests`,
+    body: without('taskId'),
+    notFound: (args) =>
+      `Not found: there is no task with id ${String(args.taskId)} in this workspace that you can see. ` +
+      'Check the id, or use list_tasks to find the task.',
+  },
 }
 
 /** The tools as `tools/list` presents them. */
@@ -174,13 +206,14 @@ export function toolList() {
     description: MCP_TOOLS[name].description,
     inputSchema: mcpToolInputSchema(name),
     // Hints for a client deciding whether to ask the person first. Every tool
-    // acts only in this workspace, and none deletes anything. Updates are
-    // idempotent by nature; creates are made so by their key.
+    // acts only in this workspace, and none deletes anything. Updates, links
+    // and reports are idempotent by nature; creates are made so by their key.
     annotations: isMcpWriteTool(name)
       ? {
           readOnlyHint: false,
           destructiveHint: false,
-          idempotentHint: ROUTES[name].method === 'PATCH',
+          idempotentHint:
+            ROUTES[name].method === 'PATCH' || name === 'link_artefacts' || name === 'report_pr',
           openWorldHint: false,
         }
       : { readOnlyHint: true, openWorldHint: false },

@@ -6,9 +6,14 @@ import {
   NotFoundError,
   ValidationError,
   normaliseTags,
+  parsePullRequestUrl,
+  LINK_TARGET_TYPES,
   ulid,
+  type LinkTargetType,
   type ChildDisposition,
   type CreateTask,
+  type ReportPullRequest,
+  type TaskPullRequest,
   type StoredAcceptanceCriterion,
   type TaskRecord,
   type UpdateTask,
@@ -97,6 +102,13 @@ export interface TaskService {
     toId: string
     relation?: string
   }): Promise<void>
+  /** Attaches a pull request opened outside the platform (MCP-3 AC2). */
+  reportPullRequest(input: {
+    workspaceId: string
+    taskId: string
+    actorId: string
+    report: ReportPullRequest
+  }): Promise<TaskRecord>
 }
 
 /**
@@ -183,6 +195,47 @@ function withIds(
     id: criterion.id ?? ulid(),
     text: criterion.text,
     checked: criterion.checked ?? false,
+  }))
+}
+
+/** Where each kind of link target lives, so a link can be checked to resolve. */
+const LINK_TABLES: Readonly<Record<LinkTargetType, string>> = {
+  task: 'tasks',
+  document: 'documents',
+  session: 'chat_sessions',
+}
+
+/** The statuses a reported pull request moves a task out of, into review. */
+const MOVES_TO_REVIEW: ReadonlyArray<TaskRecord['status']> = ['todo', 'in_progress', 'blocked']
+
+interface PullRequestLinkRow {
+  to_id: string
+  detail: {
+    status: TaskPullRequest['status']
+    provider: TaskPullRequest['provider']
+    repository: string
+    number: number
+    title: string | null
+    reportedAt: string
+  }
+}
+
+async function pullRequestsOf(t: TenantTx, taskId: string): Promise<TaskPullRequest[]> {
+  const rows = await t.query<PullRequestLinkRow>(
+    `SELECT to_id, detail FROM artefact_links
+      WHERE from_type = 'task' AND from_id = $1 AND to_type = 'pull_request'
+      ORDER BY created_at`,
+    [taskId],
+  )
+  return rows.map(({ to_id, detail }) => ({
+    url: to_id,
+    status: detail.status,
+    source: 'external' as const,
+    provider: detail.provider,
+    repository: detail.repository,
+    number: detail.number,
+    title: detail.title,
+    reportedAt: detail.reportedAt,
   }))
 }
 
@@ -403,6 +456,7 @@ export function createTaskService(config: DbConfig): TaskService {
             id: link.to_id,
             sectionKeys: link.detail?.sectionKeys ?? [],
           })),
+          pullRequests: await pullRequestsOf(t, taskId),
         }
       })
     },
@@ -591,16 +645,122 @@ export function createTaskService(config: DbConfig): TaskService {
         workspaceId,
         async (t) => {
           await load(t, taskId)
-          await t.execute(
-            `INSERT INTO artefact_links
-               (id, workspace_id, from_type, from_id, to_type, to_id, relation, created_by)
-             VALUES ($1, $2, 'task', $3, $4, $5, $6, $7)
-             ON CONFLICT DO NOTHING`,
-            [ulid(), workspaceId, taskId, toType, toId, relation ?? 'relates_to', actorId],
+          // The target must be something this workspace can see. A link to an
+          // id that does not resolve renders as a dead end in every view, and
+          // one to another workspace's id would record that it exists. Both
+          // read as the same not-found, for the reason `load` gives.
+          const table = LINK_TABLES[toType as LinkTargetType]
+          if (!table) {
+            throw new ValidationError(`toType must be one of ${LINK_TARGET_TYPES.join(', ')}`, {
+              field: 'toType',
+            })
+          }
+          const [target] = await t.query<{ id: string }>(
+            `SELECT id FROM ${table} WHERE id = $1 AND deleted_at IS NULL`,
+            [toId],
           )
+          if (!target) throw new NotFoundError(`No such ${toType}`, { toId })
+
+          const linkRelation = relation ?? 'relates_to'
+          await mutate(t, {
+            workspaceId,
+            actor: { type: 'user', id: actorId },
+            action: 'task.link',
+            targetType: 'task',
+            targetId: taskId,
+            after: { toType, toId, relation: linkRelation },
+            apply: () =>
+              t.execute(
+                `INSERT INTO artefact_links
+                   (id, workspace_id, from_type, from_id, to_type, to_id, relation, created_by)
+                 VALUES ($1, $2, 'task', $3, $4, $5, $6, $7)
+                 ON CONFLICT DO NOTHING`,
+                [ulid(), workspaceId, taskId, toType, toId, linkRelation, actorId],
+              ),
+          })
         },
         actorId,
       )
+    },
+
+    async reportPullRequest({ workspaceId, taskId, actorId, report }) {
+      const where = parsePullRequestUrl(report.url)
+      if (!where) {
+        throw new ValidationError(
+          'url must be a pull request on GitHub (…/pull/N) or a merge request on GitLab (…/-/merge_requests/N)',
+          { field: 'url' },
+        )
+      }
+
+      await tx(
+        workspaceId,
+        async (t) => {
+          const task = await load(t, taskId)
+
+          // Any repository the workspace has connected, not only this team's:
+          // a change often lands in a neighbouring team's repository, and what
+          // matters is that the platform can reach it, not who linked it.
+          const [repository] = await t.query<{ id: string; full_name: string }>(
+            `SELECT id, full_name FROM repositories
+              WHERE provider = $1 AND lower(full_name) = lower($2) AND deleted_at IS NULL
+              LIMIT 1`,
+            [where.provider, where.repository],
+          )
+          if (!repository) {
+            throw new ValidationError(
+              `${where.repository} is not a repository this workspace has connected, so the pull request cannot be attached`,
+              { field: 'url' },
+            )
+          }
+
+          // Reported work goes to review unless it is already there or past it.
+          // A merged report does not mark the task done: whether merging met
+          // the acceptance criteria is the reviewer's call, not the agent's.
+          const nextStatus = MOVES_TO_REVIEW.includes(task.status) ? 'in_review' : task.status
+          const detail = {
+            status: report.status,
+            source: 'external',
+            provider: where.provider,
+            repository: repository.full_name,
+            repositoryId: repository.id,
+            number: where.number,
+            title: report.title ?? null,
+            reportedAt: new Date().toISOString(),
+          }
+
+          await mutate(t, {
+            workspaceId,
+            actor: { type: 'user', id: actorId },
+            action: 'task.pull_request.report',
+            targetType: 'task',
+            targetId: taskId,
+            before: { status: task.status },
+            after: { url: report.url, pullRequestStatus: report.status, status: nextStatus },
+            apply: async () => {
+              // One row per pull request, its detail replaced by each report, so
+              // a re-report on merge updates the state rather than listing the
+              // same pull request twice.
+              await t.execute(
+                `INSERT INTO artefact_links
+                   (id, workspace_id, from_type, from_id, to_type, to_id, relation, detail, created_by)
+                 VALUES ($1, $2, 'task', $3, 'pull_request', $4, 'implemented_by', $5::jsonb, $6)
+                 ON CONFLICT (workspace_id, from_type, from_id, to_type, to_id, relation)
+                 DO UPDATE SET detail = EXCLUDED.detail`,
+                [ulid(), workspaceId, taskId, report.url, JSON.stringify(detail), actorId],
+              )
+              if (nextStatus !== task.status) {
+                await t.execute(`UPDATE tasks SET status = $2, updated_at = now() WHERE id = $1`, [
+                  taskId,
+                  nextStatus,
+                ])
+              }
+            },
+          })
+        },
+        actorId,
+      )
+
+      return this.get(workspaceId, taskId)
     },
 
     async childCount(workspaceId, taskId) {

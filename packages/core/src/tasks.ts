@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { TaskPullRequest } from './pull-requests.js'
 
 /**
  * The task (TASK-1, architecture.md §8.2).
@@ -173,6 +174,8 @@ export interface TaskRecord {
    * would cost a query per row to answer a question nobody asked of a list.
    */
   readonly sources?: readonly TaskSource[]
+  /** Pull requests reported against the task (MCP-3 AC2). Present alongside `sources`. */
+  readonly pullRequests?: readonly TaskPullRequest[]
 }
 
 /** What happens to a parent's children when it is deleted (AC4). */
