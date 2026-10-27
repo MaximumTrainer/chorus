@@ -250,3 +250,18 @@ export type {
   TaskPullRequest,
   ParsedPullRequestUrl,
 } from './pull-requests.js'
+export {
+  MCP_RESOURCE_TEMPLATES,
+  MCP_PROMPTS,
+  parseResourceUri,
+  resourceUri,
+  withFrontMatter,
+  taskToMarkdown,
+  missingPromptArguments,
+} from './mcp-resources.js'
+export type {
+  McpResourceKind,
+  FrontMatterField,
+  McpPromptArgument,
+  McpPromptDefinition,
+} from './mcp-resources.js'

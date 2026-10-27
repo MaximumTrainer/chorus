@@ -1,8 +1,24 @@
 import { randomUUID } from 'node:crypto'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
+import {
+  CallToolRequestSchema,
+  GetPromptRequestSchema,
+  ListPromptsRequestSchema,
+  ListResourceTemplatesRequestSchema,
+  ListResourcesRequestSchema,
+  ListToolsRequestSchema,
+  ReadResourceRequestSchema,
+} from '@modelcontextprotocol/sdk/types.js'
 import { callTool, toolList } from './mcp-tools.js'
+import {
+  getPrompt,
+  listResources,
+  promptList,
+  readResource,
+  resourceTemplates,
+  type ResourceContext,
+} from './mcp-resources.js'
 
 /**
  * The MCP endpoint's sessions (MCP-1, architecture.md §14).
@@ -39,6 +55,20 @@ export interface McpEndpointOptions {
    * context window with a single answer.
    */
   readonly maxResultChars?: number
+  /**
+   * How many resources one `resources/list` page carries (MCP-4 AC5).
+   *
+   * A listing entry is a line, not a document, so a page can be long; it is
+   * bounded so a workspace of thousands of artefacts is not one reply.
+   */
+  readonly resourcePageSize?: number
+  /**
+   * Where Chorus is reached from outside, for the canonical URL a resource's
+   * front-matter carries (MCP-4 AC1). Not the request's own origin: a request
+   * dispatched in-process, or one behind a proxy, arrives at an address no
+   * reader could follow.
+   */
+  readonly baseUrl?: string
 }
 
 /** Who a request is from, once the route has authorised it. */
@@ -59,6 +89,7 @@ interface Session {
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000
 const DEFAULT_MAX_RESULT_CHARS = 48_000
+const DEFAULT_RESOURCE_PAGE_SIZE = 100
 
 /** What a session's tools need to answer: whose workspace, and how to reach the API. */
 interface ToolEnvironment {
@@ -66,6 +97,8 @@ interface ToolEnvironment {
   readonly origin: string
   readonly dispatch: (request: Request) => Promise<Response>
   readonly maxResultChars: number
+  readonly resourcePageSize: number
+  readonly baseUrl: string
 }
 
 /** The headers of the request a call arrived on, as a `Headers`. */
@@ -89,9 +122,42 @@ function headersOf(raw: Record<string, string | string[] | undefined> | undefine
 function protocolServer(environment: ToolEnvironment): Server {
   const server = new Server(
     { name: 'chorus', version: '0.0.0' },
-    { capabilities: { tools: { listChanged: false } } },
+    {
+      capabilities: {
+        tools: { listChanged: false },
+        resources: { listChanged: false, subscribe: false },
+        prompts: { listChanged: false },
+      },
+    },
   )
+  // Resources and prompts are read with the credential on the request that
+  // asks, for the same reason as tool calls.
+  const resourceContext = (headers: Headers): ResourceContext => ({
+    workspaceId: environment.workspaceId,
+    origin: environment.origin,
+    dispatch: environment.dispatch,
+    credentials: headers,
+    pageSize: environment.resourcePageSize,
+    baseUrl: environment.baseUrl,
+  })
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: toolList() }))
+  server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
+    resourceTemplates: resourceTemplates(),
+  }))
+  server.setRequestHandler(ListResourcesRequestSchema, async (request, extra) =>
+    listResources(request.params?.cursor, resourceContext(headersOf(extra.requestInfo?.headers))),
+  )
+  server.setRequestHandler(ReadResourceRequestSchema, async (request, extra) =>
+    readResource(request.params.uri, resourceContext(headersOf(extra.requestInfo?.headers))),
+  )
+  server.setRequestHandler(ListPromptsRequestSchema, async () => ({ prompts: promptList() }))
+  server.setRequestHandler(GetPromptRequestSchema, async (request, extra) =>
+    getPrompt(
+      request.params.name,
+      request.params.arguments,
+      resourceContext(headersOf(extra.requestInfo?.headers)),
+    ),
+  )
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const result = await callTool(request.params.name, request.params.arguments, {
       ...environment,
@@ -132,6 +198,7 @@ export function createMcpEndpoint(
 ): McpEndpoint {
   const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS
   const maxResultChars = options.maxResultChars ?? DEFAULT_MAX_RESULT_CHARS
+  const resourcePageSize = options.resourcePageSize ?? DEFAULT_RESOURCE_PAGE_SIZE
   const now = options.now ?? Date.now
   const sessions = new Map<string, Session>()
 
@@ -203,6 +270,8 @@ export function createMcpEndpoint(
         origin: new URL(request.url).origin,
         dispatch,
         maxResultChars,
+        resourcePageSize,
+        baseUrl: options.baseUrl ?? new URL(request.url).origin,
       }).connect(transport)
 
       const response = await transport.handleRequest(request)

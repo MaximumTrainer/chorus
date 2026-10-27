@@ -38,7 +38,8 @@ import { isMcpPath, mcpChallenge, mcpRoutes } from './mcp-routes.js'
 import { idempotent } from './idempotency.js'
 import { createRepositoryService } from './repositories.js'
 import { codingJobRoutes } from './coding-job-routes.js'
-import { createCodingJobService, type CodingJobService } from '@chorus/coding'
+import { createBriefBuilder, createCodingJobService, type CodingJobService } from '@chorus/coding'
+import { briefRoutes } from './brief-routes.js'
 import { repositoryRoutes } from './repository-routes.js'
 import { runRoutes, type RunResumer } from './run-routes.js'
 import { notificationRoutes } from './notification-routes.js'
@@ -345,6 +346,7 @@ function buildRoutes(
       ...runRoutes(config, afterDecision),
       ...taskRoutes(createTaskService(config)),
       ...codingJobRoutes(jobs),
+      ...briefRoutes(createBriefBuilder(config)),
       ...documentRoutes(
         createDocumentService(config),
         createCollaborationService(config),
@@ -402,7 +404,7 @@ function buildRoutes(
       // the metadata document a client discovers names the host it actually
       // reached — a mismatch there is what makes discovery fail unattended.
       ...oauthRoutes(oauth, workspaces, (c) => c.get('baseUrl')),
-      ...mcpRoutes(createMcpEndpoint(mcp, dispatch), dispatch),
+      ...mcpRoutes(createMcpEndpoint({ baseUrl, ...mcp }, dispatch), dispatch),
     ],
     deps: { workspaces, teams, tokens, oauth, dbConfig: config },
   }
