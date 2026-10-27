@@ -16,5 +16,12 @@
     "document": "# Invoice splitting\n\n## problem\n\nFinance cannot split a single payment across two invoices.\n\n## requirements\n\nA payment may be applied across invoices at the point it is recorded. The reconciliation queue is empty at the end of a working day.",
     "documentType": "prd",
     "gather": "{\n  \"fragments\": [\n    {\n      \"path\": \"src/invoices.ts\",\n      \"lines\": \"1-12\",\n      \"text\": \"export function parseInvoice(payment: Payment): Invoice { return settleInFull(payment) }\"\n    }\n  ]\n}"
+  },
+  "mcp/review-spec": {
+    "document": "# Invoice splitting\n\n## Problem\n\nFinance reconciles invoices **by hand** when one payment covers two invoices.\n\n## Scope\n\nSplitting a single payment across up to five invoices."
+  },
+  "mcp/write-tests-for-task": {
+    "taskKey": "CH-4",
+    "task": "# CH-4 — Split the invoice parser\n\nParsing and validation are tangled.\n\n## Acceptance criteria\n\n- [ ] Parsing is separated from validation\n- [ ] Errors name the field\n"
   }
 }

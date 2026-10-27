@@ -238,3 +238,18 @@ export {
   parseMcpToolArguments,
 } from './mcp-tools.js'
 export type { McpReadToolName, McpWriteToolName, McpToolName } from './mcp-tools.js'
+export {
+  MCP_RESOURCE_TEMPLATES,
+  MCP_PROMPTS,
+  parseResourceUri,
+  resourceUri,
+  withFrontMatter,
+  taskToMarkdown,
+  missingPromptArguments,
+} from './mcp-resources.js'
+export type {
+  McpResourceKind,
+  FrontMatterField,
+  McpPromptArgument,
+  McpPromptDefinition,
+} from './mcp-resources.js'
