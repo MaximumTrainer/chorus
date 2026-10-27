@@ -1,3 +1,5 @@
+import { z } from 'zod'
+
 /**
  * The retrieval contract (BRAIN-4, architecture.md §10.5).
  *
@@ -99,3 +101,18 @@ export interface Retriever {
   load(workspaceId: string, bundleId: string): Promise<ContextBundle | undefined>
 }
 
+
+/**
+ * A search over the API (BRAIN-4): what `POST …/teams/{teamId}/search` takes.
+ *
+ * `k` is capped well below what an agent's context could hold, because a
+ * bundle is the front of a prompt and a long one crowds out the question.
+ */
+export const SearchRequestSchema = z
+  .object({
+    query: z.string().trim().min(1, 'query must not be empty').max(2000),
+    k: z.number().int().min(1).max(50).optional(),
+    repositoryIds: z.array(z.string().min(1)).max(50).optional(),
+  })
+  .strict()
+export type SearchRequest = z.infer<typeof SearchRequestSchema>

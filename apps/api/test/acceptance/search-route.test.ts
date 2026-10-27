@@ -66,6 +66,8 @@ describe('BRAIN-4 the search route', () => {
     const created = await ada.post(`/workspaces/${workspace.id}/teams`, { name: 'Billing' })
     expect(created.status, await created.clone().text()).toBe(201)
     const billing = (await created.json()) as { id: string }
+    const joined = await ada.put(`/workspaces/${workspace.id}/teams/${billing.id}/members/${ada.userId}`, {})
+    expect(joined.status, await joined.clone().text()).toBe(200)
 
     const integrationId = ulid()
     await db.admin.execute(
