@@ -38,9 +38,11 @@ import { isMcpPath, mcpChallenge, mcpRoutes } from './mcp-routes.js'
 import { idempotent } from './idempotency.js'
 import { createRepositoryService } from './repositories.js'
 import { codingJobRoutes } from './coding-job-routes.js'
-import { createCodingJobService, type CodingJobService } from '@chorus/coding'
+import { createBriefBuilder, createCodingJobService, type CodingJobService } from '@chorus/coding'
+import { briefRoutes } from './brief-routes.js'
 import { repositoryRoutes } from './repository-routes.js'
 import { runRoutes, type RunResumer } from './run-routes.js'
+import { searchRoutes } from './search-routes.js'
 import { notificationRoutes } from './notification-routes.js'
 import { decisionLinkRoutes } from './decision-link-routes.js'
 import { createTaskService } from './tasks.js'
@@ -296,6 +298,21 @@ const UNCONFIGURED_GIT_HOST =
   'No git host is configured, so a coding job cannot open a pull request. ' +
   'Link a repository through a git integration first.'
 
+const UNCONFIGURED_RETRIEVAL =
+  'Retrieval is not configured, so there is nothing to search. ' +
+  'Set CHORUS_MODEL_TIERS so an embedding model is available.'
+
+/** A retriever for a deployment with no embedding model: every search says why it cannot run. */
+const unconfiguredRetriever: Retriever = {
+  retrieve: () => {
+    throw new ConfigurationError(UNCONFIGURED_RETRIEVAL)
+  },
+  persist: () => {
+    throw new ConfigurationError(UNCONFIGURED_RETRIEVAL)
+  },
+  load: () => Promise.resolve(undefined),
+}
+
 function buildRoutes(
   config: DbConfig,
   models?: ModelProvider,
@@ -326,6 +343,15 @@ function buildRoutes(
   const tokens = createApiTokenService(config)
   const oauth = createOAuthService(config)
   const repositories = createRepositoryService(config)
+  const jobs = codingJobs ?? defaultCodingJobs(config)
+  // A settled checkpoint first releases or cancels any coding job it held
+  // (CODE-1 AC4), then resumes the run as before. Both decision doors, the app
+  // and the emailed link, go through this one function, so a job cannot be
+  // released by one and left held by the other.
+  const afterDecision: RunResumer = async (workspaceId, runId) => {
+    await jobs.settleLaunchGate(workspaceId, runId)
+    if (resumeRun) await resumeRun(workspaceId, runId)
+  }
   return {
     table: [
       ...ROUTES,
@@ -333,9 +359,10 @@ function buildRoutes(
       ...teamRoutes(teams),
       ...apiTokenRoutes(tokens),
       ...repositoryRoutes(repositories),
-      ...runRoutes(config, resumeRun),
+      ...runRoutes(config, afterDecision),
       ...taskRoutes(createTaskService(config)),
-      ...codingJobRoutes(codingJobs ?? defaultCodingJobs(config)),
+      ...codingJobRoutes(jobs),
+      ...briefRoutes(createBriefBuilder(config)),
       ...documentRoutes(
         createDocumentService(config),
         createCollaborationService(config),
@@ -352,6 +379,10 @@ function buildRoutes(
         }),
       ),
       ...sessionRoutes(createSessionService(config), turn, retriever),
+      // Unconditional, for the reason `defaultCodingJobs` gives: the permission
+      // suite enumerates `routeTable()`, and a route that exists only when a
+      // retriever is wired is one it would never check.
+      ...searchRoutes(retriever ?? unconfiguredRetriever),
       // Pointers attach at materialisation whichever path confirmed the
       // proposal, so a task created by an `auto` policy and one accepted by a
       // person carry the same evidence (DOC-6 AC3).
@@ -385,7 +416,7 @@ function buildRoutes(
           )
         : []),
       ...notificationRoutes(notifier),
-      ...decisionLinkRoutes(config, createDecisionLinks(config), resumeRun),
+      ...decisionLinkRoutes(config, createDecisionLinks(config), afterDecision),
       // WALKING SKELETON — delete in Phase 1. Mounted only when a provider is
       // supplied, so a deployment without one simply does not have it.
       ...(models ? walkingSkeletonRoutes({ dbConfig: config, models }) : []),
@@ -393,7 +424,7 @@ function buildRoutes(
       // the metadata document a client discovers names the host it actually
       // reached — a mismatch there is what makes discovery fail unattended.
       ...oauthRoutes(oauth, workspaces, (c) => c.get('baseUrl')),
-      ...mcpRoutes(createMcpEndpoint(mcp, dispatch), dispatch),
+      ...mcpRoutes(createMcpEndpoint({ baseUrl, ...mcp }, dispatch), dispatch),
     ],
     deps: { workspaces, teams, tokens, oauth, dbConfig: config },
   }

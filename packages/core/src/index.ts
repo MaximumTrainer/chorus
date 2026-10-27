@@ -111,7 +111,8 @@ export type { RedactionLevel, RedactedBody } from './redaction.js'
 // Exported so the pre-commit scanner can share this definition rather than
 // keep a second one that drifts (test/nfr/pre-commit.test.ts pins them equal).
 export { SECRET_PATTERNS, HIGH_CONFIDENCE_SECRET_PATTERNS } from './redaction.js'
-export { RETRIEVABLE_KINDS } from './retrieval.js'
+export { RETRIEVABLE_KINDS, SearchRequestSchema } from './retrieval.js'
+export type { SearchRequest } from './retrieval.js'
 export type {
   RetrievableKind,
   RetrieveQuery,
@@ -250,3 +251,18 @@ export type {
   TaskPullRequest,
   ParsedPullRequestUrl,
 } from './pull-requests.js'
+export {
+  MCP_RESOURCE_TEMPLATES,
+  MCP_PROMPTS,
+  parseResourceUri,
+  resourceUri,
+  withFrontMatter,
+  taskToMarkdown,
+  missingPromptArguments,
+} from './mcp-resources.js'
+export type {
+  McpResourceKind,
+  FrontMatterField,
+  McpPromptArgument,
+  McpPromptDefinition,
+} from './mcp-resources.js'

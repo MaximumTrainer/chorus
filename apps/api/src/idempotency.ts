@@ -59,10 +59,17 @@ export function idempotent(definition: RouteDefinition, dbConfig: DbConfig) {
     const claimed = await scoped(async (tx) => {
       // A key past its lifetime is forgotten, not honoured: replaying a day-old
       // response to a request made today would be the surprising answer.
+      //
+      // Every expired key of this caller's goes, not only the one being sent.
+      // That is the sweep: the table is only ever written by someone sending a
+      // key, so clearing their own expired ones on the way keeps it bounded by
+      // a day of each caller's traffic, with no scheduler to run and no
+      // cross-tenant connection to hold. The unique index's leading columns
+      // serve the lookup. A caller who never returns leaves their last day's
+      // keys behind, which is a few rows, not a growing table.
       await tx.execute(
-        `DELETE FROM idempotency_keys
-          WHERE user_id = $1 AND key = $2 AND created_at < $3`,
-        [userId, key, new Date(Date.now() - KEY_LIFETIME_MS)],
+        `DELETE FROM idempotency_keys WHERE user_id = $1 AND created_at < $2`,
+        [userId, new Date(Date.now() - KEY_LIFETIME_MS)],
       )
       const inserted = await tx.query<{ id: string }>(
         `INSERT INTO idempotency_keys (id, workspace_id, user_id, key, request_hash)

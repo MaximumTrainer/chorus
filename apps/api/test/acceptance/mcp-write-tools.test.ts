@@ -23,9 +23,9 @@ import {
  * (AC2, journey J7): the pull request it opened is attached to the task, the
  * task moves to review, and the work is recorded as done outside the platform.
  *
- * `start_coding_job` and `log_decision` are not offered until they can be
- * honoured in full (plan.md §2.3): the first needs the `before_coding_job`
- * checkpoint on launch (AC6), the second the Decision entities of CHAT-10.
+ * `start_coding_job` and its `before_coding_job` gate (AC6) are proven in
+ * agent-launch-gate.test.ts. `log_decision` is not offered until the Decision
+ * entities of CHAT-10 exist (plan.md §2.3).
  */
 
 const ISSUER = 'http://localhost:3000'
@@ -152,7 +152,7 @@ describe('MCP-3 write tools', () => {
       expect(Object.keys(tool.inputSchema.properties ?? {}), name).toContain('idempotencyKey')
     }
     // Not offered until it can be honoured in full (#87's phasing note).
-    expect(tools.map((tool) => tool.name)).not.toContain('start_coding_job')
+    // start_coding_job now is, with its gate: agent-launch-gate.test.ts.
     expect(tools.map((tool) => tool.name)).not.toContain('log_decision')
     await w.mcp.close()
   })
@@ -589,6 +589,33 @@ describe('MCP-3 Idempotency-Key on the API', () => {
 
     expect(graces.status).toBe(201)
     expect(((await graces.json()) as Task).title).toBe('Grace’s')
+  })
+
+  it("MCP-3: a caller's expired keys are swept when they next use one, and nobody else's are", async () => {
+    // Given keys past their lifetime, one Ada's and one Grace's
+    const s = await setup()
+    const grace = await client.memberWithRole(s.ada, s.workspaceId, 'member')
+    for (const [userId, key] of [
+      [s.ada.userId, 'ada-old'],
+      [grace.userId, 'grace-old'],
+    ] as const) {
+      await db.admin.query(
+        `INSERT INTO idempotency_keys
+           (id, workspace_id, user_id, key, request_hash, response_status, created_at)
+         VALUES ($1, $2, $3, $4, 'h', 201, now() - interval '2 days')`,
+        [`ik${key}${Date.now()}`, s.workspaceId, userId, key],
+      )
+    }
+
+    // When Ada sends a request with a new key
+    expect((await s.create('Fresh', 'ada-new')).status).toBe(201)
+
+    // Then Ada's expired key is gone and her new one kept, and Grace's waits for Grace
+    const keys = await db.admin.query<{ key: string }>(
+      `SELECT key FROM idempotency_keys WHERE workspace_id = $1 ORDER BY key`,
+      [s.workspaceId],
+    )
+    expect(keys.map((row) => row.key)).toEqual(['ada-new', 'grace-old'])
   })
 
   it('MCP-3: a refused request is not remembered, so correcting it and retrying works', async () => {

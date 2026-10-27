@@ -303,6 +303,27 @@ export const MCP_WRITE_TOOLS = {
       taskId: id('The task the pull request implements.'),
     }).strict(),
   },
+  start_coding_job: {
+    title: 'Start a coding job',
+    description:
+      "Hands a task to a sandboxed coding agent in the team's repository, which opens a pull " +
+      'request when it finishes. Most teams want a person to approve work an agent starts: when ' +
+      'the team asks for approval, the job comes back as awaiting_approval with a checkpointId, ' +
+      'and runs only once someone approves it in Chorus. Tell the person running you that it is ' +
+      'waiting, and check on it later with get_coding_job rather than starting it again. If the ' +
+      'task already has a job, that job is returned instead of a second one. Needs run:coding.',
+    input: z
+      .object({
+        teamId: id('The team the task belongs to. A task read with get_task carries its teamId.'),
+        taskId: id('The task to implement.'),
+        adapter: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Which coding agent to run. Omit it for the workspace's default."),
+      })
+      .strict(),
+  },
 } as const
 
 export type McpWriteToolName = keyof typeof MCP_WRITE_TOOLS
