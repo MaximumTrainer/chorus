@@ -19,8 +19,13 @@ import {
  * is refused for want of a scope exactly as the API refuses it (AC3), it can be
  * retried safely (AC4), and a malformed call writes nothing (AC5).
  *
- * `add_comment`, `link_artefacts`, `report_pr`, `log_decision` and
- * `start_coding_job` follow in the next change.
+ * `report_pr` is the tool that closes the loop for an engineer's own agent
+ * (AC2, journey J7): the pull request it opened is attached to the task, the
+ * task moves to review, and the work is recorded as done outside the platform.
+ *
+ * `start_coding_job` and `log_decision` are not offered until they can be
+ * honoured in full (plan.md §2.3): the first needs the `before_coding_job`
+ * checkpoint on launch (AC6), the second the Decision entities of CHAT-10.
  */
 
 const ISSUER = 'http://localhost:3000'
@@ -148,6 +153,206 @@ describe('MCP-3 write tools', () => {
     }
     // Not offered until it can be honoured in full (#87's phasing note).
     expect(tools.map((tool) => tool.name)).not.toContain('start_coding_job')
+    expect(tools.map((tool) => tool.name)).not.toContain('log_decision')
+    await w.mcp.close()
+  })
+
+  it('MCP-3: add_comment, link_artefacts and report_pr are advertised as writes', async () => {
+    const w = await world()
+
+    const { tools } = await w.mcp.listTools()
+    for (const name of ['add_comment', 'link_artefacts', 'report_pr']) {
+      const tool = tools.find((each) => each.name === name)
+      expect(tool, `${name} is not advertised`).toBeDefined()
+      expect(tool!.annotations?.readOnlyHint, name).toBe(false)
+      expect(tool!.annotations?.destructiveHint, name).toBe(false)
+      expect(tool!.description?.length, `${name} has no real description`).toBeGreaterThan(80)
+    }
+    await w.mcp.close()
+  })
+
+  /** A repository the workspace has connected, linked to the team (WS-3). */
+  async function withRepository(w: Awaited<ReturnType<typeof world>>, fullName = 'acme/widgets') {
+    const [integration] = await db.admin.query<{ id: string }>(
+      `INSERT INTO integrations (id, workspace_id, kind) VALUES ($1, $2, 'github') RETURNING id`,
+      [`int${Date.now()}${Math.floor(Math.random() * 1000)}`, w.workspaceId],
+    )
+    const linked = await w.ada.post(`/workspaces/${w.workspaceId}/teams/${w.teamId}/repositories`, {
+      integrationId: integration!.id,
+      provider: 'github',
+      fullName,
+    })
+    expect(linked.status, await linked.clone().text()).toBe(201)
+  }
+
+  it('MCP-3: an external agent reads a task, opens a pull request, and reports it back', async () => {
+    // Given a task in a team that works in acme/widgets
+    const w = await world()
+    await withRepository(w)
+    const task = (await (
+      await w.ada.post(`/workspaces/${w.workspaceId}/teams/${w.teamId}/tasks`, {
+        title: 'Split the invoice parser',
+        status: 'in_progress',
+      })
+    ).json()) as Task
+
+    // and an agent that read it and opened a pull request
+    dataOf<Task>(await w.mcp.callTool({ name: 'get_task', arguments: { taskId: task.id } }))
+    const url = 'https://github.com/acme/widgets/pull/42'
+
+    // When it reports the pull request back
+    const reported = await w.mcp.callTool({
+      name: 'report_pr',
+      arguments: { taskId: task.id, url, status: 'open' },
+    })
+
+    // Then the pull request is attached to the task, recorded as external work
+    expect((reported as ToolResult).isError, textOf(reported)).toBeFalsy()
+    const read = await apiJson<Task>(w.ada, `/workspaces/${w.workspaceId}/tasks/${task.id}`)
+    expect(read.pullRequests).toEqual([
+      expect.objectContaining({
+        url,
+        status: 'open',
+        source: 'external',
+        repository: 'acme/widgets',
+        number: 42,
+      }),
+    ])
+    // and the task moved to review
+    expect(read.status).toBe('in_review')
+    // and the report was audited as the person the agent acts for
+    const audited = await auditFor(w.ada, w.workspaceId, task.id)
+    expect(audited).toContainEqual(
+      expect.objectContaining({ action: 'task.pull_request.report', actorType: 'user', actorId: w.ada.userId }),
+    )
+    await w.mcp.close()
+  })
+
+  it('MCP-3: reporting the same pull request again updates it rather than attaching it twice', async () => {
+    const w = await world()
+    await withRepository(w)
+    const task = (await (
+      await w.ada.post(`/workspaces/${w.workspaceId}/teams/${w.teamId}/tasks`, { title: 'Once' })
+    ).json()) as Task
+    const url = 'https://github.com/acme/widgets/pull/7'
+
+    for (const status of ['open', 'merged']) {
+      dataOf(await w.mcp.callTool({ name: 'report_pr', arguments: { taskId: task.id, url, status } }))
+    }
+
+    const read = await apiJson<Task>(w.ada, `/workspaces/${w.workspaceId}/tasks/${task.id}`)
+    expect(read.pullRequests).toEqual([expect.objectContaining({ url, status: 'merged' })])
+    await w.mcp.close()
+  })
+
+  it('MCP-3: report_pr refuses a pull request from a repository the workspace has not connected', async () => {
+    const w = await world()
+    await withRepository(w)
+    const task = (await (
+      await w.ada.post(`/workspaces/${w.workspaceId}/teams/${w.teamId}/tasks`, { title: 'Elsewhere' })
+    ).json()) as Task
+
+    const result = await w.mcp.callTool({
+      name: 'report_pr',
+      arguments: { taskId: task.id, url: 'https://github.com/someone/else/pull/1', status: 'open' },
+    })
+
+    expect((result as ToolResult).isError).toBe(true)
+    expect(textOf(result)).toContain('someone/else')
+    const read = await apiJson<Task>(w.ada, `/workspaces/${w.workspaceId}/tasks/${task.id}`)
+    expect(read.pullRequests).toEqual([])
+    expect(read.status).toBe('todo')
+    await w.mcp.close()
+  })
+
+  it('MCP-3: an agent comments on a document, as the person it acts for', async () => {
+    const w = await world()
+    const document = dataOf<{ id: string; sections: Array<{ key: string }> }>(
+      await w.mcp.callTool({
+        name: 'create_document',
+        arguments: { teamId: w.teamId, type: 'prd', title: 'Invoice splitting' },
+      }),
+    )
+    dataOf(
+      await w.mcp.callTool({
+        name: 'update_document',
+        arguments: {
+          documentId: document.id,
+          sections: [{ key: document.sections[0]!.key, content: 'Finance reconciles invoices by hand.' }],
+        },
+      }),
+    )
+
+    const result = await w.mcp.callTool({
+      name: 'add_comment',
+      arguments: {
+        documentId: document.id,
+        quote: 'reconciles invoices by hand',
+        body: 'How many invoices a month is that?',
+      },
+    })
+
+    expect((result as ToolResult).isError, textOf(result)).toBeFalsy()
+    const threads = await apiJson<Array<{ quote: string; comments: Array<{ authorId: string; body: string }> }>>(
+      w.ada,
+      `/workspaces/${w.workspaceId}/documents/${document.id}/comments`,
+    )
+    expect(threads).toEqual([
+      expect.objectContaining({
+        quote: 'reconciles invoices by hand',
+        comments: [expect.objectContaining({ authorId: w.ada.userId, body: 'How many invoices a month is that?' })],
+      }),
+    ])
+    await w.mcp.close()
+  })
+
+  it('MCP-3: an agent links a task to a document, and the link is audited', async () => {
+    const w = await world()
+    const task = (await (
+      await w.ada.post(`/workspaces/${w.workspaceId}/teams/${w.teamId}/tasks`, { title: 'Linked' })
+    ).json()) as Task
+    const document = (await (
+      await w.ada.post(`/workspaces/${w.workspaceId}/teams/${w.teamId}/documents`, {
+        type: 'spec',
+        title: 'Parser spec',
+      })
+    ).json()) as { id: string }
+
+    const result = await w.mcp.callTool({
+      name: 'link_artefacts',
+      arguments: { taskId: task.id, toType: 'document', toId: document.id, relation: 'implements' },
+    })
+
+    expect((result as ToolResult).isError, textOf(result)).toBeFalsy()
+    const scoped = await apiJson<Task[]>(
+      w.ada,
+      `/workspaces/${w.workspaceId}/teams/${w.teamId}/tasks?scopeType=document&scopeId=${document.id}`,
+    )
+    expect(scoped.map((each) => each.id)).toEqual([task.id])
+    expect(await auditFor(w.ada, w.workspaceId, task.id)).toContainEqual(
+      expect.objectContaining({ action: 'task.link', actorId: w.ada.userId }),
+    )
+    await w.mcp.close()
+  })
+
+  it('MCP-3: link_artefacts refuses a target that does not exist, and writes nothing', async () => {
+    const w = await world()
+    const task = (await (
+      await w.ada.post(`/workspaces/${w.workspaceId}/teams/${w.teamId}/tasks`, { title: 'Alone' })
+    ).json()) as Task
+
+    const result = await w.mcp.callTool({
+      name: 'link_artefacts',
+      arguments: { taskId: task.id, toType: 'document', toId: 'no-such-document' },
+    })
+
+    expect((result as ToolResult).isError).toBe(true)
+    expect(textOf(result)).toContain('no-such-document')
+    const scoped = await apiJson<Task[]>(
+      w.ada,
+      `/workspaces/${w.workspaceId}/teams/${w.teamId}/tasks?scopeType=document&scopeId=no-such-document`,
+    )
+    expect(scoped).toEqual([])
     await w.mcp.close()
   })
 
@@ -239,6 +444,12 @@ describe('MCP-3 write tools', () => {
       { name: 'create_task', arguments: { teamId: w.teamId, title: 'Nope' } },
       { name: 'update_task', arguments: { taskId: task.id, title: 'Nope' } },
       { name: 'create_document', arguments: { teamId: w.teamId, type: 'prd', title: 'Nope' } },
+      { name: 'add_comment', arguments: { documentId: 'any', quote: 'Nope', body: 'Nope' } },
+      { name: 'link_artefacts', arguments: { taskId: task.id, toType: 'task', toId: task.id } },
+      {
+        name: 'report_pr',
+        arguments: { taskId: task.id, url: 'https://github.com/acme/widgets/pull/1', status: 'open' },
+      },
     ]
     for (const call of calls) {
       const result = await w.mcp.callTool(call)
