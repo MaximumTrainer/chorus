@@ -591,6 +591,33 @@ describe('MCP-3 Idempotency-Key on the API', () => {
     expect(((await graces.json()) as Task).title).toBe('Grace’s')
   })
 
+  it("MCP-3: a caller's expired keys are swept when they next use one, and nobody else's are", async () => {
+    // Given keys past their lifetime, one Ada's and one Grace's
+    const s = await setup()
+    const grace = await client.memberWithRole(s.ada, s.workspaceId, 'member')
+    for (const [userId, key] of [
+      [s.ada.userId, 'ada-old'],
+      [grace.userId, 'grace-old'],
+    ] as const) {
+      await db.admin.query(
+        `INSERT INTO idempotency_keys
+           (id, workspace_id, user_id, key, request_hash, response_status, created_at)
+         VALUES ($1, $2, $3, $4, 'h', 201, now() - interval '2 days')`,
+        [`ik${key}${Date.now()}`, s.workspaceId, userId, key],
+      )
+    }
+
+    // When Ada sends a request with a new key
+    expect((await s.create('Fresh', 'ada-new')).status).toBe(201)
+
+    // Then Ada's expired key is gone and her new one kept, and Grace's waits for Grace
+    const keys = await db.admin.query<{ key: string }>(
+      `SELECT key FROM idempotency_keys WHERE workspace_id = $1 ORDER BY key`,
+      [s.workspaceId],
+    )
+    expect(keys.map((row) => row.key)).toEqual(['ada-new', 'grace-old'])
+  })
+
   it('MCP-3: a refused request is not remembered, so correcting it and retrying works', async () => {
     const s = await setup()
 
