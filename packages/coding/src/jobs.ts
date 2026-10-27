@@ -3,11 +3,14 @@ import {
   ForbiddenError,
   NotFoundError,
   PullRequestRefusedError,
+  resolveCheckpointPolicy,
   ulid,
   type GitHost,
+  type PolicyRule,
+  type ResolvedPolicy,
   type Role,
 } from '@chorus/core'
-import { withTenant, mutate, type DbConfig } from '@chorus/db'
+import { withTenant, mutate, type DbConfig, type TenantTx } from '@chorus/db'
 import { branchNameFor, evaluateLaunch, type LaunchVerdict } from './launch.js'
 import { pullRequestBody, pullRequestTitle } from './pull-request.js'
 
@@ -22,10 +25,33 @@ import { pullRequestBody, pullRequestTitle } from './pull-request.js'
  * consequence out of each other's sight.
  */
 
-export type CodingJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
+export type CodingJobStatus =
+  | 'awaiting_approval'
+  | 'queued'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled'
 
 /** The states a task may not have a second job in (CODE-1 AC3). */
-export const ACTIVE_STATUSES: readonly CodingJobStatus[] = ['queued', 'running']
+export const ACTIVE_STATUSES: readonly CodingJobStatus[] = ['awaiting_approval', 'queued', 'running']
+
+/**
+ * Who started a launch (CODE-1 AC4).
+ *
+ * Carried on the request, and set by the route from the credential rather than
+ * taken from anything the caller says: an interactive session is a person, and
+ * a token, an API token or an MCP grant alike, is an agent. Letting a caller
+ * declare itself a person would make the gate optional for exactly the callers
+ * it exists for.
+ */
+export type LaunchInitiator = 'person' | 'agent'
+
+/** The workflow a coding job runs, and whose `before_coding_job` default applies. */
+export const CODING_WORKFLOW = 'implement-task'
+
+/** How long a held launch waits for a decision, matching the executor's gates. */
+const LAUNCH_GATE_TTL_MS = 72 * 60 * 60 * 1000
 
 export interface CodingJob {
   readonly id: string
@@ -38,6 +64,8 @@ export interface CodingJob {
   readonly summary: string | null
   readonly failure: string | null
   readonly requestedBy: string
+  /** The `before_coding_job` checkpoint the launch passed or waits at; null for a person's own launch. */
+  readonly checkpointId: string | null
 }
 
 export interface LaunchRequest {
@@ -48,6 +76,8 @@ export interface LaunchRequest {
   readonly role: Role
   /** Absent means the workspace default (AC6). */
   readonly adapter?: string | undefined
+  /** Absent means a person: every caller before agent launches was one. */
+  readonly initiator?: LaunchInitiator | undefined
 }
 
 export interface LaunchOutcome {
@@ -72,6 +102,13 @@ export interface CodingJobService {
   listForTask(workspaceId: string, taskId: string): Promise<readonly CodingJob[]>
   /** Opens the pull request for a finished job (CODE-5). */
   complete(request: CompleteRequest): Promise<CodingJob>
+  /**
+   * Applies a settled `before_coding_job` decision to the job it held: an
+   * approval queues that same job, a rejection cancels it (CODE-1 AC4). A
+   * run whose checkpoint gates no held job is ignored, so this can be called
+   * for every settled checkpoint.
+   */
+  settleLaunchGate(workspaceId: string, runId: string): Promise<void>
 }
 
 export interface CompleteRequest {
@@ -94,7 +131,19 @@ interface JobRow {
   summary: string | null
   failure: string | null
   requested_by: string
+  checkpoint_id: string | null
 }
+
+/**
+ * The job's columns, and the launch gate it passed or waits at. The gate is
+ * found through the job's run rather than stored twice, so a job cannot point
+ * at a checkpoint its run does not have.
+ */
+const JOB_COLUMNS = `id, task_id, repository_id, adapter, status, branch,
+  pull_request_url, summary, failure, requested_by,
+  (SELECT c.id FROM checkpoints c
+    WHERE c.run_id = coding_jobs.run_id AND c.kind = 'before_coding_job'
+    ORDER BY c.created_at DESC LIMIT 1) AS checkpoint_id`
 
 function toJob(row: JobRow): CodingJob {
   return {
@@ -108,7 +157,35 @@ function toJob(row: JobRow): CodingJob {
     summary: row.summary,
     failure: row.failure,
     requestedBy: row.requested_by,
+    checkpointId: row.checkpoint_id,
   }
+}
+
+/** The team's `before_coding_job` policy for the coding workflow (architecture.md §11.5). */
+async function launchPolicy(t: TenantTx, teamId: string): Promise<ResolvedPolicy> {
+  const rows = await t.query<{
+    team_id: string | null
+    workflow_name: string | null
+    checkpoint_kind: PolicyRule['checkpointKind']
+    mode: PolicyRule['mode']
+  }>(
+    `SELECT team_id, workflow_name, checkpoint_kind, mode
+       FROM policies
+      WHERE checkpoint_kind = 'before_coding_job' AND deleted_at IS NULL`,
+  )
+  // `null` becomes `undefined`, for the reason decompose.ts gives: the
+  // resolver's team tier matches on `workflowName === undefined`.
+  const rules: PolicyRule[] = rows.map((row) => ({
+    teamId: row.team_id ?? undefined,
+    workflowName: row.workflow_name ?? undefined,
+    checkpointKind: row.checkpoint_kind,
+    mode: row.mode,
+  }))
+  return resolveCheckpointPolicy(rules, {
+    checkpointKind: 'before_coding_job',
+    teamId,
+    workflowName: CODING_WORKFLOW,
+  })
 }
 
 /** Postgres' unique-violation SQLSTATE. */
@@ -134,8 +211,7 @@ export function createCodingJobService(
       workspaceId,
       (t) =>
         t.query<JobRow>(
-          `SELECT id, task_id, repository_id, adapter, status, branch,
-                  pull_request_url, summary, failure, requested_by
+          `SELECT ${JOB_COLUMNS}
              FROM coding_jobs WHERE id = $1`,
           [jobId],
         ),
@@ -169,11 +245,17 @@ export function createCodingJobService(
 
           const [active] = await t.query<{ id: string }>(
             `SELECT id FROM coding_jobs
-              WHERE task_id = $1 AND status IN ('queued', 'running') LIMIT 1`,
+              WHERE task_id = $1 AND status IN ('awaiting_approval', 'queued', 'running') LIMIT 1`,
             [request.taskId],
           )
 
-          return { task, repositoryId: repository?.id, activeJobId: active?.id }
+          // Only a launch nobody clicked is gated. A person's own launch is
+          // their approval (CODE-1 AC4), and asking them again teaches people
+          // to approve without reading.
+          const policy =
+            request.initiator === 'agent' ? await launchPolicy(t, task.team_id) : undefined
+
+          return { task, repositoryId: repository?.id, activeJobId: active?.id, policy }
         },
         { config },
       )
@@ -202,8 +284,21 @@ export function createCodingJobService(
           : new ConflictError(message, { reasons: verdict.reasons })
       }
 
+      // `never` refuses rather than runs: there is nobody to ask and nothing
+      // to decide, and an agent launch that went ahead anyway would be the
+      // gate silently not gating (#170 AC3).
+      if (context.policy?.mode === 'never') {
+        throw new ForbiddenError(
+          "This team's before_coding_job policy is never, so a coding job cannot be started " +
+            'without a person launching it from Chorus.',
+          { reason: 'policy', checkpointKind: 'before_coding_job' },
+        )
+      }
+
       const jobId = ulid()
       const branch = branchNameFor(context.task.key, context.task.title)
+      const gate = context.policy
+      const held = gate?.mode === 'ask'
 
       try {
         await withTenant(
@@ -218,13 +313,71 @@ export function createCodingJobService(
               action: 'coding_job.launch',
               targetType: 'coding_job',
               targetId: jobId,
-              after: { adapter, taskId: request.taskId, branch },
+              after: {
+                adapter,
+                taskId: request.taskId,
+                branch,
+                initiator: request.initiator ?? 'person',
+                ...(gate ? { gate: gate.mode } : {}),
+              },
               apply: async () => {
+                // A gated launch gets the run its checkpoint belongs to: a
+                // checkpoint is always a run's, so "who allowed this" is
+                // answered on the trace like every other gate. A gate passed
+                // automatically is recorded too, for the reason the executor
+                // gives — "the team's policy did" is an answer only if there
+                // is a row to say so.
+                const runId = gate ? ulid() : null
+                if (gate) {
+                  await t.execute(
+                    `INSERT INTO runs
+                       (id, workspace_id, team_id, workflow_name, workflow_version, status,
+                        trigger, started_by)
+                     VALUES ($1, $2, $3, $4, 1, $5, $6, $7)`,
+                    [
+                      runId,
+                      request.workspaceId,
+                      context.task.team_id,
+                      CODING_WORKFLOW,
+                      held ? 'waiting_human' : 'running',
+                      JSON.stringify({ kind: 'coding_job', jobId, initiator: 'agent' }),
+                      request.actorId,
+                    ],
+                  )
+                  await t.execute(
+                    `INSERT INTO checkpoints
+                       (id, workspace_id, run_id, step_id, kind, policy_source, mode, status,
+                        payload, decision, decided_at, expires_at)
+                     VALUES ($1, $2, $3, 'launch', 'before_coding_job', $4, $5, $6, $7, $8,
+                             $9, now() + make_interval(secs => $10))`,
+                    [
+                      ulid(),
+                      request.workspaceId,
+                      runId,
+                      gate.source,
+                      gate.mode,
+                      held ? 'pending' : 'approved',
+                      // What would run, in full, for the person deciding.
+                      JSON.stringify({
+                        jobId,
+                        taskId: request.taskId,
+                        taskKey: context.task.key,
+                        taskTitle: context.task.title,
+                        repositoryId: context.repositoryId,
+                        adapter,
+                        branch,
+                      }),
+                      held ? null : 'approve',
+                      held ? null : new Date().toISOString(),
+                      LAUNCH_GATE_TTL_MS / 1000,
+                    ],
+                  )
+                }
                 await t.execute(
                   `INSERT INTO coding_jobs
                      (id, workspace_id, team_id, task_id, repository_id, adapter, branch,
-                      requested_by)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                      requested_by, status, run_id)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
                   [
                     jobId,
                     request.workspaceId,
@@ -234,6 +387,8 @@ export function createCodingJobService(
                     adapter,
                     branch,
                     request.actorId,
+                    held ? 'awaiting_approval' : 'queued',
+                    runId,
                   ],
                 )
               },
@@ -249,10 +404,9 @@ export function createCodingJobService(
           request.workspaceId,
           (t) =>
             t.query<JobRow>(
-              `SELECT id, task_id, repository_id, adapter, status, branch,
-                      pull_request_url, summary, failure, requested_by
+              `SELECT ${JOB_COLUMNS}
                  FROM coding_jobs
-                WHERE task_id = $1 AND status IN ('queued', 'running') LIMIT 1`,
+                WHERE task_id = $1 AND status IN ('awaiting_approval', 'queued', 'running') LIMIT 1`,
               [request.taskId],
             ),
           { config },
@@ -301,13 +455,80 @@ export function createCodingJobService(
 
     get: read,
 
+    async settleLaunchGate(workspaceId, runId): Promise<void> {
+      await withTenant(
+        workspaceId,
+        async (t) => {
+          const [gate] = await t.query<{
+            id: string
+            status: string
+            run_id: string
+            decided_by: string | null
+          }>(
+            `SELECT id, status, run_id, decided_by FROM checkpoints
+              WHERE run_id = $1 AND kind = 'before_coding_job'
+              ORDER BY created_at DESC LIMIT 1`,
+            [runId],
+          )
+          if (!gate || gate.status === 'pending') return
+          const checkpointId = gate.id
+
+          // Only a job still held moves. A decision arriving twice, or after
+          // the job was cancelled, finds nothing to do rather than reviving it.
+          const [job] = await t.query<{ id: string }>(
+            `SELECT id FROM coding_jobs WHERE run_id = $1 AND status = 'awaiting_approval'`,
+            [gate.run_id],
+          )
+          if (!job) return
+
+          const approved = gate.status === 'approved'
+          await mutate(t, {
+            workspaceId,
+            // The decider, or the platform when the gate expired undecided.
+            actor: gate.decided_by
+              ? { type: 'user', id: gate.decided_by }
+              : { type: 'system' },
+            action: approved ? 'coding_job.release' : 'coding_job.reject',
+            targetType: 'coding_job',
+            targetId: job.id,
+            before: { status: 'awaiting_approval' },
+            after: { status: approved ? 'queued' : 'cancelled', checkpointId },
+            apply: async () => {
+              await t.execute(
+                approved
+                  ? `UPDATE coding_jobs SET status = 'queued', updated_at = now() WHERE id = $1`
+                  : `UPDATE coding_jobs
+                        SET status = 'cancelled', finished_at = now(), updated_at = now(),
+                            failure = $2
+                      WHERE id = $1`,
+                approved
+                  ? [job.id]
+                  : [
+                      job.id,
+                      gate.status === 'expired'
+                        ? 'Nobody decided the before_coding_job checkpoint before it expired, so the job did not run.'
+                        : 'The before_coding_job checkpoint was rejected, so the job did not run.',
+                    ],
+              )
+              await t.execute(
+                approved
+                  ? `UPDATE runs SET status = 'running' WHERE id = $1`
+                  : `UPDATE runs SET status = 'stopped', finished_at = now() WHERE id = $1`,
+                [gate.run_id],
+              )
+            },
+          })
+        },
+        { config },
+      )
+    },
+
     async listForTask(workspaceId, taskId): Promise<readonly CodingJob[]> {
       const rows = await withTenant(
         workspaceId,
         (t) =>
           t.query<JobRow>(
-            `SELECT id, task_id, repository_id, adapter, status, branch,
-                    pull_request_url, summary, failure, requested_by
+            `SELECT ${JOB_COLUMNS}
                FROM coding_jobs WHERE task_id = $1 ORDER BY created_at DESC, id DESC`,
             [taskId],
           ),

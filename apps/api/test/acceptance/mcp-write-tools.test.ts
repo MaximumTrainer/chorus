@@ -147,7 +147,8 @@ describe('MCP-3 write tools', () => {
       expect(Object.keys(tool.inputSchema.properties ?? {}), name).toContain('idempotencyKey')
     }
     // Not offered until it can be honoured in full (#87's phasing note).
-    expect(tools.map((tool) => tool.name)).not.toContain('start_coding_job')
+    // start_coding_job now is, with its gate: agent-launch-gate.test.ts.
+    expect(tools.map((tool) => tool.name)).not.toContain('log_decision')
     await w.mcp.close()
   })
 

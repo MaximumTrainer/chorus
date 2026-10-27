@@ -307,6 +307,31 @@ exports[`MCP-2 and MCP-3 tool definitions > MCP-2: the input schemas are a stabl
     ],
     "type": "object",
   },
+  "start_coding_job": {
+    "additionalProperties": false,
+    "properties": {
+      "adapter": {
+        "description": "Which coding agent to run. Omit it for the workspace's default.",
+        "minLength": 1,
+        "type": "string",
+      },
+      "taskId": {
+        "description": "The task to implement.",
+        "minLength": 1,
+        "type": "string",
+      },
+      "teamId": {
+        "description": "The team the task belongs to. A task read with get_task carries its teamId.",
+        "minLength": 1,
+        "type": "string",
+      },
+    },
+    "required": [
+      "teamId",
+      "taskId",
+    ],
+    "type": "object",
+  },
   "update_document": {
     "additionalProperties": false,
     "properties": {

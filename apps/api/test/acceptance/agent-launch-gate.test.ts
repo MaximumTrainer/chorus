@@ -203,6 +203,20 @@ describe('CODE-1 AC4 and MCP-3 AC6 the agent launch gate', () => {
     await w.mcp.close()
   })
 
+  it('CODE-1 AC4: approving a held job that was cancelled meanwhile does not revive it', async () => {
+    const w = await world('ask')
+    const held = dataOf<Job>(
+      await w.mcp.callTool({ name: 'start_coding_job', arguments: { teamId: w.teamId, taskId: w.taskId } }),
+    )
+    const cancelled = await w.ada.post(`/workspaces/${w.workspaceId}/coding-jobs/${held.id}/cancel`, {})
+    expect(cancelled.status, await cancelled.clone().text()).toBe(200)
+
+    await decide(w, held.checkpointId!, 'approve')
+
+    expect(await jobsFor(w)).toEqual([expect.objectContaining({ id: held.id, status: 'cancelled' })])
+    await w.mcp.close()
+  })
+
   it('CODE-1 AC4: a held job is the active one, so asking again returns it', async () => {
     const w = await world('ask')
     const call = { name: 'start_coding_job', arguments: { teamId: w.teamId, taskId: w.taskId } }

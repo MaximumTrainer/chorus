@@ -164,6 +164,16 @@ const ROUTES: Readonly<Record<McpToolName, ToolRoute>> = {
       `Not found: there is no document with id ${String(args.documentId)} in this workspace that you can see. ` +
       'Check the id, or use list_documents to find the document.',
   },
+  start_coding_job: {
+    list: false,
+    method: 'POST',
+    path: (workspaceId, args) =>
+      `/workspaces/${segment(workspaceId)}/teams/${segment(args.teamId)}/tasks/${segment(args.taskId)}/coding-jobs`,
+    body: without('teamId', 'taskId'),
+    notFound: (args) =>
+      `Not found: either the team ${String(args.teamId)} or the task ${String(args.taskId)} ` +
+      'is not in this workspace, or you cannot see it. Read the task with get_task for its teamId.',
+  },
 }
 
 /** The tools as `tools/list` presents them. */
@@ -175,12 +185,13 @@ export function toolList() {
     inputSchema: mcpToolInputSchema(name),
     // Hints for a client deciding whether to ask the person first. Every tool
     // acts only in this workspace, and none deletes anything. Updates are
-    // idempotent by nature; creates are made so by their key.
+    // idempotent by nature, and so is starting a job, which returns the task's
+    // active one; creates are made so by their key.
     annotations: isMcpWriteTool(name)
       ? {
           readOnlyHint: false,
           destructiveHint: false,
-          idempotentHint: ROUTES[name].method === 'PATCH',
+          idempotentHint: ROUTES[name].method === 'PATCH' || name === 'start_coding_job',
           openWorldHint: false,
         }
       : { readOnlyHint: true, openWorldHint: false },
@@ -230,8 +241,11 @@ async function refusal(
         reason === 'scope'
           ? `Not permitted: ${detail}. This connection was granted without it; the person running ` +
               'you can reconnect granting that scope. Retrying will not help.'
-          : `Not permitted: ${detail}. Your role in this workspace does not allow ${tool}; ` +
-              'retrying will not help.',
+          : reason === 'policy'
+            ? `Not permitted: ${detail} This is the team's checkpoint policy, not your role; ` +
+                'retrying will not help, so tell the person running you.'
+            : `Not permitted: ${detail}. Your role in this workspace does not allow ${tool}; ` +
+                'retrying will not help.',
       )
     default:
       return failure(

@@ -45,6 +45,9 @@ export function codingJobRoutes(jobs: CodingJobService): RouteDefinition[] {
           taskId: c.req.param('taskId'),
           actorId: who.userId,
           role: who.role,
+          // From the credential, never from the body (CODE-1 AC4): a caller
+          // able to say "a person clicked this" could step around the gate.
+          initiator: c.get('viaToken') ? 'agent' : 'person',
           ...(typeof body.adapter === 'string' ? { adapter: body.adapter } : {}),
         })
 

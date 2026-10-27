@@ -70,7 +70,7 @@ This matters because **J7 — an engineer's own agent implements a task over MCP
 **Resolution, three parts:**
 
 - **Move CODE-2 (brief builder, #76) to Phase 1.** It has no sandbox dependency — it is deterministic assembly of artefacts that already exist by mid-Phase 1. Its optional inputs (CHAT-10 decisions, EXT-5 capture evidence) degrade gracefully to empty sections. This makes J7 genuinely work at the MVP, which is the point of the phase.
-- **Defer `start_coding_job` from MCP-3 to Phase 2**, shipping the other eight write tools in Phase 1. Record it as a known gap in the MCP tool list rather than a stub that fails.
+- **Defer `start_coding_job` from MCP-3 to Phase 2**, shipping the other eight write tools in Phase 1. Record it as a known gap in the MCP tool list rather than a stub that fails. *(Restored early, 2026-10-27: CODE-1 shipped, and `start_coding_job` is the first agent-initiated launch #170 was waiting for, so it ships with the `before_coding_job` gate at launch — architecture.md §12.)*
 - **Defer the `chorus://wiki/{slug}` resource to Phase 4**, with task and document resources shipping in Phase 1.
 
 Pulling CODE-2 forward has a second benefit: it forces the "sandbox brief and MCP prompt are byte-identical" assertion (CODE-2 AC2 / MCP-4 AC2) to be written before the sandbox exists, so the sandbox is built to match an already-tested contract rather than the reverse.

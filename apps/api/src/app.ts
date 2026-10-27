@@ -326,6 +326,15 @@ function buildRoutes(
   const tokens = createApiTokenService(config)
   const oauth = createOAuthService(config)
   const repositories = createRepositoryService(config)
+  const jobs = codingJobs ?? defaultCodingJobs(config)
+  // A settled checkpoint first releases or cancels any coding job it held
+  // (CODE-1 AC4), then resumes the run as before. Both decision doors, the app
+  // and the emailed link, go through this one function, so a job cannot be
+  // released by one and left held by the other.
+  const afterDecision: RunResumer = async (workspaceId, runId) => {
+    await jobs.settleLaunchGate(workspaceId, runId)
+    if (resumeRun) await resumeRun(workspaceId, runId)
+  }
   return {
     table: [
       ...ROUTES,
@@ -333,9 +342,9 @@ function buildRoutes(
       ...teamRoutes(teams),
       ...apiTokenRoutes(tokens),
       ...repositoryRoutes(repositories),
-      ...runRoutes(config, resumeRun),
+      ...runRoutes(config, afterDecision),
       ...taskRoutes(createTaskService(config)),
-      ...codingJobRoutes(codingJobs ?? defaultCodingJobs(config)),
+      ...codingJobRoutes(jobs),
       ...documentRoutes(
         createDocumentService(config),
         createCollaborationService(config),
@@ -385,7 +394,7 @@ function buildRoutes(
           )
         : []),
       ...notificationRoutes(notifier),
-      ...decisionLinkRoutes(config, createDecisionLinks(config), resumeRun),
+      ...decisionLinkRoutes(config, createDecisionLinks(config), afterDecision),
       // WALKING SKELETON — delete in Phase 1. Mounted only when a provider is
       // supplied, so a deployment without one simply does not have it.
       ...(models ? walkingSkeletonRoutes({ dbConfig: config, models }) : []),
