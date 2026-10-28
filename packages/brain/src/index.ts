@@ -2,9 +2,9 @@ import { createHash } from 'node:crypto'
 import { ulid } from '@chorus/core'
 import { withTenant, type DbConfig, type TenantTx } from '@chorus/db'
 import type { ModelProvider, ModelRef } from '@chorus/llm'
-import type { Fragment, Retriever } from '@chorus/core'
-import { RETRIEVABLE_KINDS } from '@chorus/core'
-import { RRF_K, fuse } from './fusion.js'
+import type { ArtefactFragment, CodeFragment, Fragment, Retriever } from '@chorus/core'
+import { DEFAULT_RETRIEVAL_KINDS } from '@chorus/core'
+import { RRF_K, fuse, type FusedItem } from './fusion.js'
 
 export interface RetrieverOptions {
   readonly models: ModelProvider
@@ -27,6 +27,8 @@ export { fuse, RRF_K } from './fusion.js'
 export type { FusedItem, RankedItem } from './fusion.js'
 export { RETRIEVABLE_KINDS } from '@chorus/core'
 export type {
+  ArtefactFragment,
+  CodeFragment,
   ContextBundle,
   Fragment,
   RetrievableKind,
@@ -200,6 +202,64 @@ export const VECTOR_SEARCH_SQL = `SELECT ranked.id, ranked.repository_id, f.path
   WHERE ranked.distance < $4
   ORDER BY ranked.distance, ranked.id`
 
+/**
+ * The lexical half over tasks and documents (BRAIN-4, widened in Phase 1).
+ *
+ * One query over both, ranked together, so a task and a document are ordered
+ * by how well they match rather than by which table was asked first. The
+ * permission predicate is the product's own for these artefacts: row-level
+ * security to the workspace, and nothing deleted. A workspace member can read
+ * any team's tasks and documents in the product, so retrieval may too.
+ * Anything stricter here would make search disagree with the screens it links
+ * to (MCP-5 AC2).
+ *
+ * There is no vector half for artefacts yet. Nothing embeds a task or a
+ * document on write, and a vector search over empty embeddings would return
+ * nothing while looking like it had been asked. An artefact therefore arrives
+ * through one search, and its confidence says so.
+ *
+ * `$1` tsquery, `$2` kinds, `$3` candidate limit.
+ */
+export const ARTEFACT_SEARCH_SQL = `SELECT matched.kind, matched.id, matched.team_id, matched.title,
+       matched.key, matched.body
+   FROM (
+     (SELECT 'task' AS kind, t.id, t.team_id, t.title, t.key,
+             t.title || E'\n\n' ||
+               coalesce((SELECT string_agg(value #>> '{}', E'\n')
+                           FROM jsonb_array_elements(
+                             jsonb_path_query_array(t.acceptance_criteria, 'strict $.**.text'))),
+                        '') AS body,
+             ts_rank(t.search, to_tsquery('simple', $1)) AS rank
+        FROM tasks t
+       WHERE 'task' = ANY($2) AND t.deleted_at IS NULL
+         AND t.search @@ to_tsquery('simple', $1)
+       ORDER BY rank DESC, t.id
+       LIMIT $3)
+     UNION ALL
+     (SELECT 'document' AS kind, d.id, d.team_id, d.title, NULL AS key,
+             d.body_md_cache AS body,
+             ts_rank(d.search, to_tsquery('simple', $1)) AS rank
+        FROM documents d
+       WHERE 'document' = ANY($2) AND d.deleted_at IS NULL
+         AND d.search @@ to_tsquery('simple', $1)
+       ORDER BY rank DESC, d.id
+       LIMIT $3)
+   ) matched
+  ORDER BY matched.rank DESC, matched.id
+  LIMIT $3`
+
+interface ArtefactRow {
+  kind: 'task' | 'document'
+  id: string
+  team_id: string
+  title: string
+  key: string | null
+  body: string
+}
+
+/** How much of an artefact's text a fragment carries. A fragment is evidence, not the document. */
+const ARTEFACT_EXCERPT_CHARS = 2000
+
 async function visibleRepositories(t: TenantTx, userId: string): Promise<string[]> {
   const rows = await t.query<{ id: string }>(
     `SELECT r.id
@@ -209,6 +269,13 @@ async function visibleRepositories(t: TenantTx, userId: string): Promise<string[
     [userId],
   )
   return rows.map((row) => row.id)
+}
+
+/** The order fusion itself uses, so merging two fused lists cannot reorder either. */
+function compareFused<T extends { id: string }>(a: FusedItem<T>, b: FusedItem<T>): number {
+  if (b.score !== a.score) return b.score - a.score
+  if (b.sources.length !== a.sources.length) return b.sources.length - a.sources.length
+  return a.item.id < b.item.id ? -1 : a.item.id > b.item.id ? 1 : 0
 }
 
 export function createRetriever(config: DbConfig, options: RetrieverOptions): Retriever {
@@ -234,25 +301,27 @@ export function createRetriever(config: DbConfig, options: RetrieverOptions): Re
   return {
     async retrieve(query) {
       const k = query.k ?? DEFAULT_K
-      const kinds = query.kinds ?? RETRIEVABLE_KINDS
-      if (!kinds.includes('code')) {
-        // The other kinds arrive with the models that hold them — artefacts
-        // with TASK-1 and DOC-1, signals and the entity graph in Phase 4.
-        // Answering a request for a kind that does not exist with an empty
-        // bundle is honest; answering it with code would not be.
-        return {
-          id: ulid(),
-          query: query.query,
-          userId: query.userId,
-          teamId: query.teamId,
-          fragments: [],
-          considered: 0,
-        }
-      }
+      const kinds = query.kinds ?? DEFAULT_RETRIEVAL_KINDS
+      const artefactKinds = kinds.filter((kind) => kind === 'task' || kind === 'document')
 
       const repoFilter = query.filters?.repoIds?.length ? query.filters.repoIds : null
 
-      const [lexical, vector] = await tx(query.workspaceId, async (t) => {
+      // Artefacts. Asked for only when wanted, so a code-only caller pays for
+      // nothing it does not read.
+      const artefacts =
+        artefactKinds.length > 0
+          ? await tx(query.workspaceId, (t) =>
+              t.query<ArtefactRow>(ARTEFACT_SEARCH_SQL, [
+                anyTermQuery(query.query),
+                artefactKinds,
+                candidates,
+              ]),
+            )
+          : []
+
+      const [lexical, vector] = !kinds.includes('code')
+        ? ([[], []] as const)
+        : await tx(query.workspaceId, async (t) => {
         const permitted = await visibleRepositories(t, query.userId)
         // A caller in no team sees nothing, and asks the database nothing. An
         // empty list left in an `= ANY(...)` is correct but still a query; more
@@ -287,19 +356,56 @@ export function createRetriever(config: DbConfig, options: RetrieverOptions): Re
 
       const byId = new Map<string, ChunkRow>()
       for (const row of [...lexical, ...vector]) byId.set(row.id, row)
+      const artefactById = new Map(artefacts.map((row) => [`${row.kind}:${row.id}`, row]))
 
-      const fused = fuse(
+      // Code is fused across its two searches. Artefacts come from one, ranked
+      // on their own. Both are on the same reciprocal-rank scale, so they are
+      // merged by score and cut to k together, with agreement between
+      // searches still breaking ties first.
+      const codeFused = fuse(
         { lexical: lexical.map((r) => ({ id: r.id })), vector: vector.map((r) => ({ id: r.id })) },
         { limit: k },
       )
+      const artefactFused = fuse(
+        { lexical: artefacts.map((r) => ({ id: `${r.kind}:${r.id}` })) },
+        { limit: k },
+      )
+      const ranked = [
+        ...codeFused.map((entry) => ({ entry, kind: 'code' as const })),
+        ...artefactFused.map((entry) => ({ entry, kind: 'artefact' as const })),
+      ]
+        .sort((a, b) => compareFused(a.entry, b.entry))
+        .slice(0, k)
 
       // First place in both searches. Normalising against it is what turns a
       // reciprocal-rank score into a number a caller can put a threshold on.
       const bestPossible = 2 / (RRF_K + 1)
 
-      const fragments = fused.map((entry): Fragment => {
+      const fragments = ranked.map(({ entry, kind }): Fragment => {
+        const confidence = Math.min(1, entry.score / bestPossible)
+        if (kind === 'artefact') {
+          const row = artefactById.get(entry.item.id)!
+          const text = row.body.slice(0, ARTEFACT_EXCERPT_CHARS)
+          const fragment: ArtefactFragment = {
+            citationId: createHash('sha256')
+              .update(`${row.kind} ${row.id} `)
+              .update(text)
+              .digest('hex')
+              .slice(0, 16),
+            kind: row.kind,
+            artefactId: row.id,
+            teamId: row.team_id,
+            title: row.title,
+            key: row.key,
+            text,
+            score: entry.score,
+            confidence,
+            sources: entry.sources,
+          }
+          return fragment
+        }
         const row = byId.get(entry.item.id)!
-        return {
+        const fragment: CodeFragment = {
           citationId: citationOf(row),
           kind: 'code',
           chunkId: row.id,
@@ -310,9 +416,10 @@ export function createRetriever(config: DbConfig, options: RetrieverOptions): Re
           symbolName: row.symbol_name,
           text: row.text,
           score: entry.score,
-          confidence: Math.min(1, entry.score / bestPossible),
+          confidence,
           sources: entry.sources,
         }
+        return fragment
       })
 
       return {
@@ -321,7 +428,7 @@ export function createRetriever(config: DbConfig, options: RetrieverOptions): Re
         userId: query.userId,
         teamId: query.teamId,
         fragments,
-        considered: byId.size,
+        considered: byId.size + artefactById.size,
       }
     },
 

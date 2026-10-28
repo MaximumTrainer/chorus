@@ -447,6 +447,19 @@ exports[`MCP-2 and MCP-3 tool definitions > MCP-2: the input schemas are a stabl
         "minimum": 1,
         "type": "integer",
       },
+      "kinds": {
+        "description": "What to search: code, task, document. All of them by default.",
+        "items": {
+          "enum": [
+            "code",
+            "task",
+            "document",
+          ],
+          "type": "string",
+        },
+        "minItems": 1,
+        "type": "array",
+      },
       "offset": {
         "description": "Only when a previous call was truncated: the offset its last line gave. Omit it otherwise.",
         "maximum": 9007199254740991,

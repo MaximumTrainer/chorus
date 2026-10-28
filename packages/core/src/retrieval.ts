@@ -11,8 +11,18 @@ import { z } from 'zod'
  * point of having the rule.
  */
 
-export const RETRIEVABLE_KINDS = ['code'] as const
+export const RETRIEVABLE_KINDS = ['code', 'task', 'document'] as const
 export type RetrievableKind = (typeof RETRIEVABLE_KINDS)[number]
+
+/**
+ * What a query searches when it names no kinds: code.
+ *
+ * Not every kind. The callers that existed before tasks and documents were
+ * retrievable, an agent's retrieve step and code pointers, were written for
+ * code fragments, and widening them silently would hand a pointer generator a
+ * task to point at. A caller that wants artefacts asks for them, as search does.
+ */
+export const DEFAULT_RETRIEVAL_KINDS: readonly RetrievableKind[] = ['code']
 
 export interface RetrieveQuery {
   readonly query: string
@@ -26,7 +36,8 @@ export interface RetrieveQuery {
   readonly filters?: { readonly repoIds?: readonly string[] }
 }
 
-export interface Fragment {
+/** What every fragment carries, whatever it cites. */
+interface FragmentBase {
   /**
    * Stable across retrievals of the same fragment.
    *
@@ -35,13 +46,6 @@ export interface Fragment {
    * impossible to compare, which is what the evaluation harness does (AC4).
    */
   readonly citationId: string
-  readonly kind: RetrievableKind
-  readonly chunkId: string
-  readonly repositoryId: string
-  readonly path: string
-  readonly lineStart: number
-  readonly lineEnd: number
-  readonly symbolName: string | null
   readonly text: string
   /**
    * The raw fusion score. Useful for ordering, meaningless on its own.
@@ -70,6 +74,35 @@ export interface Fragment {
    */
   readonly viaExpansion?: { readonly fromChunkId: string; readonly reason: string }
 }
+
+/** A cited span of indexed code. */
+export interface CodeFragment extends FragmentBase {
+  readonly kind: 'code'
+  readonly chunkId: string
+  readonly repositoryId: string
+  readonly path: string
+  readonly lineStart: number
+  readonly lineEnd: number
+  readonly symbolName: string | null
+}
+
+/**
+ * A cited task or document.
+ *
+ * The text is the artefact's own words, a task's title and criteria or a
+ * document's rendered body, cut to a bounded excerpt. The id is what a reader
+ * opens, through the same routes and permissions as everywhere else.
+ */
+export interface ArtefactFragment extends FragmentBase {
+  readonly kind: 'task' | 'document'
+  readonly artefactId: string
+  readonly teamId: string
+  readonly title: string
+  /** A task's key, such as CH-4. Null for a document. */
+  readonly key: string | null
+}
+
+export type Fragment = CodeFragment | ArtefactFragment
 
 export interface ContextBundle {
   readonly id: string
@@ -113,6 +146,11 @@ export const SearchRequestSchema = z
     query: z.string().trim().min(1, 'query must not be empty').max(2000),
     k: z.number().int().min(1).max(50).optional(),
     repositoryIds: z.array(z.string().min(1)).max(50).optional(),
+    kinds: z
+      .array(z.enum(RETRIEVABLE_KINDS))
+      .min(1)
+      .optional()
+      .describe('What to search: code, task, document. All of them by default.'),
   })
   .strict()
 export type SearchRequest = z.infer<typeof SearchRequestSchema>
