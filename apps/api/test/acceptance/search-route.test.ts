@@ -27,7 +27,16 @@ interface Bundle {
   id: string
   query: string
   considered: number
-  fragments: Array<{ citationId: string; path: string; text: string }>
+  fragments: Array<{
+    citationId: string
+    kind: string
+    path?: string
+    artefactId?: string
+    title?: string
+    key?: string | null
+    text: string
+    sources: string[]
+  }>
 }
 
 describe('BRAIN-4 the search route', () => {
@@ -158,6 +167,93 @@ describe('BRAIN-4 the search route', () => {
     expect(((await empty.json()) as { detail: string }).detail).toContain('query')
     expect(tooMany.status).toBe(400)
     expect(((await tooMany.json()) as { detail: string }).detail).toContain('k')
+  })
+
+  /** A task and a document about invoice reconciliation, in the default team. */
+  async function withArtefacts(w: Awaited<ReturnType<typeof world>>) {
+    const task = (await (
+      await w.ada.post(`/workspaces/${w.workspaceId}/teams/${w.defaultTeamId}/tasks`, {
+        title: 'Split the invoice parser',
+        acceptanceCriteria: [{ text: 'Reconciliation totals match the ledger' }],
+      })
+    ).json()) as { id: string; key: string }
+    const document = (await (
+      await w.ada.post(`/workspaces/${w.workspaceId}/teams/${w.defaultTeamId}/documents`, {
+        type: 'prd',
+        title: 'Invoice splitting',
+      })
+    ).json()) as { id: string; sections: Array<{ key: string }> }
+    const written = await w.ada.patch(`/workspaces/${w.workspaceId}/documents/${document.id}`, {
+      sections: [{ key: document.sections[0]!.key, content: 'Finance does reconciliation by hand every month.' }],
+    })
+    expect(written.status, await written.clone().text()).toBe(200)
+    return { task, documentId: document.id }
+  }
+
+  it('BRAIN-4: a search finds tasks and documents as well as code, each cited as what it is', async () => {
+    // Given a task and a document that mention reconciliation
+    const w = await world()
+    const { task, documentId } = await withArtefacts(w)
+
+    // When Ada searches for it
+    const response = await search(w.ada, w.workspaceId, w.defaultTeamId, { query: 'reconciliation' })
+
+    // Then both are found, each as its own kind and pointing at the artefact
+    expect(response.status, await response.clone().text()).toBe(200)
+    const bundle = (await response.json()) as Bundle
+    expect(bundle.fragments).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'task', artefactId: task.id, key: task.key, title: 'Split the invoice parser' }),
+        expect.objectContaining({ kind: 'document', artefactId: documentId, title: 'Invoice splitting' }),
+      ]),
+    )
+    const found = bundle.fragments.find((fragment) => fragment.kind === 'document')!
+    expect(found.text).toContain('reconciliation by hand')
+    expect(found.sources).toEqual(['lexical'])
+    // and the stored bundle resolves to the same fragments
+    const stored = await w.ada.get(`/workspaces/${w.workspaceId}/context-bundles/${bundle.id}`)
+    expect(((await stored.json()) as Bundle).fragments).toEqual(bundle.fragments)
+  })
+
+  it('BRAIN-4: kinds narrows a search to what was asked for', async () => {
+    const w = await world()
+    await withArtefacts(w)
+    await addChunk(w, 'src/reconcile.ts', 'export function reconciliation(ledger) { return ledger }')
+
+    const codeOnly = (await (
+      await search(w.ada, w.workspaceId, w.billingId, { query: 'reconciliation', kinds: ['code'] })
+    ).json()) as Bundle
+    const tasksOnly = (await (
+      await search(w.ada, w.workspaceId, w.billingId, { query: 'reconciliation', kinds: ['task'] })
+    ).json()) as Bundle
+
+    expect(codeOnly.fragments.map((fragment) => fragment.kind)).toEqual(['code'])
+    expect(tasksOnly.fragments.map((fragment) => fragment.kind)).toEqual(['task'])
+  })
+
+  it("BRAIN-4: another workspace's tasks and documents never appear, and are not counted", async () => {
+    const w = await world()
+    const other = await world()
+    await withArtefacts(other)
+
+    const bundle = (await (
+      await search(w.ada, w.workspaceId, w.defaultTeamId, { query: 'reconciliation' })
+    ).json()) as Bundle
+
+    expect(bundle).toMatchObject({ fragments: [], considered: 0 })
+  })
+
+  it('BRAIN-4: a deleted task is not found', async () => {
+    const w = await world()
+    const { task } = await withArtefacts(w)
+    const removed = await w.ada.delete(`/workspaces/${w.workspaceId}/tasks/${task.id}?children=cascade`)
+    expect(removed.status, await removed.clone().text()).toBeLessThan(300)
+
+    const bundle = (await (
+      await search(w.ada, w.workspaceId, w.defaultTeamId, { query: 'reconciliation', kinds: ['task'] })
+    ).json()) as Bundle
+
+    expect(bundle.fragments).toEqual([])
   })
 
   it('BRAIN-4: a token without read:brain is refused', async () => {
