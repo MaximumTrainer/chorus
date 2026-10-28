@@ -1,4 +1,5 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import { takeToken, type BucketState, type RateLimit } from '@chorus/core'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
 import {
@@ -72,6 +73,14 @@ export interface McpEndpointOptions {
   readonly baseUrl?: string
   /** Where each call is recorded (MCP-5 AC3). Absent, calls go unrecorded. */
   readonly callLog?: McpCallLog
+  /**
+   * How many tool calls one client may make (MCP-5 AC4).
+   *
+   * A burst of 60, then one a second sustained: an agent working a task makes
+   * calls in clusters with pauses for editing and tests, and stays well inside
+   * it, while one stuck in a loop is held to a pace that cannot flood the API.
+   */
+  readonly rateLimit?: RateLimit
 }
 
 /** Who a request is from, once the route has authorised it. */
@@ -93,6 +102,45 @@ interface Session {
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000
 const DEFAULT_MAX_RESULT_CHARS = 48_000
 const DEFAULT_RESOURCE_PAGE_SIZE = 100
+const DEFAULT_RATE_LIMIT: RateLimit = { burst: 60, perMinute: 60 }
+
+/**
+ * Which client a request is from, for rate limiting.
+ *
+ * The credential, hashed: two of one person's agents hold two tokens, so one
+ * running away does not throttle the other (AC4). The client's self-reported
+ * name is not used, because it is the client's own claim.
+ */
+function clientKey(request: Request): string {
+  const credential = request.headers.get('authorization') ?? request.headers.get('cookie') ?? ''
+  return createHash('sha256').update(credential).digest('hex')
+}
+
+/** Whether a request carries a tool call, the only thing the limit counts. */
+async function isToolCall(request: Request): Promise<boolean> {
+  const body = (await request.clone().json().catch(() => undefined)) as unknown
+  const messages = Array.isArray(body) ? body : [body]
+  return messages.some(
+    (message) =>
+      typeof message === 'object' && message !== null && (message as { method?: unknown }).method === 'tools/call',
+  )
+}
+
+/** The refusal a throttled client reads, in the transport's own error shape. */
+function rateLimited(retryAfterMs: number): Response {
+  const seconds = Math.max(1, Math.ceil(retryAfterMs / 1000))
+  return new Response(
+    JSON.stringify({
+      jsonrpc: '2.0',
+      error: {
+        code: -32000,
+        message: `Rate limit reached for this client: retry after ${seconds} second${seconds === 1 ? '' : 's'}.`,
+      },
+      id: null,
+    }),
+    { status: 429, headers: { 'content-type': 'application/json', 'retry-after': String(seconds) } },
+  )
+}
 
 /** What a session's tools need to answer: whose workspace, and how to reach the API. */
 interface ToolEnvironment {
@@ -224,6 +272,11 @@ export function createMcpEndpoint(
   const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS
   const maxResultChars = options.maxResultChars ?? DEFAULT_MAX_RESULT_CHARS
   const resourcePageSize = options.resourcePageSize ?? DEFAULT_RESOURCE_PAGE_SIZE
+  const rateLimit = options.rateLimit ?? DEFAULT_RATE_LIMIT
+  // Per process. With more than one API replica each enforces its own, so the
+  // effective limit is the configured one times the replica count: a bound on
+  // a runaway, not a quota (architecture.md §14).
+  const buckets = new Map<string, BucketState>()
   const now = options.now ?? Date.now
   const sessions = new Map<string, Session>()
 
@@ -242,6 +295,12 @@ export function createMcpEndpoint(
         sessions.delete(id)
         await session.transport.close()
       }
+    }
+    // A bucket that has refilled is the same as no bucket, so it is forgotten
+    // and the map holds only clients that called recently.
+    const full = (rateLimit.burst / rateLimit.perMinute) * 60_000
+    for (const [key, bucket] of buckets) {
+      if (now() - bucket.at >= full) buckets.delete(key)
     }
   }
 
@@ -266,6 +325,13 @@ export function createMcpEndpoint(
           session.caller.workspaceId !== caller.workspaceId
         ) {
           return sessionNotFound()
+        }
+
+        if (request.method === 'POST' && (await isToolCall(request))) {
+          const key = clientKey(request)
+          const taken = takeToken(rateLimit, buckets.get(key), now())
+          buckets.set(key, taken.state)
+          if (!taken.allowed) return rateLimited(taken.retryAfterMs)
         }
 
         session.lastSeen = now()

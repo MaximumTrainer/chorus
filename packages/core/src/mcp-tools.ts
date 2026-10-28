@@ -143,6 +143,22 @@ export const MCP_READ_TOOLS = {
       })
       .strict(),
   },
+  get_repo_context: {
+    title: 'Read a task\'s repository context',
+    description:
+      'Reads what you need to start work on a task without exploring the repository: which ' +
+      'repository and base branch to work from, its conventions (the exact package manager, ' +
+      'test, lint and build commands), the code the task points at with line ranges, and the ' +
+      'routes those files serve. Call it right after get_task, open the pointed-at files ' +
+      'first, and run the given commands rather than guessing them. A pointer marked stale ' +
+      'may no longer match the code.',
+    input: z
+      .object({
+        taskId: id('The task to read the repository context of.'),
+        ...continuation,
+      })
+      .strict(),
+  },
   search: {
     title: 'Search the codebase',
     description:

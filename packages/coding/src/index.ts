@@ -11,7 +11,7 @@ export type {
   BriefTask,
 } from './brief.js'
 export { createBriefBuilder } from './brief-builder.js'
-export type { BriefBuilder } from './brief-builder.js'
+export type { BriefBuilder, RepoContext } from './brief-builder.js'
 export { BRIEF_FILENAME, BRIEF_JSON_FILENAME } from './adapter.js'
 export type {
   CodingAdapter,

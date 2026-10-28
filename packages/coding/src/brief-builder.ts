@@ -25,6 +25,29 @@ export interface BriefBuilder {
   forSandbox(workspaceId: string, taskId: string): Promise<string>
   /** What the MCP `implement-task` prompt returns (MCP-4). */
   forMcpPrompt(workspaceId: string, taskId: string): Promise<string>
+  /**
+   * The repository side of the brief, as data, for MCP's `get_repo_context`
+   * (MCP-2 AC3). Read from the same rows as the brief, so an engineer's agent
+   * starts from what a sandbox would be told.
+   */
+  repoContext(workspaceId: string, taskId: string): Promise<RepoContext>
+}
+
+export interface RepoContext {
+  readonly taskId: string
+  readonly repository: {
+    readonly fullName: string
+    readonly baseBranch: string
+    readonly defaultBranch: string
+  } | null
+  readonly conventions: BriefConventions
+  readonly pointers: readonly BriefPointer[]
+  /** The routes the pointed-at files serve, and only those. */
+  readonly routes: ReadonlyArray<{
+    readonly route: string
+    readonly component: string
+    readonly framework: string | null
+  }>
 }
 
 interface TaskRow {
@@ -250,6 +273,93 @@ export function createBriefBuilder(config: DbConfig): BriefBuilder {
     },
     async forMcpPrompt(workspaceId, taskId) {
       return (await build(workspaceId, taskId)).markdown
+    },
+    async repoContext(workspaceId, taskId) {
+      return withTenant(
+        workspaceId,
+        async (t) => {
+          const [task] = await t.query<{ team_id: string }>(
+            `SELECT team_id FROM tasks WHERE id = $1 AND deleted_at IS NULL`,
+            [taskId],
+          )
+          if (!task) {
+            throw new NotFoundError(`Task "${taskId}" does not exist.`, { taskId })
+          }
+          // The repository the brief names: the team's first, in the same order.
+          const [repository] = await t.query<{
+            full_name: string
+            base_branch: string
+            default_branch: string
+            settings: unknown
+          }>(
+            `SELECT full_name, base_branch, default_branch, settings
+               FROM repositories
+              WHERE team_id = $1 AND deleted_at IS NULL
+              ORDER BY created_at, id
+              LIMIT 1`,
+            [task.team_id],
+          )
+          const pointers = await t.query<{
+            path: string
+            symbol_name: string | null
+            line_start: number
+            line_end: number
+            commit_sha: string | null
+            source: string
+            stale_at: Date | null
+          }>(
+            `SELECT path, symbol_name, line_start, line_end, commit_sha, source, stale_at
+               FROM code_pointers
+              WHERE task_id = $1
+              ORDER BY path, line_start, line_end`,
+            [taskId],
+          )
+          // Only the routes served by files the task points at. The whole map
+          // is the repository's table of contents; an agent needs the entries
+          // for the code it was sent to, not all of them.
+          const routes = await t.query<{
+            route_pattern: string
+            component_path: string
+            framework: string | null
+          }>(
+            `SELECT DISTINCT r.route_pattern, r.component_path, r.framework
+               FROM route_map r
+               JOIN code_pointers p
+                 ON p.repository_id = r.repository_id AND p.path = r.component_path
+              WHERE p.task_id = $1
+              ORDER BY r.route_pattern, r.component_path`,
+            [taskId],
+          )
+          return {
+            taskId,
+            repository: repository
+              ? {
+                  fullName: repository.full_name,
+                  baseBranch: repository.base_branch,
+                  defaultBranch: repository.default_branch,
+                }
+              : null,
+            conventions: conventionsOf(repository?.settings),
+            pointers: pointers.map(
+              (pointer): BriefPointer => ({
+                path: pointer.path,
+                symbolName: pointer.symbol_name,
+                lineStart: pointer.line_start,
+                lineEnd: pointer.line_end,
+                commitSha: pointer.commit_sha,
+                source: pointer.source,
+                stale: pointer.stale_at !== null,
+              }),
+            ),
+            routes: routes.map((row) => ({
+              route: row.route_pattern,
+              component: row.component_path,
+              framework: row.framework,
+            })),
+          }
+        },
+        { config },
+      )
     },
   }
 }
