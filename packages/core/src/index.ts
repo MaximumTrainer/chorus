@@ -266,3 +266,5 @@ export type {
   McpPromptArgument,
   McpPromptDefinition,
 } from './mcp-resources.js'
+export { takeToken } from './rate-limit.js'
+export type { RateLimit, BucketState, TakeResult } from './rate-limit.js'
