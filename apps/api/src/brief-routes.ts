@@ -22,5 +22,14 @@ export function briefRoutes(briefs: BriefBuilder): RouteDefinition[] {
         return c.body(markdown)
       },
     }),
+
+    route({
+      method: 'GET',
+      path: '/workspaces/:workspaceId/tasks/:taskId/repo-context',
+      summary: 'The repository, conventions, code pointers and routes a task will be worked in.',
+      auth: { kind: 'workspace', role: 'member', scopes: ['read:artefacts'] },
+      handler: async (c) =>
+        c.json(await briefs.repoContext(c.req.param('workspaceId'), c.req.param('taskId'))),
+    }),
   ]
 }

@@ -135,6 +135,14 @@ const ROUTES: Readonly<Record<McpToolName, ToolRoute>> = {
       `Not found: there is no team with id ${String(args.teamId)} in this workspace that you can see. ` +
       'Read a task with get_task to find the teamId it belongs to.',
   },
+  get_repo_context: {
+    list: false,
+    path: (workspaceId, args) =>
+      `/workspaces/${segment(workspaceId)}/tasks/${segment(args.taskId)}/repo-context`,
+    notFound: (args) =>
+      `Not found: there is no task with id ${String(args.taskId)} in this workspace that you can see. ` +
+      'Check the id, or use list_tasks to find the task.',
+  },
   create_task: {
     list: false,
     method: 'POST',

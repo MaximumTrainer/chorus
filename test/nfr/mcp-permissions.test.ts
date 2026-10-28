@@ -42,6 +42,7 @@ function sampleArgs(teamId: string): Record<string, Record<string, unknown>> {
     report_pr: { taskId: 'no-such-task', url: 'https://github.com/acme/widgets/pull/1', status: 'open' },
     start_coding_job: { teamId, taskId: 'no-such-task' },
     search: { teamId, query: 'parity' },
+    get_repo_context: { taskId: 'no-such-task' },
   }
 }
 
