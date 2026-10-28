@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { DOCUMENT_TYPES } from './documents.js'
 import { ReportPullRequestSchema } from './pull-requests.js'
+import { SearchRequestSchema } from './retrieval.js'
 import { CreateTaskSchema, UpdateTaskSchema } from './tasks.js'
 
 /**
@@ -138,6 +139,34 @@ export const MCP_READ_TOOLS = {
     input: z
       .object({
         jobId: id('The coding job to read.'),
+        ...continuation,
+      })
+      .strict(),
+  },
+  search: {
+    title: 'Search the codebase',
+    description:
+      "Searches the code in the repositories of the teams you belong to, by meaning and by exact " +
+      'term at once, and returns the best-matching fragments with their path, lines and a ' +
+      'citationId. Use it to find where something is implemented before reading or changing ' +
+      'files, and cite fragments by path and lines in what you write. An empty result means ' +
+      'nothing relevant was found, not that the search failed: rephrase, or use a symbol name.',
+    input: SearchRequestSchema.omit({ repositoryIds: true })
+      .extend({
+        teamId: id('The team to search as. A task read with get_task carries its teamId.'),
+        query: z
+          .string()
+          .trim()
+          .min(1)
+          .max(2000)
+          .describe('What you are looking for: a question, a behaviour, or a symbol name.'),
+        k: z
+          .number()
+          .int()
+          .min(1)
+          .max(50)
+          .optional()
+          .describe('How many fragments to return, at most 50.'),
         ...continuation,
       })
       .strict(),

@@ -11,6 +11,7 @@ import {
   ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
 import { callTool, toolList } from './mcp-tools.js'
+import type { McpCallLog, McpLoggedSession } from './mcp-call-log.js'
 import {
   getPrompt,
   listResources,
@@ -69,6 +70,8 @@ export interface McpEndpointOptions {
    * reader could follow.
    */
   readonly baseUrl?: string
+  /** Where each call is recorded (MCP-5 AC3). Absent, calls go unrecorded. */
+  readonly callLog?: McpCallLog
 }
 
 /** Who a request is from, once the route has authorised it. */
@@ -99,6 +102,9 @@ interface ToolEnvironment {
   readonly maxResultChars: number
   readonly resourcePageSize: number
   readonly baseUrl: string
+  /** Records one call: who, through which client, which tool, how it went and how long it took. */
+  readonly logCall: (call: { client: string; tool: string; outcome: 'ok' | 'error'; durationMs: number }) => Promise<void>
+  readonly now: () => number
 }
 
 /** The headers of the request a call arrived on, as a `Headers`. */
@@ -159,20 +165,39 @@ function protocolServer(environment: ToolEnvironment): Server {
     ),
   )
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
-    const result = await callTool(request.params.name, request.params.arguments, {
-      ...environment,
-      credentials: headersOf(extra.requestInfo?.headers),
-    })
-    if (result) return result
-    return {
+    const started = environment.now()
+    const tool = request.params.name
+    // Logged whichever way it went, a call that threw included: the calls
+    // worth reading afterwards are the ones that went wrong (MCP-5 AC3).
+    const log = (outcome: 'ok' | 'error') =>
+      environment.logCall({
+        // The client's own claim about itself: recorded, never trusted.
+        client: server.getClientVersion()?.name ?? 'unknown',
+        tool,
+        outcome,
+        durationMs: environment.now() - started,
+      })
+    let result: Awaited<ReturnType<typeof callTool>>
+    try {
+      result = await callTool(tool, request.params.arguments, {
+        ...environment,
+        credentials: headersOf(extra.requestInfo?.headers),
+      })
+    } catch (error) {
+      await log('error')
+      throw error
+    }
+    const answer = result ?? {
       content: [
         {
           type: 'text' as const,
-          text: `There is no tool called ${request.params.name}. Call tools/list to see the tools this server offers.`,
+          text: `There is no tool called ${tool}. Call tools/list to see the tools this server offers.`,
         },
       ],
       isError: true,
     }
+    await log(answer.isError ? 'error' : 'ok')
+    return answer
   })
   return server
 }
@@ -252,6 +277,10 @@ export function createMcpEndpoint(
       // No session id: this must be an initialisation, and the transport
       // refuses anything else with the specification's own error. A transport
       // per session, because the SDK's transport *is* the session.
+      const logged: McpLoggedSession = {
+        workspaceId: caller.workspaceId,
+        sessionId: '',
+      }
       const transport = new WebStandardStreamableHTTPServerTransport({
         // Unguessable, because the id travels in a header a proxy may log and
         // is the only thing tying a request to an existing session. Ownership
@@ -262,6 +291,7 @@ export function createMcpEndpoint(
         // client can hold for as long as it likes.
         enableJsonResponse: true,
         onsessioninitialized: (id) => {
+          logged.sessionId = id
           sessions.set(id, { transport, caller, lastSeen: now() })
         },
       })
@@ -272,6 +302,10 @@ export function createMcpEndpoint(
         maxResultChars,
         resourcePageSize,
         baseUrl: options.baseUrl ?? new URL(request.url).origin,
+        now,
+        logCall: async (call) => {
+          await options.callLog?.record(logged, { ...call, userId: caller.userId })
+        },
       }).connect(transport)
 
       const response = await transport.handleRequest(request)

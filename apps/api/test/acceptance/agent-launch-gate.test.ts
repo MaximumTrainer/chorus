@@ -294,4 +294,51 @@ describe('CODE-1 AC4 and MCP-3 AC6 the agent launch gate', () => {
     expect(await jobsFor(w)).toEqual([])
     await w.mcp.close()
   })
+
+  it('WS-4 AC1: over MCP, a member is refused start_coding_job and audited, and a senior member is not', async () => {
+    // Given a member and a senior member, each with an agent holding run:coding
+    const w = await world('ask')
+    const agentOf = async (user: Awaited<ReturnType<TestClient['memberWithRole']>>) => {
+      const created = await user.post(`/workspaces/${w.workspaceId}/tokens`, {
+        name: 'agent',
+        scopes: ['read:artefacts', 'write:artefacts', 'run:coding'],
+      })
+      expect(created.status, await created.clone().text()).toBe(201)
+      const token = ((await created.json()) as { token: string }).token
+      const transport = new StreamableHTTPClientTransport(
+        new URL(`${ISSUER}/workspaces/${w.workspaceId}/mcp`),
+        { fetch: fetchFn, requestInit: { headers: { authorization: `Bearer ${token}` } } },
+      )
+      const mcp = new Client({ name: 'role-agent', version: '1.0.0' })
+      await mcp.connect(asTransport(transport))
+      return mcp
+    }
+    const member = await client.memberWithRole(w.ada, w.workspaceId, 'member')
+    const senior = await client.memberWithRole(w.ada, w.workspaceId, 'senior_member')
+    const call = { name: 'start_coding_job', arguments: { teamId: w.teamId, taskId: w.taskId } }
+
+    // When the member's agent starts a job
+    const memberAgent = await agentOf(member)
+    const refused = await memberAgent.callTool(call)
+
+    // Then it is refused for the role, nothing is created, and the refusal is audited
+    expect((refused as ToolResult).isError).toBe(true)
+    expect(textOf(refused)).toMatch(/^Not permitted/)
+    expect(await jobsFor(w)).toEqual([])
+    const [denial] = await db.admin.query<{ actor_id: string; after: Record<string, unknown> }>(
+      `SELECT actor_id, after FROM audit_events
+        WHERE workspace_id = $1 AND action = 'access.denied' ORDER BY at DESC LIMIT 1`,
+      [w.workspaceId],
+    )
+    expect(denial).toMatchObject({ actor_id: member.userId, after: { required: 'senior_member', held: 'member' } })
+
+    // And the same call from the senior member's agent is accepted (and held at the gate)
+    const seniorAgent = await agentOf(senior)
+    const accepted = dataOf<Job>(await seniorAgent.callTool(call))
+    expect(accepted.status).toBe('awaiting_approval')
+
+    await memberAgent.close()
+    await seniorAgent.close()
+    await w.mcp.close()
+  })
 })

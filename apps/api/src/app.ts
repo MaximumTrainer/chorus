@@ -34,6 +34,7 @@ import { apiTokenRoutes } from './api-token-routes.js'
 import { createOAuthService, OAuthError } from './oauth.js'
 import { oauthRoutes } from './oauth-routes.js'
 import { createMcpEndpoint, type McpEndpointOptions } from './mcp.js'
+import { createMcpCallLog } from './mcp-call-log.js'
 import { isMcpPath, mcpChallenge, mcpRoutes } from './mcp-routes.js'
 import { idempotent } from './idempotency.js'
 import { createRepositoryService } from './repositories.js'
@@ -424,7 +425,10 @@ function buildRoutes(
       // the metadata document a client discovers names the host it actually
       // reached — a mismatch there is what makes discovery fail unattended.
       ...oauthRoutes(oauth, workspaces, (c) => c.get('baseUrl')),
-      ...mcpRoutes(createMcpEndpoint({ baseUrl, ...mcp }, dispatch), dispatch),
+      ...mcpRoutes(
+        createMcpEndpoint({ baseUrl, callLog: createMcpCallLog(config), ...mcp }, dispatch),
+        dispatch,
+      ),
     ],
     deps: { workspaces, teams, tokens, oauth, dbConfig: config },
   }
