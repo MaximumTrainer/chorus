@@ -5,8 +5,10 @@ import type {
   Connector,
   ConnectorContext,
   AuthSpec,
+  ExternalRef,
   HealthStatus,
   PullResult,
+  SinkSpec,
   WebhookRequest,
   WebhookSpec,
 } from '../contract.js'
@@ -133,12 +135,43 @@ export function createReferenceConnector(initial: ReferenceScript = {}): Referen
   const cursorsSeen: (string | null)[] = []
 
   const auth: AuthSpec = { kind: 'none' }
-  const capabilities: Capabilities = { source: true }
+  const capabilities: Capabilities = { source: true, sink: true }
+
+  // The writes the sink has made, by the idempotency key each was made under.
+  // A real source holds these; the reference connector models search-before-
+  // create against its own, so the kit can prove the guarantee without one.
+  const written = new Map<string, ExternalRef>()
+  let nextObject = 0
+
+  const sink: SinkSpec = {
+    actions: {
+      create_item: {
+        name: 'create_item',
+        sideEffect: 'external',
+        // Search-before-create: the object the last call under this key made,
+        // if any. This is what turns a lost-response retry into the same
+        // object rather than a second one (INT-4 AC2).
+        async find(idempotencyKey: string): Promise<ExternalRef | null> {
+          return written.get(idempotencyKey) ?? null
+        },
+        async execute(_input: unknown, idempotencyKey: string): Promise<ExternalRef> {
+          // A real create stamps the key onto the object (a field, an issue
+          // property) so `find` can locate it later; here the store stands in
+          // for that. Called once per key under normal operation.
+          const externalId = `ref-object-${(nextObject += 1)}`
+          const ref: ExternalRef = { externalId, url: `https://reference.test/objects/${externalId}` }
+          written.set(idempotencyKey, ref)
+          return ref
+        },
+      },
+    },
+  }
 
   return {
     kind: 'reference',
     auth,
     capabilities,
+    sink,
 
     script(next) {
       current = { ...current, ...next }

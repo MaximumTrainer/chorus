@@ -158,12 +158,78 @@ export interface WebhookSpec {
   readonly verification: 'signature' | 'shared_secret'
 }
 
+/**
+ * A reference to an external object a sink action created or found (INT-4).
+ *
+ * The least a caller needs to not create it twice and to link to it: its id in
+ * the source system, and the url a person opens. Everything else about the
+ * object stays in the source — a sink records the handle, not a copy.
+ */
+export interface ExternalRef {
+  readonly externalId: string
+  readonly url?: string
+}
+
+/**
+ * One write a connector can make to its source (INT-4) — create an issue,
+ * post a comment, transition a status.
+ *
+ * Every sink action is `sideEffect: 'external'` by construction: that is the
+ * whole category, and the field is here so the registry that turns an action
+ * into a tool cannot forget it and skip the `before_external_write` gate
+ * (AC1). The type says `'external'` rather than the wider `SideEffect` so an
+ * action that is not a write cannot be declared one.
+ *
+ * Idempotency is the action's hardest obligation and is split in two (AC2).
+ * The caller always passes an idempotency key; `execute` hands it to the
+ * provider where the provider offers its own mechanism. Where it does not,
+ * `find` is the search-before-create fallback: given the same key, it locates
+ * an object a previous call already created. The framework runs `find` before
+ * `execute` (`runSinkAction`), so the production case that naive idempotency
+ * misses — the create that succeeded but whose response was lost to a timeout —
+ * yields the existing object on retry rather than a duplicate.
+ */
+export interface SinkAction<I = unknown> {
+  readonly name: string
+  /** Always `'external'`: a sink action is a write to someone else's system. */
+  readonly sideEffect: 'external'
+  /**
+   * Finds an object a previous call with this key already created, if any.
+   *
+   * Absent when the provider deduplicates on its own idempotency key, present
+   * as the search-before-create fallback when it does not. Its one job is to
+   * make a lost-response retry return the first object rather than make a
+   * second (AC2).
+   */
+  find?(idempotencyKey: string, ctx: ConnectorContext): Promise<ExternalRef | null>
+  /**
+   * Performs the write, passing the idempotency key to the provider where it
+   * accepts one. Called only after `find` reports nothing, so it is reached
+   * once per distinct key under normal operation.
+   */
+  execute(input: I, idempotencyKey: string, ctx: ConnectorContext): Promise<ExternalRef>
+}
+
+/**
+ * The writes a connector accepts (INT-4), keyed by action name.
+ *
+ * Present together with the `sink` capability, or neither — the capability is
+ * what the registry reads to decide whether to enumerate the actions, so one
+ * without the other is either actions nothing can reach or a promise of writes
+ * that do not exist.
+ */
+export interface SinkSpec {
+  readonly actions: Readonly<Record<string, SinkAction>>
+}
+
 export interface Connector {
   readonly kind: ConnectorKind
   readonly auth: AuthSpec
   readonly capabilities: Capabilities
   /** Absent for a sink-only connector. */
   pull?(cursor: string | null, ctx: ConnectorContext): Promise<PullResult>
+  /** The writes this connector accepts; present with the `sink` capability, or neither (INT-4). */
+  readonly sink?: SinkSpec
   /** Present together with `handleWebhook`, or neither. */
   readonly webhooks?: WebhookSpec
   handleWebhook?(request: WebhookRequest, ctx: ConnectorContext): Promise<readonly Signal[]>

@@ -40,4 +40,8 @@ describeConnectorContract('reference', () => createReferenceConnector(), {
     credentialExpired: () => createReferenceConnector({ credentialExpired: true }),
   },
   webhookSample: sampleDelivery,
+  sink: {
+    create: 'create_item',
+    input: () => ({ text: 'a thing the kit asked to be written' }),
+  },
 })
