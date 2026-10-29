@@ -679,6 +679,15 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
           )
           return
         }
+        case 'session_answers': {
+          const [session] = await tx.query<{ id: string }>(`SELECT id FROM chat_sessions LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO session_answers (id, workspace_id, session_id, subject, question, answer)
+             VALUES ($1, $2, $3, 'seed', 'q', 'a')`,
+            [id, workspaceId, session?.id ?? id],
+          )
+          return
+        }
         case 'quick_actions': {
           const [team] = await tx.query<{ id: string }>(`SELECT id FROM teams LIMIT 1`)
           await tx.execute(

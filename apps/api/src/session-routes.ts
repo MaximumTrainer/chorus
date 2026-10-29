@@ -65,6 +65,9 @@ export function sessionRoutes(
         // Read before the stream opens, so an unknown session is a 404 with a
         // problem document rather than an error frame inside a 200.
         const session = await sessions.get(workspaceId, sessionId)
+        // What the session has already settled, so the turn does not ask it
+        // again and is constrained by it (CHAT-4 AC3/AC4).
+        const answers = await sessions.answers(workspaceId, sessionId)
 
         // Recorded before the turn runs. If the model fails, what the person
         // typed is still there — losing their words because our provider broke
@@ -115,6 +118,7 @@ data: ${JSON.stringify(data)}
                   teamId: session.teamId,
                   actorId,
                   text: body.text as string,
+                  answers,
                   // The reader's connection is the turn's lifetime. When they
                   // hang up, the work stops rather than finishing an answer
                   // for nobody (CHAT-2 AC3).
@@ -130,7 +134,11 @@ data: ${JSON.stringify(data)}
                 workspaceId,
                 sessionId,
                 role: 'assistant',
-                content: { text: result.text },
+                // A clarification turn's content is the questions it asked, so
+                // the transcript records what was put to the person (CHAT-4).
+                content: result.questions
+                  ? { questions: result.questions }
+                  : { text: result.text },
                 runId: result.runId,
                 // Stored as partial, not quietly as whole. A truncated answer
                 // that reads as a finished one misleads every later reader,
@@ -171,6 +179,40 @@ data: ${JSON.stringify(data)}
             connection: 'keep-alive',
           },
         })
+      },
+    }),
+
+    route({
+      method: 'POST',
+      path: '/workspaces/:workspaceId/sessions/:sessionId/answers',
+      summary: 'Record answers to clarifying questions, as session state.',
+      // The same role and scope as posting a message: answering a question is
+      // part of the same conversation, and it writes session state (CHAT-4).
+      auth: { kind: 'workspace', role: 'member', scopes: ['write:artefacts'] },
+      handler: async (c) => {
+        const body = (await c.req.json().catch(() => ({}))) as { answers?: unknown }
+        if (!Array.isArray(body.answers)) {
+          throw new ValidationError('answers must be an array', { field: 'answers' })
+        }
+        const answers = body.answers.map((entry, index) => {
+          const row = entry as { subject?: unknown; question?: unknown; answer?: unknown }
+          if (typeof row.subject !== 'string' || row.subject.trim() === '') {
+            throw new ValidationError(`answers[${index}].subject is required`, { field: 'subject' })
+          }
+          if (typeof row.answer !== 'string' || row.answer.trim() === '') {
+            throw new ValidationError(`answers[${index}].answer is required`, { field: 'answer' })
+          }
+          return {
+            subject: row.subject,
+            answer: row.answer,
+            question: typeof row.question === 'string' ? row.question : '',
+          }
+        })
+
+        const workspaceId = c.req.param('workspaceId')
+        const sessionId = c.req.param('sessionId')
+        await sessions.recordAnswers({ workspaceId, sessionId, actorId: caller(c).userId, answers })
+        return c.json(await sessions.answers(workspaceId, sessionId))
       },
     }),
 

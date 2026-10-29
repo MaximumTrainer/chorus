@@ -5,6 +5,7 @@ import {
   bodyFromTemplate,
   DEFAULT_TEMPLATES,
   documentToMarkdown,
+  normaliseSubject,
   ulid,
   withSection,
 } from '@chorus/core'
@@ -100,8 +101,30 @@ export interface StartSession {
   readonly quickActionKey?: string
 }
 
+/** An answer to a clarifying question, kept as session state (CHAT-4). */
+export interface SessionAnswer {
+  readonly subject: string
+  readonly question: string
+  readonly answer: string
+}
+
 export interface SessionService {
   start(input: StartSession): Promise<SessionRecord>
+  /**
+   * Records answers to clarifying questions, keyed by subject (CHAT-4 AC2/AC4).
+   *
+   * Answering a subject again replaces the earlier answer: the latest is what
+   * the next turn should act on, and two answers to one question is not a state
+   * a later turn should have to resolve.
+   */
+  recordAnswers(input: {
+    workspaceId: string
+    sessionId: string
+    actorId: string
+    answers: readonly SessionAnswer[]
+  }): Promise<void>
+  /** The answers settled in a session, so a later turn is constrained by them. */
+  answers(workspaceId: string, sessionId: string): Promise<SessionAnswer[]>
   /**
    * Adds one message to a session, numbering it (CHAT-2).
    *
@@ -470,6 +493,41 @@ ${markdown}
       )
 
       return this.quickActions(workspaceId, teamId)
+    },
+
+    async recordAnswers({ workspaceId, sessionId, actorId, answers }) {
+      if (answers.length === 0) return
+      await tx(
+        workspaceId,
+        async (t) => {
+          await read(t, sessionId)
+          for (const answer of answers) {
+            const subject = normaliseSubject(answer.subject)
+            if (subject === '') continue
+            await t.execute(
+              `INSERT INTO session_answers
+                 (id, workspace_id, session_id, subject, question, answer, answered_by)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)
+               ON CONFLICT (workspace_id, session_id, subject)
+               DO UPDATE SET question = EXCLUDED.question, answer = EXCLUDED.answer,
+                             answered_by = EXCLUDED.answered_by, answered_at = now()`,
+              [ulid(), workspaceId, sessionId, subject, answer.question, answer.answer, actorId],
+            )
+          }
+        },
+        actorId,
+      )
+    },
+
+    async answers(workspaceId, sessionId) {
+      return tx(workspaceId, async (t) => {
+        const rows = await t.query<{ subject: string; question: string; answer: string }>(
+          `SELECT subject, question, answer FROM session_answers
+            WHERE session_id = $1 ORDER BY answered_at, subject`,
+          [sessionId],
+        )
+        return rows.map((row) => ({ subject: row.subject, question: row.question, answer: row.answer }))
+      })
     },
   }
 }

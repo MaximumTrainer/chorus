@@ -47,6 +47,7 @@ export const TENANT_TABLES = [
   'document_templates',
   'chat_sessions',
   'messages',
+  'session_answers',
   'quick_actions',
   'collaboration_tickets',
   'document_suggestion_sets',

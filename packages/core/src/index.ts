@@ -270,3 +270,18 @@ export type {
 } from './mcp-resources.js'
 export { takeToken } from './rate-limit.js'
 export type { RateLimit, BucketState, TakeResult } from './rate-limit.js'
+
+export {
+  DEFAULT_QUESTION_BUDGET,
+  ClarificationSchema,
+  ClarificationQuestionSchema,
+  ClarificationChoiceSchema,
+  boundClarification,
+  normaliseSubject,
+} from './clarify.js'
+export type {
+  Clarification,
+  ClarificationQuestion,
+  ClarificationChoice,
+  BoundClarificationInput,
+} from './clarify.js'

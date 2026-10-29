@@ -1,8 +1,18 @@
 import { z } from 'zod'
-import type { AnyTool, Retriever, WorkflowDefinition } from '@chorus/core'
+import { normaliseSubject, type AnyTool, type ClarificationQuestion, type Retriever, type WorkflowDefinition } from '@chorus/core'
 import type { DbConfig } from '@chorus/db'
-import { createExecutor, createToolRegistry } from '@chorus/agent'
+import { createClarifyTool, createExecutor, createToolRegistry, type PromptSource } from '@chorus/agent'
 import type { ModelProvider, ModelRef } from '@chorus/llm'
+
+/** An answer a session already holds, passed into a turn so it is not re-asked (CHAT-4). */
+export interface PriorAnswer {
+  readonly subject: string
+  readonly question: string
+  readonly answer: string
+}
+
+/** The tool name the clarify step runs under; the turn surfaces its output as questions. */
+const CLARIFY_TOOL = 'clarify'
 
 /**
  * Running one chat turn (CHAT-2).
@@ -27,6 +37,8 @@ export type TurnEvent =
   | { readonly kind: 'token'; readonly text: string }
   | { readonly kind: 'tool_call'; readonly step: string; readonly tool: string; readonly summary: string }
   | { readonly kind: 'context'; readonly bundleId: string; readonly fragments: number }
+  /** The turn is asking rather than answering: these are the clarifying questions (CHAT-4). */
+  | { readonly kind: 'clarification'; readonly questions: readonly ClarificationQuestion[] }
 
 export interface TurnResult {
   readonly runId: string
@@ -41,6 +53,13 @@ export interface TurnResult {
    * is then how far the answer got, which is still worth keeping.
    */
   readonly interrupted?: boolean
+  /**
+   * The turn asked clarifying questions rather than answering (CHAT-4).
+   *
+   * When present, the turn produced no answer: these are what it needs settled
+   * first, and the caller records them as the assistant's message.
+   */
+  readonly questions?: readonly ClarificationQuestion[]
 }
 
 export interface TurnRunner {
@@ -51,6 +70,8 @@ export interface TurnRunner {
       readonly teamId: string
       readonly actorId: string
       readonly text: string
+      /** Answers the session already holds, so the turn does not re-ask them (CHAT-4). */
+      readonly answers?: readonly PriorAnswer[]
       /** Aborts the turn when the reader hangs up (CHAT-2 AC3). */
       readonly signal?: AbortSignal
     },
@@ -81,6 +102,8 @@ export function createTurnRunner(
     readonly tools?: readonly TurnTool[]
     /** Where a `retrieve` step gets the turn's grounding (CHAT-3, BRAIN-4). */
     readonly retriever?: Retriever
+    /** Where a model or clarify step loads its prompt (CHAT-4 needs the clarify template). */
+    readonly prompts?: PromptSource
   },
 ): TurnRunner {
   const summaries = new Map(deps.tools?.map((tool) => [tool.name, tool.summarise]) ?? [])
@@ -103,13 +126,19 @@ export function createTurnRunner(
   return {
     async run(input, onEvent) {
       let bundleId: string | undefined
+      // Captured from the clarify tool's output: when the turn asks rather than
+      // answers, these are what it needs settled first (CHAT-4).
+      let questions: readonly ClarificationQuestion[] | undefined
       // A fresh executor per turn, because the event sink belongs to this
       // reader's connection and not to the process.
       const executor = createExecutor(config, {
-        registry: createToolRegistry(tools),
+        // The clarify tool is always available to a turn: it is how CHAT-4's
+        // budget is enforced, and it has no side effect to gate.
+        registry: createToolRegistry([createClarifyTool() as unknown as AnyTool, ...tools]),
         models: deps.models,
         modelFor: deps.modelFor,
         ...(deps.retriever ? { retriever: deps.retriever } : {}),
+        ...(deps.prompts ? { prompts: deps.prompts } : {}),
         onEvent: (event) => {
           if (event.kind === 'token') {
             onEvent({ kind: 'token', text: event.text })
@@ -118,6 +147,16 @@ export function createTurnRunner(
           if (event.kind === 'context') {
             bundleId = event.bundleId
             onEvent({ kind: 'context', bundleId: event.bundleId, fragments: event.fragments })
+            return
+          }
+          // The clarify step is a tool call, but its output is questions, not a
+          // thing to summarise. When it asks, the turn is a clarification turn.
+          if (event.tool === CLARIFY_TOOL) {
+            const output = event.output as { asked?: boolean; questions?: ClarificationQuestion[] }
+            if (output.asked && output.questions && output.questions.length > 0) {
+              questions = output.questions
+              onEvent({ kind: 'clarification', questions: output.questions })
+            }
             return
           }
           const summarise = summaries.get(event.tool)
@@ -130,12 +169,21 @@ export function createTurnRunner(
         },
       })
 
+      const answers = input.answers ?? []
       const run = await executor.start({
         workspaceId: input.workspaceId,
         teamId: input.teamId,
         startedBy: input.actorId,
         definition: deps.definition,
-        input: { text: input.text, sessionId: input.sessionId },
+        input: {
+          text: input.text,
+          sessionId: input.sessionId,
+          // For the clarify prompt: the settled answers, as readable text.
+          answers: answers.length > 0 ? answers.map((a) => `${a.subject}: ${a.answer}`).join('\n') : '(none yet)',
+          // For the clarify tool: the subjects to suppress, as a list. Snake-cased
+          // because a template reference must be lower_snake (`{{input.known_subjects}}`).
+          known_subjects: answers.map((a) => normaliseSubject(a.subject)),
+        },
       })
 
       const outcome = await executor.run(input.workspaceId, run.id, {
@@ -166,8 +214,10 @@ export function createTurnRunner(
       // different from the trace the moment a frame is dropped or retried.
       return {
         runId: run.id,
-        text: typeof outcome.output === 'string' ? outcome.output : '',
+        // A clarification turn produced no answer; its content is the questions.
+        text: questions ? '' : typeof outcome.output === 'string' ? outcome.output : '',
         ...(bundleId ? { bundleId } : {}),
+        ...(questions ? { questions } : {}),
       }
     },
   }

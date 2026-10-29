@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import type { ZodType } from 'zod'
 import {
   ConfigurationError,
   DEFAULT_REDACTION_LEVEL,
@@ -1161,7 +1162,9 @@ export function createExecutor(config: DbConfig, deps: ExecutorDeps): Executor {
             model,
             messages,
             context: { workspaceId, teamId, runId, purpose: 'chat' },
-            schema: OUTPUT_SCHEMAS[schemaName],
+            // A union of output schemas defeats generic inference under
+            // exactOptionalPropertyTypes; the value is read as `unknown` anyway.
+            schema: OUTPUT_SCHEMAS[schemaName] as ZodType<unknown>,
             schemaName,
           })
           structured = generated.value
