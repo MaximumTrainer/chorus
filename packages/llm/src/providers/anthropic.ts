@@ -11,7 +11,7 @@ import type {
 } from '../provider.js'
 import type { ModelRef, TokenUsage } from '../types.js'
 import { redact } from './redact.js'
-import { jsonSchemaFor, parseStructured } from './structured.js'
+import { jsonSchemaFor, parseStructured, strictObjectSchema } from './structured.js'
 import { createTokenCountCache } from './token-count-cache.js'
 
 /**
@@ -296,11 +296,18 @@ export function createAnthropicProvider(options: AnthropicOptions): ModelProvide
           max_tokens: request.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
           messages: turns,
           ...(system ? { system: system as never } : {}),
+          // `JSONOutputFormat` is `{ type, schema }` and nothing else — the live
+          // API rejects a `name` here (#199). `schemaName` is still carried on
+          // the request for the parse-error message, not sent on the wire.
           output_config: {
             format: {
               type: 'json_schema',
-              name: request.schemaName,
-              schema: jsonSchemaFor(request.schema as never),
+              // Strict: every object set to additionalProperties:false, which
+              // Anthropic's structured outputs require throughout (#199).
+              schema: strictObjectSchema(jsonSchemaFor(request.schema as never)) as Record<
+                string,
+                unknown
+              >,
             },
           },
         } as never,
