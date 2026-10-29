@@ -1,4 +1,4 @@
-import { SearchRequestSchema, ValidationError, type Retriever } from '@chorus/core'
+import { RETRIEVABLE_KINDS, SearchRequestSchema, ValidationError, type Retriever } from '@chorus/core'
 import { route, type RouteDefinition } from './routes.js'
 import { caller } from './authorisation.js'
 
@@ -37,6 +37,9 @@ export function searchRoutes(retriever: Retriever): RouteDefinition[] {
           workspaceId,
           teamId: c.req.param('teamId'),
           userId: caller(c).userId,
+          // Every kind unless narrowed: this is the search a person or an agent
+          // runs, not an agent's code-only grounding step.
+          kinds: parsed.data.kinds ?? RETRIEVABLE_KINDS,
           ...(parsed.data.k !== undefined ? { k: parsed.data.k } : {}),
           ...(parsed.data.repositoryIds ? { filters: { repoIds: parsed.data.repositoryIds } } : {}),
         })

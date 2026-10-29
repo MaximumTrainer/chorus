@@ -2,7 +2,13 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { createIsolatedDatabase, type IsolatedDatabase } from '@chorus/db'
 import { ulid } from '@chorus/core'
 import { createFakeModelProvider, type FakeModelProvider } from '@chorus/testing'
-import { createRetriever, type Retriever } from '../../src/index.js'
+import { createRetriever, type CodeFragment, type Fragment, type Retriever } from '../../src/index.js'
+
+/** A fragment these code-only queries return, narrowed so its code fields can be read. */
+function code(fragment: Fragment | undefined): CodeFragment {
+  expect(fragment?.kind).toBe('code')
+  return fragment as CodeFragment
+}
 
 /**
  * BRAIN-4 — one retrieval function, used by everything.
@@ -162,7 +168,7 @@ describe('BRAIN-4 retrieval', () => {
     })
 
     expect(bundle.fragments).toHaveLength(1)
-    expect(bundle.fragments[0]!.path).toBe('src/open.ts')
+    expect(code(bundle.fragments[0]).path).toBe('src/open.ts')
   })
 
   it('BRAIN-4 AC2: a member of no team retrieves nothing, not everything', async () => {
@@ -223,7 +229,7 @@ describe('BRAIN-4 retrieval', () => {
       query: 'reconcileLedgerEntries',
     })
 
-    expect(bundle.fragments[0]!.path).toBe('src/a.ts')
+    expect(code(bundle.fragments[0]).path).toBe('src/a.ts')
   })
 
   it('BRAIN-4 AC1: a rare identifier is found inside an ordinary sentence', async () => {
@@ -242,7 +248,7 @@ describe('BRAIN-4 retrieval', () => {
       query: 'Fix reconcileLedgerEntries so it balances',
     })
 
-    expect(bundle.fragments[0]!.path).toBe('src/a.ts')
+    expect(code(bundle.fragments[0]).path).toBe('src/a.ts')
   })
 
   it('BRAIN-4 AC6: a question sharing no terms with the corpus still finds nothing', async () => {
@@ -277,7 +283,7 @@ describe('BRAIN-4 retrieval', () => {
       query: 'session cookie expired',
     })
 
-    expect(bundle.fragments[0]!.path).toBe('src/auth.ts')
+    expect(code(bundle.fragments[0]).path).toBe('src/auth.ts')
   })
 
   it('BRAIN-4 AC6: nothing matching returns nothing, not the least-bad thing', async () => {
@@ -384,7 +390,7 @@ describe('BRAIN-4 retrieval', () => {
       query: 'invoice',
     })
 
-    expect(bundle.fragments[0]!.symbolName).toBe('parseInvoiceLine')
+    expect(code(bundle.fragments[0]).symbolName).toBe('parseInvoiceLine')
   })
 
   it('BRAIN-4: k truncates, and the bundle says how many it looked at', async () => {

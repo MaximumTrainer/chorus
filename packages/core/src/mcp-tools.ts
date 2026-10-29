@@ -160,13 +160,14 @@ export const MCP_READ_TOOLS = {
       .strict(),
   },
   search: {
-    title: 'Search the codebase',
+    title: 'Search code, tasks and documents',
     description:
-      "Searches the code in the repositories of the teams you belong to, by meaning and by exact " +
-      'term at once, and returns the best-matching fragments with their path, lines and a ' +
-      'citationId. Use it to find where something is implemented before reading or changing ' +
-      'files, and cite fragments by path and lines in what you write. An empty result means ' +
-      'nothing relevant was found, not that the search failed: rephrase, or use a symbol name.',
+      "Searches the code in your teams' repositories (by meaning and by exact term), and the " +
+      "workspace's tasks and documents (by term), and returns the best matches with a citationId. " +
+      'A code fragment has its path and lines; a task or document fragment has its kind, ' +
+      'artefactId and title, so read it in full with get_task or get_document. Pass kinds to ' +
+      'narrow it, for example ["code"] to find where something is implemented. An empty result ' +
+      'means nothing relevant was found, not that the search failed: rephrase, or use a symbol name.',
     input: SearchRequestSchema.omit({ repositoryIds: true })
       .extend({
         teamId: id('The team to search as. A task read with get_task carries its teamId.'),

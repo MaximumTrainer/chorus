@@ -350,7 +350,7 @@ function buildRoutes(
   // and the emailed link, go through this one function, so a job cannot be
   // released by one and left held by the other.
   const afterDecision: RunResumer = async (workspaceId, runId) => {
-    await jobs.settleLaunchGate(workspaceId, runId)
+    await jobs.settleGate(workspaceId, runId)
     if (resumeRun) await resumeRun(workspaceId, runId)
   }
   return {

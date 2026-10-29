@@ -153,7 +153,16 @@ export function createPointerService(config: DbConfig, retriever: Retriever): Po
       // Retrieval is permission-filtered against the person the task is being
       // shaped for, so a pointer can never surface code they could not open
       // (BRAIN-4 AC2).
-      const bundle = await retriever.retrieve({ workspaceId, teamId, userId, query, k: 5 })
+      // Code only, by name: a pointer points into a repository, and a task or
+      // document found by the same words is not somewhere to point.
+      const bundle = await retriever.retrieve({
+        workspaceId,
+        teamId,
+        userId,
+        query,
+        k: 5,
+        kinds: ['code'],
+      })
 
       return tx(workspaceId, async (t) => {
         const [task] = await t.query<{ id: string }>(
@@ -170,6 +179,7 @@ export function createPointerService(config: DbConfig, retriever: Retriever): Po
         ])
 
         for (const fragment of bundle.fragments) {
+          if (fragment.kind !== 'code') continue
           // Below the floor, nothing is written. "No pointer beats a wrong
           // pointer" is enforced here rather than left to the caller.
           if (fragment.confidence < MIN_POINTER_CONFIDENCE) continue

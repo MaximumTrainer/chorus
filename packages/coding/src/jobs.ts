@@ -50,6 +50,16 @@ export type LaunchInitiator = 'person' | 'agent'
 /** The workflow a coding job runs, and whose `before_coding_job` default applies. */
 export const CODING_WORKFLOW = 'implement-task'
 
+/** A pull request as it waits at `before_external_write`: everything needed to open it later. */
+interface HeldPullRequest {
+  readonly jobId: string
+  readonly repository: string
+  readonly branch: string
+  readonly baseBranch: string
+  readonly title: string
+  readonly body: string
+}
+
 /** How long a held launch waits for a decision, matching the executor's gates. */
 const LAUNCH_GATE_TTL_MS = 72 * 60 * 60 * 1000
 
@@ -64,7 +74,11 @@ export interface CodingJob {
   readonly summary: string | null
   readonly failure: string | null
   readonly requestedBy: string
-  /** The `before_coding_job` checkpoint the launch passed or waits at; null for a person's own launch. */
+  /**
+   * The gate the job most recently passed or waits at: `before_coding_job` at
+   * launch, then `before_external_write` before its pull request. Null for a
+   * person's own launch, which is its own approval.
+   */
   readonly checkpointId: string | null
 }
 
@@ -103,12 +117,14 @@ export interface CodingJobService {
   /** Opens the pull request for a finished job (CODE-5). */
   complete(request: CompleteRequest): Promise<CodingJob>
   /**
-   * Applies a settled `before_coding_job` decision to the job it held: an
-   * approval queues that same job, a rejection cancels it (CODE-1 AC4). A
-   * run whose checkpoint gates no held job is ignored, so this can be called
-   * for every settled checkpoint.
+   * Applies a run's latest settled gate to the job it held. At launch
+   * (`before_coding_job`), an approval queues that same job and a rejection
+   * cancels it (CODE-1 AC4). Before the pull request (`before_external_write`),
+   * an approval opens exactly one and a rejection leaves the branch pushed
+   * and says so (CODE-5 AC7). A run whose gate holds no job is ignored, so
+   * this can be called for every settled checkpoint.
    */
-  settleLaunchGate(workspaceId: string, runId: string): Promise<void>
+  settleGate(workspaceId: string, runId: string): Promise<void>
 }
 
 export interface CompleteRequest {
@@ -142,8 +158,9 @@ interface JobRow {
 const JOB_COLUMNS = `id, task_id, repository_id, adapter, status, branch,
   pull_request_url, summary, failure, requested_by,
   (SELECT c.id FROM checkpoints c
-    WHERE c.run_id = coding_jobs.run_id AND c.kind = 'before_coding_job'
-    ORDER BY c.created_at DESC LIMIT 1) AS checkpoint_id`
+    WHERE c.run_id = coding_jobs.run_id
+      AND c.kind IN ('before_coding_job', 'before_external_write')
+    ORDER BY c.created_at DESC, c.id DESC LIMIT 1) AS checkpoint_id`
 
 function toJob(row: JobRow): CodingJob {
   return {
@@ -161,8 +178,11 @@ function toJob(row: JobRow): CodingJob {
   }
 }
 
-/** The team's `before_coding_job` policy for the coding workflow (architecture.md §11.5). */
-async function launchPolicy(t: TenantTx, teamId: string): Promise<ResolvedPolicy> {
+/** A gate a coding job can be held at. */
+type JobGate = 'before_coding_job' | 'before_external_write'
+
+/** The team's policy for one of a coding job's gates, for the coding workflow (architecture.md §11.5). */
+async function gatePolicy(t: TenantTx, teamId: string, kind: JobGate): Promise<ResolvedPolicy> {
   const rows = await t.query<{
     team_id: string | null
     workflow_name: string | null
@@ -171,7 +191,8 @@ async function launchPolicy(t: TenantTx, teamId: string): Promise<ResolvedPolicy
   }>(
     `SELECT team_id, workflow_name, checkpoint_kind, mode
        FROM policies
-      WHERE checkpoint_kind = 'before_coding_job' AND deleted_at IS NULL`,
+      WHERE checkpoint_kind = $1 AND deleted_at IS NULL`,
+    [kind],
   )
   // `null` becomes `undefined`, for the reason decompose.ts gives: the
   // resolver's team tier matches on `workflowName === undefined`.
@@ -182,7 +203,7 @@ async function launchPolicy(t: TenantTx, teamId: string): Promise<ResolvedPolicy
     mode: row.mode,
   }))
   return resolveCheckpointPolicy(rules, {
-    checkpointKind: 'before_coding_job',
+    checkpointKind: kind,
     teamId,
     workflowName: CODING_WORKFLOW,
   })
@@ -221,6 +242,151 @@ export function createCodingJobService(
     return toJob(row)
   }
 
+  /**
+   * Opens a job's pull request and records it: the job succeeds, the task
+   * moves to review (AC4). Shared by an ungated collection and an approved
+   * gate, so the two cannot differ in what they write.
+   */
+  async function openAndRecord(
+    workspaceId: string,
+    job: CodingJob,
+    pullRequest: HeldPullRequest,
+    outputs: { summary: string | null; testOutput: string | null },
+  ): Promise<void> {
+    let opened
+    try {
+      opened = await deps.gitHost.openPullRequest({
+        repositoryFullName: pullRequest.repository,
+        branch: pullRequest.branch,
+        baseBranch: pullRequest.baseBranch,
+        title: pullRequest.title,
+        body: pullRequest.body,
+        // The job id: stable across retries of the same job, different for
+        // every other job.
+        idempotencyKey: job.id,
+      })
+    } catch (error) {
+      if (!(error instanceof PullRequestRefusedError)) throw error
+      // The branch and the diff are already pushed and stay pushed (AC6).
+      // The job records the specific cause so a retry does not re-run the
+      // agent to find out what it already knows.
+      await withTenant(
+        workspaceId,
+        (t) =>
+          t.execute(
+            `UPDATE coding_jobs
+                SET status = 'failed', failure = $2, branch = $3, updated_at = now(),
+                    finished_at = now()
+              WHERE id = $1`,
+            [job.id, error.message, pullRequest.branch],
+          ),
+        { config },
+      )
+      throw error
+    }
+
+    await withTenant(
+      workspaceId,
+      async (t) =>
+        mutate(t, {
+          workspaceId,
+          actor: { type: 'run', id: job.id },
+          action: 'coding_job.pull_request_opened',
+          targetType: 'coding_job',
+          targetId: job.id,
+          after: { pullRequestUrl: opened.url, branch: pullRequest.branch },
+          apply: async () => {
+            await t.execute(
+              `UPDATE coding_jobs
+                  SET status = 'succeeded', pull_request_url = $2, branch = $3,
+                      summary = COALESCE($4, summary), test_output = COALESCE($5, test_output),
+                      updated_at = now(), finished_at = now()
+                WHERE id = $1`,
+              [job.id, opened.url, pullRequest.branch, outputs.summary, outputs.testOutput],
+            )
+            // The task follows the work (AC4). A pull request nobody is asked
+            // to look at is a pull request nobody looks at.
+            await t.execute(
+              `UPDATE tasks SET status = 'in_review', updated_at = now() WHERE id = $1`,
+              [job.taskId],
+            )
+          },
+        }),
+      { config },
+    )
+  }
+
+  /**
+   * A decided `before_external_write` gate (CODE-5 AC7).
+   *
+   * The job is claimed with a conditional update before anything is opened,
+   * so an approval arriving twice opens one pull request: the second finds the
+   * job no longer held. The host's idempotency key (the job id) is the second
+   * line of defence, not the first.
+   */
+  async function settlePullRequestGate(workspaceId: string, runId: string): Promise<void> {
+    const claimed = await withTenant(
+      workspaceId,
+      async (t) => {
+        const [gate] = await t.query<{
+          status: string
+          payload: HeldPullRequest
+          decided_by: string | null
+        }>(
+          `SELECT status, payload, decided_by FROM checkpoints
+            WHERE run_id = $1 AND kind = 'before_external_write'
+            ORDER BY created_at DESC LIMIT 1`,
+          [runId],
+        )
+        if (!gate || gate.status === 'pending') return undefined
+        const approved = gate.status === 'approved'
+        const [job] = await t.query<{ id: string }>(
+          approved
+            ? `UPDATE coding_jobs SET status = 'running', updated_at = now()
+                WHERE run_id = $1 AND status = 'awaiting_approval' RETURNING id`
+            : `UPDATE coding_jobs
+                  SET status = 'failed', updated_at = now(), finished_at = now(), failure = $2
+                WHERE run_id = $1 AND status = 'awaiting_approval' RETURNING id`,
+          approved
+            ? [runId]
+            : [
+                runId,
+                `The before_external_write checkpoint was ${gate.status === 'expired' ? 'not decided before it expired' : 'rejected'}, ` +
+                  `so no pull request was opened. The changes are pushed on ${gate.payload.branch}.`,
+              ],
+        )
+        if (!job) return undefined
+        await t.execute(
+          approved
+            ? `UPDATE runs SET status = 'running' WHERE id = $1`
+            : `UPDATE runs SET status = 'stopped', finished_at = now() WHERE id = $1`,
+          [runId],
+        )
+        if (!approved) {
+          await mutate(t, {
+            workspaceId,
+            actor: gate.decided_by ? { type: 'user', id: gate.decided_by } : { type: 'system' },
+            action: 'coding_job.pull_request_rejected',
+            targetType: 'coding_job',
+            targetId: job.id,
+            after: { branch: gate.payload.branch },
+            apply: async () => undefined,
+          })
+          return undefined
+        }
+        return { jobId: job.id, pullRequest: gate.payload }
+      },
+      { config },
+    )
+    if (!claimed) return
+
+    const job = await read(workspaceId, claimed.jobId)
+    await openAndRecord(workspaceId, job, claimed.pullRequest, {
+      summary: job.summary,
+      testOutput: null,
+    })
+  }
+
   return {
     async launch(request: LaunchRequest): Promise<LaunchOutcome> {
       const adapter = request.adapter ?? settings.defaultAdapter
@@ -253,7 +419,9 @@ export function createCodingJobService(
           // their approval (CODE-1 AC4), and asking them again teaches people
           // to approve without reading.
           const policy =
-            request.initiator === 'agent' ? await launchPolicy(t, task.team_id) : undefined
+            request.initiator === 'agent'
+              ? await gatePolicy(t, task.team_id, 'before_coding_job')
+              : undefined
 
           return { task, repositoryId: repository?.id, activeJobId: active?.id, policy }
         },
@@ -455,7 +623,22 @@ export function createCodingJobService(
 
     get: read,
 
-    async settleLaunchGate(workspaceId, runId): Promise<void> {
+    async settleGate(workspaceId, runId): Promise<void> {
+      const [latest] = await withTenant(
+        workspaceId,
+        (t) =>
+          t.query<{ kind: string }>(
+            `SELECT kind FROM checkpoints
+              WHERE run_id = $1 AND kind IN ('before_coding_job', 'before_external_write')
+              ORDER BY created_at DESC, id DESC LIMIT 1`,
+            [runId],
+          ),
+        { config },
+      )
+      if (latest?.kind === 'before_external_write') {
+        await settlePullRequestGate(workspaceId, runId)
+        return
+      }
       await withTenant(
         workspaceId,
         async (t) => {
@@ -543,8 +726,9 @@ export function createCodingJobService(
       // Already opened: a retried collection returns the same job rather than a
       // second pull request (AC5). Checked here as well as by the host's
       // idempotency key, because the cheapest retry is the one that never
-      // reaches the network.
-      if (job.pullRequestUrl) return job
+      // reaches the network. A job already held at its pull-request gate is
+      // the same answer: the work is pushed and a person has been asked.
+      if (job.pullRequestUrl || job.status === 'awaiting_approval') return job
 
       const facts = await withTenant(
         request.workspaceId,
@@ -571,7 +755,23 @@ export function createCodingJobService(
             `SELECT email FROM users WHERE id = $1`,
             [job.requestedBy],
           )
-          return { task, repository, documentId: document?.to_id, requester }
+          // Only an agent's launch has a run, and only an agent's job is asked
+          // about its pull request: a person's launch approved all of it (#170).
+          const [owner] = await t.query<{ run_id: string | null; team_id: string }>(
+            `SELECT run_id, team_id FROM coding_jobs WHERE id = $1`,
+            [job.id],
+          )
+          const gate = owner?.run_id
+            ? await gatePolicy(t, owner.team_id, 'before_external_write')
+            : undefined
+          return {
+            task,
+            repository,
+            documentId: document?.to_id,
+            requester,
+            runId: owner?.run_id ?? null,
+            gate,
+          }
         },
         { config },
       )
@@ -609,67 +809,99 @@ export function createCodingJobService(
           : [],
       })
 
-      let opened
-      try {
-        opened = await deps.gitHost.openPullRequest({
-          repositoryFullName: facts.repository.full_name,
-          branch,
-          baseBranch: facts.repository.base_branch,
-          title: pullRequestTitle({ ...factsFor(), taskKey: facts.task.key }),
-          body: pullRequestBody(factsFor()),
-          // The job id: stable across retries of the same job, different for
-          // every other job.
-          idempotencyKey: job.id,
-        })
-      } catch (error) {
-        if (!(error instanceof PullRequestRefusedError)) throw error
-        // The branch and the diff are already pushed and stay pushed (AC6).
-        // The job records the specific cause so a retry does not re-run the
-        // agent to find out what it already knows.
-        await withTenant(
-          request.workspaceId,
-          (t) =>
-            t.execute(
-              `UPDATE coding_jobs
-                  SET status = 'failed', failure = $2, branch = $3, updated_at = now(),
-                      finished_at = now()
-                WHERE id = $1`,
-              [job.id, error.message, branch],
-            ),
-          { config },
-        )
-        throw error
+      const pullRequest: HeldPullRequest = {
+        jobId: job.id,
+        repository: facts.repository.full_name,
+        branch,
+        baseBranch: facts.repository.base_branch,
+        title: pullRequestTitle({ ...factsFor(), taskKey: facts.task.key }),
+        body: pullRequestBody(factsFor()),
       }
 
-      await withTenant(
-        request.workspaceId,
-        async (t) =>
-          mutate(t, {
-            workspaceId: request.workspaceId,
-            actor: { type: 'run', id: job.id },
-            action: 'coding_job.pull_request_opened',
-            targetType: 'coding_job',
-            targetId: job.id,
-            after: { pullRequestUrl: opened.url, branch },
-            apply: async () => {
-              await t.execute(
+      // CODE-5 AC7. The branch and the diff are pushed whichever way this
+      // goes, so a held or refused pull request loses no work.
+      if (facts.runId && facts.gate) {
+        const gate = facts.gate
+        if (gate.mode === 'never') {
+          await withTenant(
+            request.workspaceId,
+            (t) =>
+              t.execute(
                 `UPDATE coding_jobs
-                    SET status = 'succeeded', pull_request_url = $2, branch = $3, summary = $4,
-                        test_output = $5, updated_at = now(), finished_at = now()
+                    SET status = 'failed', branch = $2, summary = $3, test_output = $4,
+                        failure = $5, updated_at = now(), finished_at = now()
                   WHERE id = $1`,
-                [job.id, opened.url, branch, request.summary, request.testOutput],
-              )
-              // The task follows the work (AC4). A pull request nobody is asked
-              // to look at is a pull request nobody looks at.
-              await t.execute(
-                `UPDATE tasks SET status = 'in_review', updated_at = now() WHERE id = $1`,
-                [job.taskId],
-              )
-            },
-          }),
-        { config },
-      )
+                [
+                  job.id,
+                  branch,
+                  request.summary,
+                  request.testOutput,
+                  `This team's before_external_write policy is never, so no pull request was opened ` +
+                    `for a job an agent started. The changes are pushed on ${branch}.`,
+                ],
+              ),
+            { config },
+          )
+          return read(request.workspaceId, job.id)
+        }
 
+        const held = gate.mode === 'ask'
+        await withTenant(
+          request.workspaceId,
+          async (t) =>
+            mutate(t, {
+              workspaceId: request.workspaceId,
+              actor: { type: 'run', id: job.id },
+              action: held ? 'coding_job.pull_request_held' : 'coding_job.pull_request_gate_passed',
+              targetType: 'coding_job',
+              targetId: job.id,
+              after: { branch, gate: gate.mode },
+              apply: async () => {
+                // The pull request in full, so the person deciding reads what
+                // would be opened rather than a summary of it.
+                await t.execute(
+                  `INSERT INTO checkpoints
+                     (id, workspace_id, run_id, step_id, kind, policy_source, mode, status,
+                      payload, decision, decided_at, expires_at)
+                   VALUES ($1, $2, $3, 'open_pull_request', 'before_external_write', $4, $5, $6,
+                           $7, $8, $9, now() + make_interval(secs => $10))
+                   ON CONFLICT (run_id, step_id) DO NOTHING`,
+                  [
+                    ulid(),
+                    request.workspaceId,
+                    facts.runId,
+                    gate.source,
+                    gate.mode,
+                    held ? 'pending' : 'approved',
+                    JSON.stringify(pullRequest),
+                    held ? null : 'approve',
+                    held ? null : new Date().toISOString(),
+                    LAUNCH_GATE_TTL_MS / 1000,
+                  ],
+                )
+                if (held) {
+                  await t.execute(
+                    `UPDATE coding_jobs
+                        SET status = 'awaiting_approval', branch = $2, summary = $3,
+                            test_output = $4, updated_at = now()
+                      WHERE id = $1`,
+                    [job.id, branch, request.summary, request.testOutput],
+                  )
+                  await t.execute(`UPDATE runs SET status = 'waiting_human' WHERE id = $1`, [
+                    facts.runId,
+                  ])
+                }
+              },
+            }),
+          { config },
+        )
+        if (held) return read(request.workspaceId, job.id)
+      }
+
+      await openAndRecord(request.workspaceId, job, pullRequest, {
+        summary: request.summary,
+        testOutput: request.testOutput,
+      })
       return read(request.workspaceId, job.id)
 
       function factsFor() {
