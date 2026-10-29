@@ -1241,10 +1241,13 @@ POST   /teams/messages                      Bot Framework activities
 POST   /teams/graph-notifications           Graph change notifications + validation handshake
 
 GET    /search                              global search (NAV-1)
+GET    /workspaces/{id}/teams/{teamId}/home team home (NAV-2)
 ALL    /mcp                                 MCP Streamable HTTP
 ALL    /workspaces/{id}/mcp                 MCP Streamable HTTP, personal API tokens and OAuth
 GET    /healthz  /readyz  /metrics
 ```
+
+**The team home** (`GET /workspaces/{id}/teams/{teamId}/home`, `member`, `read:artefacts`, NAV-2) is one read answering "what is happening and what needs me": recent sessions, proposals awaiting confirmation, the coding queue (jobs in `awaiting_approval`, `queued` or `running`), and the checkpoint inbox (pending, unexpired gates on the team's runs — scoped by joining `runs`, since a checkpoint carries no team of its own). Each section returns a bounded slice (five rows) with the true `total` beside it, so a busy team gets a page and a link to the full list rather than a firehose (AC6), and a handled item is simply absent on the next read — including when it was settled on another surface (AC3). The queue is visible to everyone; `canLaunch` tells the surface whether to offer its launch actions, set to whether the caller clears the `senior_member` bar that launching a coding job itself clears (AC5). It is a pure read: mounted unconditionally so the permission suite always covers it, it writes nothing and decides nothing. The live push that updates an open home without a reload (AC2) is the web surface over the §19 fan-out; the server side is this read.
 
 **Versioning.** The API is versioned by media type parameter (`application/json; v=1`) with additive-only changes inside a version. Breaking changes require a new version and a deprecation window announced in the changelog.
 
