@@ -94,3 +94,34 @@ export function parseStructured<T>(text: string, schema: ZodType<T>, schemaName:
 export function jsonSchemaFor(schema: ZodType<unknown>): Record<string, unknown> {
   return z.toJSONSchema(schema, { io: 'input', unrepresentable: 'any' }) as Record<string, unknown>
 }
+
+/**
+ * The same schema, made strict for a provider that demands it (#199).
+ *
+ * Anthropic's structured outputs reject an object schema that does not set
+ * `additionalProperties: false` — and it must hold for every object, however
+ * deeply nested, not just the root. So this walks the schema and sets it on
+ * each one. It also drops the `$schema` dialect marker, which the endpoint has
+ * no use for and some reject. It does not touch `required`: optional fields
+ * stay optional, which the API permits.
+ *
+ * Returns a copy; the input is left alone, because the same schema is also
+ * given to providers that do not want it rewritten.
+ */
+export function strictObjectSchema(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(strictObjectSchema)
+  if (node === null || typeof node !== 'object') return node
+
+  const entries = Object.entries(node as Record<string, unknown>)
+    .filter(([key]) => key !== '$schema')
+    .map(([key, value]) => [key, strictObjectSchema(value)] as const)
+  const out: Record<string, unknown> = Object.fromEntries(entries)
+
+  // An object schema is one that describes properties. Setting this on anything
+  // with a `properties` map covers the shapes `z.toJSONSchema` emits, including
+  // those whose `type` is omitted.
+  if (out.type === 'object' || 'properties' in out) {
+    out.additionalProperties = false
+  }
+  return out
+}
