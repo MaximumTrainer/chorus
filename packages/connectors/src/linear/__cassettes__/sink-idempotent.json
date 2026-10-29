@@ -1,0 +1,42 @@
+{
+  "description": "Linear sink: the lost-response case. First POST is a direct issueCreate that succeeds (the response the caller lost). Second POST is the retry's idempotency search, which now finds that issue by its marker, so no second issue is made. Hand-authored; not recorded against linear.app.",
+  "interactions": [
+    {
+      "request": { "method": "POST", "url": "https://api.linear.app/graphql" },
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "issueCreate": {
+              "success": true,
+              "issue": {
+                "id": "lin-issue-stranded",
+                "identifier": "ACME-43",
+                "url": "https://linear.app/acme/issue/ACME-43"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": { "method": "POST", "url": "https://api.linear.app/graphql" },
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "searchIssues": {
+              "nodes": [
+                {
+                  "id": "lin-issue-stranded",
+                  "identifier": "ACME-43",
+                  "url": "https://linear.app/acme/issue/ACME-43"
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
+}
