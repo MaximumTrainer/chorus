@@ -126,6 +126,18 @@ export interface SessionService {
   /** The answers settled in a session, so a later turn is constrained by them. */
   answers(workspaceId: string, sessionId: string): Promise<SessionAnswer[]>
   /**
+   * Links an artefact the session produced to it (CHAT-6 AC1), so it shows on
+   * the session and a later turn can find it. Idempotent per (artefact, relation).
+   */
+  linkArtefact(input: {
+    workspaceId: string
+    sessionId: string
+    actorId: string
+    toType: 'document' | 'task'
+    toId: string
+    relation?: string
+  }): Promise<void>
+  /**
    * Adds one message to a session, numbering it (CHAT-2).
    *
    * The sequence is allocated inside the same transaction as the insert, so
@@ -514,6 +526,23 @@ ${markdown}
               [ulid(), workspaceId, sessionId, subject, answer.question, answer.answer, actorId],
             )
           }
+        },
+        actorId,
+      )
+    },
+
+    async linkArtefact({ workspaceId, sessionId, actorId, toType, toId, relation }) {
+      await tx(
+        workspaceId,
+        async (t) => {
+          await read(t, sessionId)
+          await t.execute(
+            `INSERT INTO artefact_links
+               (id, workspace_id, from_type, from_id, to_type, to_id, relation, created_by)
+             VALUES ($1, $2, 'session', $3, $4, $5, $6, $7)
+             ON CONFLICT DO NOTHING`,
+            [ulid(), workspaceId, sessionId, toType, toId, relation ?? 'produced', actorId],
+          )
         },
         actorId,
       )

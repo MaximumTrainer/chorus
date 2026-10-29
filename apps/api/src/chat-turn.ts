@@ -87,10 +87,19 @@ export interface TurnRunner {
  * that guessed it would produce the sort of generic notice a reader learns to
  * ignore.
  */
+/** Who a turn tool acts as, so it writes as the person and never with more than their rights (CHAT-6 AC5). */
+export interface TurnToolContext {
+  readonly workspaceId: string
+  readonly teamId: string
+  readonly actor: { readonly userId: string; readonly role: string }
+}
+
 export interface TurnTool {
   readonly name: string
+  /** Shown to the model choosing a tool; defaults to the name when absent. */
+  readonly description?: string
   readonly summarise: (output: unknown) => string
-  readonly execute?: (input: Record<string, unknown>) => Promise<unknown>
+  readonly execute?: (input: Record<string, unknown>, ctx: TurnToolContext) => Promise<unknown>
 }
 
 export function createTurnRunner(
@@ -112,14 +121,18 @@ export function createTurnRunner(
     (tool) =>
       ({
         name: tool.name,
-        description: tool.name,
+        description: tool.description ?? tool.name,
         input: z.object({}).passthrough(),
         output: z.unknown(),
         sideEffect: 'none',
         requiredRole: 'member',
         requiredScopes: [],
-        execute: async (input: Record<string, unknown>) =>
-          tool.execute ? tool.execute(input) : { ok: true },
+        // The run's identity reaches the tool, so a tool acting on an artefact
+        // does so as the person and with their rights, never elevated (AC5).
+        execute: async (input: Record<string, unknown>, ctx: { workspaceId: string; teamId: string; actor: { userId: string; role: string } }) =>
+          tool.execute
+            ? tool.execute(input, { workspaceId: ctx.workspaceId, teamId: ctx.teamId, actor: ctx.actor })
+            : { ok: true },
       }) as unknown as AnyTool,
   )
 
@@ -149,13 +162,15 @@ export function createTurnRunner(
             onEvent({ kind: 'context', bundleId: event.bundleId, fragments: event.fragments })
             return
           }
-          // The clarify step is a tool call, but its output is questions, not a
-          // thing to summarise. When it asks, the turn is a clarification turn.
-          if (event.tool === CLARIFY_TOOL) {
-            const output = event.output as { asked?: boolean; questions?: ClarificationQuestion[] }
-            if (output.asked && output.questions && output.questions.length > 0) {
-              questions = output.questions
-              onEvent({ kind: 'clarification', questions: output.questions })
+          // A tool whose output asks rather than answers — the clarify step, or
+          // an artefact tool that found an ambiguous reference (CHAT-6 AC4) —
+          // makes the turn a clarification turn. The shape is the contract, not
+          // the tool's name, so any tool can defer to the person this way.
+          const asking = event.output as { asked?: boolean; questions?: ClarificationQuestion[] }
+          if (event.tool === CLARIFY_TOOL || (asking.asked && asking.questions)) {
+            if (asking.asked && asking.questions && asking.questions.length > 0) {
+              questions = asking.questions
+              onEvent({ kind: 'clarification', questions: asking.questions })
             }
             return
           }
@@ -178,6 +193,9 @@ export function createTurnRunner(
         input: {
           text: input.text,
           sessionId: input.sessionId,
+          // Snake-cased alias so a tool step can reference it: a template
+          // reference must be lower_snake (`{{input.session_id}}`).
+          session_id: input.sessionId,
           // For the clarify prompt: the settled answers, as readable text.
           answers: answers.length > 0 ? answers.map((a) => `${a.subject}: ${a.answer}`).join('\n') : '(none yet)',
           // For the clarify tool: the subjects to suppress, as a list. Snake-cased

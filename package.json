@@ -27,6 +27,7 @@
     "test:coverage": "vitest run --passWithNoTests --project unit --project integration --project contract --project acceptance --coverage",
     "smoke:models": "tsx scripts/smoke-models.ts",
     "smoke:clarify": "tsx scripts/smoke-clarify.ts",
+    "smoke:chat-action": "tsx scripts/smoke-chat-action.ts",
     "smoke:coding-job": "tsx scripts/smoke-coding-job.ts"
   },
   "devDependencies": {
