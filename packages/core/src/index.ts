@@ -285,3 +285,7 @@ export type {
   ClarificationChoice,
   BoundClarificationInput,
 } from './clarify.js'
+export { resolveArtefactReference } from './artefact-reference.js'
+export type { ArtefactCandidate, ReferenceResolution } from './artefact-reference.js'
+export { ChatActionSchema } from './chat-actions.js'
+export type { ChatAction } from './chat-actions.js'

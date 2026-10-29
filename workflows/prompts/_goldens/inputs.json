@@ -28,5 +28,9 @@
     "text": "I want to add rate limiting to our API.",
     "answers": "(none yet)",
     "gather": "{\n  \"fragments\": [\n    {\n      \"kind\": \"code\",\n      \"path\": \"apps/api/src/mcp.ts\",\n      \"text\": \"a per-client token bucket on tool calls\"\n    }\n  ]\n}"
+  },
+  "shape/plan-action": {
+    "text": "Add acceptance criteria to CH-12: parsing is separated from validation.",
+    "gather": "{\n  \"fragments\": [\n    { \"kind\": \"task\", \"key\": \"CH-12\", \"title\": \"Split the invoice parser\" }\n  ]\n}"
   }
 }
