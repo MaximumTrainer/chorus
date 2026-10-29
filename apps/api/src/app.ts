@@ -61,6 +61,8 @@ import { suggestionRoutes } from './suggestion-routes.js'
 import { documentRoutes } from './document-routes.js'
 import { createSessionService } from './sessions.js'
 import { sessionRoutes } from './session-routes.js'
+import { createHomeService } from './home.js'
+import { homeRoutes } from './home-routes.js'
 import { createRetriever } from '@chorus/brain'
 import { createNotifier } from '@chorus/notifications'
 import { createDecisionLinks } from '@chorus/agent'
@@ -380,6 +382,7 @@ function buildRoutes(
         }),
       ),
       ...sessionRoutes(createSessionService(config), turn, retriever),
+      ...homeRoutes(createHomeService(config)),
       // Unconditional, for the reason `defaultCodingJobs` gives: the permission
       // suite enumerates `routeTable()`, and a route that exists only when a
       // retriever is wired is one it would never check.
