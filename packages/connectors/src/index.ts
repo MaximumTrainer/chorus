@@ -3,11 +3,15 @@ export type {
   Capabilities,
   Connector,
   ConnectorContext,
+  ExternalRef,
   HealthStatus,
   PullResult,
+  SinkAction,
+  SinkSpec,
   WebhookRequest,
   WebhookSpec,
 } from './contract.js'
+export { runSinkAction } from './sink-runner.js'
 export { createReferenceConnector } from './reference/index.js'
 export type {
   ReferenceConnector,

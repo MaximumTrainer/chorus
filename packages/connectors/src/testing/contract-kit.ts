@@ -6,6 +6,7 @@ import {
   parseSignal,
 } from '@chorus/core'
 import type { Connector, ConnectorContext, WebhookRequest } from '../contract.js'
+import { runSinkAction } from '../sink-runner.js'
 
 /**
  * The connector contract kit (INT-1 AC7).
@@ -62,6 +63,19 @@ export interface ContractKitOptions {
    * against valid input.
    */
   readonly webhookSample?: () => { request: WebhookRequest; secret: string }
+  /**
+   * A create action to exercise for the sink guarantees (INT-4).
+   *
+   * Names an action on the connector's `sink.actions` and supplies a valid
+   * input for it. Optional: a source-only connector has no sink, and a suite
+   * that demanded one could not run against it. Supplying it buys the
+   * idempotency assertions below; omitting it leaves those guarantees untested
+   * for that connector, which is a visible gap rather than a hidden pass.
+   */
+  readonly sink?: {
+    readonly create: string
+    readonly input: () => unknown
+  }
 }
 
 /** A deterministic context. Time is injected and frozen (CLAUDE.md §5). */
@@ -419,6 +433,65 @@ export function describeConnectorContract(
       // A connector reaching for Date.now() cannot be tested against an expiry
       // window without making the suite wait for real time to pass.
       expect(status.checkedAt.toISOString()).toBe(context.now().toISOString())
+    })
+
+    it('INT-4 AC1/AC7: a sink connector declares the capability with its actions, or neither', () => {
+      const connector = factory()
+      // One without the other is a dead promise either way: a declared
+      // capability the registry enumerates to find no actions, or actions it
+      // never looks for because nothing said the connector sinks.
+      expect(Boolean(connector.capabilities.sink)).toBe(connector.sink !== undefined)
+    })
+
+    it('INT-4 AC1/AC7: every sink action is declared an external write', () => {
+      const connector = factory()
+      if (!connector.sink) return
+
+      // `'external'` is the whole category, and it is what the registry reads
+      // to route the action through the `before_external_write` gate. An action
+      // that under-declared it would write to someone's tracker ungated.
+      for (const [name, action] of Object.entries(connector.sink.actions)) {
+        expect(action.name, 'an action keyed under one name must not report another').toBe(name)
+        expect(action.sideEffect, `${name} writes externally, so it must say so`).toBe('external')
+      }
+    })
+
+    it('INT-4 AC2/AC7: a create retried with the same idempotency key yields one object', async () => {
+      const spec = options.sink
+      const connector = factory()
+      if (!spec || !connector.sink) return
+      const action = connector.sink.actions[spec.create]
+      expect(action, `the sink must register "${spec.create}"`).toBeDefined()
+
+      const key = 'contract-idem-key-1'
+      const first = await runSinkAction(action!, spec.input(), key, ctx())
+      const second = await runSinkAction(action!, spec.input(), key, ctx())
+
+      expect(first.externalId, 'a create must return the object it made').toBeTruthy()
+      expect(
+        second.externalId,
+        'the same key must resolve to the same object, not make a second',
+      ).toBe(first.externalId)
+    })
+
+    it('INT-4 AC2/AC7: a create whose response was lost does not duplicate on retry', async () => {
+      const spec = options.sink
+      const connector = factory()
+      if (!spec || !connector.sink) return
+      const action = connector.sink.actions[spec.create]!
+
+      // The production case naive idempotency misses: the first create reaches
+      // the source and succeeds, but its response is lost — so the caller never
+      // runs the wrapper's `find` and goes straight to `execute`. The retry,
+      // through the wrapper, must discover that object rather than make another.
+      const key = 'contract-idem-key-2'
+      const stranded = await action.execute(spec.input(), key, ctx())
+      const retried = await runSinkAction(action, spec.input(), key, ctx())
+
+      expect(
+        retried.externalId,
+        'search-before-create must find the object the lost call already made',
+      ).toBe(stranded.externalId)
     })
   })
 }
