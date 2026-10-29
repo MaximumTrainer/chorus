@@ -72,6 +72,14 @@ export interface TurnRunner {
       readonly text: string
       /** Answers the session already holds, so the turn does not re-ask them (CHAT-4). */
       readonly answers?: readonly PriorAnswer[]
+      /**
+       * A selection in a document the instruction is about (CHAT-6 AC3).
+       *
+       * The range comes from the editor with the request, never inferred from
+       * the model: the person pointed at it. Its presence makes the turn a
+       * selection-scoped document refine.
+       */
+      readonly documentSelection?: { readonly documentId: string; readonly from: number; readonly to: number }
       /** Aborts the turn when the reader hangs up (CHAT-2 AC3). */
       readonly signal?: AbortSignal
     },
@@ -201,6 +209,11 @@ export function createTurnRunner(
           // For the clarify tool: the subjects to suppress, as a list. Snake-cased
           // because a template reference must be lower_snake (`{{input.known_subjects}}`).
           known_subjects: answers.map((a) => normaliseSubject(a.subject)),
+          // The document selection the instruction is about (CHAT-6 AC3), if any.
+          // Snake-cased so a tool step can reference them.
+          document_id: input.documentSelection?.documentId ?? '',
+          selection_from: input.documentSelection?.from ?? null,
+          selection_to: input.documentSelection?.to ?? null,
         },
       })
 

@@ -9,6 +9,7 @@ import {
 import type { TurnTool, TurnToolContext } from './chat-turn.js'
 import type { DocumentService } from './documents.js'
 import type { SessionService } from './sessions.js'
+import type { SuggestionService } from './suggestions.js'
 import type { TaskService } from './tasks.js'
 import type { TeamService } from './teams.js'
 import type { WorkspaceService } from './workspaces.js'
@@ -27,6 +28,7 @@ import type { WorkspaceService } from './workspaces.js'
  */
 
 export interface ChatToolDeps {
+  readonly suggestions: SuggestionService
   readonly documents: DocumentService
   readonly tasks: TaskService
   readonly sessions: SessionService
@@ -59,19 +61,48 @@ export function chatArtefactTools(deps: ChatToolDeps): TurnTool[] {
         const o = output as Record<string, unknown>
         if (o.created === 'document') return `created a ${String(o.type)}: ${String(o.title)}`
         if (o.refined === 'task') return `updated ${String(o.key)}`
+        if (o.suggested === 'document') return 'suggested an edit to the selection'
         if (o.asked) return 'asked which one'
         if (o.refused) return `declined: ${String(o.refused)}`
         return 'nothing to change'
       },
       async execute(input, ctx) {
-        const parsed = ChatActionSchema.safeParse((input as { action?: unknown }).action ?? input)
-        if (!parsed.success) return refused('the action was not understood')
-        const action = parsed.data
-        if (action.action === 'answer') return { answered: true }
+        const raw = input as {
+          action?: unknown
+          text?: unknown
+          documentId?: unknown
+          from?: unknown
+          to?: unknown
+        }
+        // A selection in a document takes precedence over whatever the model
+        // planned: the person pointed at a range, and the refine applies to it
+        // and arrives as a suggestion rather than an edit (AC3). The range is
+        // the one the request carried, never one the model produced. Checked
+        // before the model's action, because the explicit pointer is the
+        // stronger signal — even if the model, not seeing it, said "answer".
+        const documentId = typeof raw.documentId === 'string' ? raw.documentId : ''
+        const hasSelection = documentId !== '' && typeof raw.from === 'number' && typeof raw.to === 'number'
+
+        const parsed = ChatActionSchema.safeParse(raw.action ?? input)
+        if (!parsed.success && !hasSelection) return refused('the action was not understood')
+        const action = parsed.success ? parsed.data : { action: 'answer' as const }
+        if (action.action === 'answer' && !hasSelection) return { answered: true }
 
         const role = await roleFor(deps, ctx)
         if (!role || !atLeast(role, 'member')) {
           return refused('you do not have permission to change artefacts in this team')
+        }
+
+        if (hasSelection) {
+          const instruction = typeof raw.text === 'string' && raw.text.trim() !== '' ? raw.text.trim() : 'Refine this.'
+          const set = await deps.suggestions.ask({
+            workspaceId: ctx.workspaceId,
+            documentId,
+            userId: ctx.actor.userId,
+            instruction,
+            selection: { from: raw.from as number, to: raw.to as number },
+          })
+          return { suggested: 'document', setId: set.id, documentId }
         }
 
         if (action.action === 'create_document') {

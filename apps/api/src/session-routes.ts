@@ -51,12 +51,29 @@ export function sessionRoutes(
       summary: 'Post a message and stream the agent’s turn.',
       auth: { kind: 'workspace', role: 'member', scopes: ['write:artefacts'] },
       handler: async (c) => {
-        const body = (await c.req.json().catch(() => ({}))) as { text?: unknown }
+        const body = (await c.req.json().catch(() => ({}))) as {
+          text?: unknown
+          documentId?: unknown
+          from?: unknown
+          to?: unknown
+        }
         if (typeof body.text !== 'string' || body.text.trim() === '') {
           throw new ValidationError('text is required', { field: 'text' })
         }
         if (!turn) {
           throw new ValidationError('this deployment cannot run turns', { field: 'turn' })
+        }
+
+        // A selection the instruction is about (CHAT-6 AC3): the editor sends
+        // the document and the range it highlighted. Both bounds or neither.
+        let documentSelection: { documentId: string; from: number; to: number } | undefined
+        if (typeof body.documentId === 'string' && body.documentId !== '') {
+          if (!Number.isInteger(body.from) || !Number.isInteger(body.to)) {
+            throw new ValidationError('a document selection needs whole from and to offsets', {
+              field: 'from',
+            })
+          }
+          documentSelection = { documentId: body.documentId, from: body.from as number, to: body.to as number }
         }
 
         const workspaceId = c.req.param('workspaceId')
@@ -119,6 +136,7 @@ data: ${JSON.stringify(data)}
                   actorId,
                   text: body.text as string,
                   answers,
+                  ...(documentSelection ? { documentSelection } : {}),
                   // The reader's connection is the turn's lifetime. When they
                   // hang up, the work stops rather than finishing an answer
                   // for nobody (CHAT-2 AC3).

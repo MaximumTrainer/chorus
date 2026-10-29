@@ -11,6 +11,8 @@ import { chatArtefactTools } from '../../src/chat-tools.js'
 import { createDocumentService } from '../../src/documents.js'
 import { createTaskService } from '../../src/tasks.js'
 import { createSessionService } from '../../src/sessions.js'
+import { createSuggestionService } from '../../src/suggestions.js'
+import { createEditSuggester } from '../../src/edit-suggester.js'
 import { createWorkspaceService } from '../../src/workspaces.js'
 import { createTeamService } from '../../src/teams.js'
 import {
@@ -44,7 +46,14 @@ const DEFINITION: WorkflowDefinition = WorkflowDefinitionSchema.parse({
       id: 'apply',
       type: 'tool',
       tool: 'apply_chat_action',
-      input: { action: '{{plan.output}}', sessionId: '{{input.session_id}}' },
+      input: {
+        action: '{{plan.output}}',
+        sessionId: '{{input.session_id}}',
+        text: '{{input.text}}',
+        documentId: '{{input.document_id}}',
+        from: '{{input.selection_from}}',
+        to: '{{input.selection_to}}',
+      },
     },
     { id: 'reply', type: 'model', prompt: 'reply' },
   ],
@@ -91,6 +100,12 @@ describe('CHAT-6 chat artefact edits', () => {
       retriever,
       prompts: PROMPTS,
       tools: chatArtefactTools({
+        suggestions: createSuggestionService(db.config, {
+          suggest: createEditSuggester(db.config, {
+            models,
+            modelFor: () => ({ provider: 'fake', model: 'fake-1' }),
+          }),
+        }),
         documents: createDocumentService(db.config),
         tasks: createTaskService(db.config),
         sessions: createSessionService(db.config),
@@ -112,8 +127,15 @@ describe('CHAT-6 chat artefact edits', () => {
     return { ada, workspaceId: workspace.id, teamId: team!.id, sessionId: started.id }
   }
 
-  async function turn(w: Awaited<ReturnType<typeof world>>, text: string): Promise<Frame[]> {
-    const response = await w.ada.post(`/workspaces/${w.workspaceId}/sessions/${w.sessionId}/messages`, { text })
+  async function turn(
+    w: Awaited<ReturnType<typeof world>>,
+    text: string,
+    selection?: { documentId: string; from: number; to: number },
+  ): Promise<Frame[]> {
+    const response = await w.ada.post(`/workspaces/${w.workspaceId}/sessions/${w.sessionId}/messages`, {
+      text,
+      ...(selection ?? {}),
+    })
     expect(response.status, await response.clone().text()).toBe(200)
     const body = await response.text()
     return body
@@ -204,6 +226,59 @@ describe('CHAT-6 chat artefact edits', () => {
       await w.ada.get(`/workspaces/${w.workspaceId}/teams/${w.teamId}/tasks`)
     ).json()) as Array<{ acceptanceCriteria: unknown[] }>
     expect(tasks.every((task) => task.acceptanceCriteria.length === 0)).toBe(true)
+  })
+
+  it('CHAT-6: selecting a paragraph and asking to condense changes only that range, as a suggestion (AC3)', async () => {
+    const w = await world()
+    // A document with a sentence to condense.
+    const document = (await (
+      await w.ada.post(`/workspaces/${w.workspaceId}/teams/${w.teamId}/documents`, {
+        type: 'prd',
+        title: 'Invoice splitting',
+      })
+    ).json()) as { id: string; sections: Array<{ key: string }> }
+    const sentence = 'Finance reconciles invoices by hand every single month without fail.'
+    const written = await w.ada.patch(`/workspaces/${w.workspaceId}/documents/${document.id}`, {
+      sections: [{ key: document.sections[0]!.key, content: sentence }],
+    })
+    expect(written.status, await written.clone().text()).toBe(200)
+
+    const before = await (
+      await w.ada.get(`/workspaces/${w.workspaceId}/documents/${document.id}/export`)
+    ).text()
+    const from = before.indexOf(sentence)
+    expect(from, 'the sentence must be in the exported body').toBeGreaterThanOrEqual(0)
+    const to = from + sentence.length
+
+    // The model proposes a condensed replacement for the selected sentence. The
+    // plan step's structured output is irrelevant here: a selection wins.
+    models.script({
+      structured: { action: 'answer' },
+      chunks: [
+        JSON.stringify({
+          suggestions: [{ original: sentence, replacement: 'Finance reconciles invoices by hand monthly.' }],
+        }),
+      ],
+    })
+
+    const events = await turn(w, 'condense this', { documentId: document.id, from, to })
+
+    // It arrived as a suggestion, not an edit.
+    const toolCall = events.find((frame) => frame.event === 'tool_call')
+    expect(toolCall?.data.summary).toMatch(/suggest/i)
+    const sets = (await (
+      await w.ada.get(`/workspaces/${w.workspaceId}/documents/${document.id}/suggestions`)
+    ).json()) as Array<{ status: string; suggestions: Array<{ status: string; originalText: string }> }>
+    expect(sets).toHaveLength(1)
+    expect(sets[0]!.status).toBe('ready')
+    expect(sets[0]!.suggestions[0]).toMatchObject({ status: 'pending', originalText: sentence })
+
+    // And the document itself is byte-identical: a suggestion changes nothing
+    // until it is accepted (DOC-3).
+    const after = await (
+      await w.ada.get(`/workspaces/${w.workspaceId}/documents/${document.id}/export`)
+    ).text()
+    expect(after).toBe(before)
   })
 
   it('CHAT-6: the agent cannot change a task outside the session’s team (AC5)', async () => {
