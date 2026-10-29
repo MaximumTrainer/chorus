@@ -23,5 +23,10 @@
   "mcp/write-tests-for-task": {
     "taskKey": "CH-4",
     "task": "# CH-4 — Split the invoice parser\n\nParsing and validation are tangled.\n\n## Acceptance criteria\n\n- [ ] Parsing is separated from validation\n- [ ] Errors name the field\n"
+  },
+  "shape/clarify": {
+    "text": "I want to add rate limiting to our API.",
+    "answers": "(none yet)",
+    "gather": "{\n  \"fragments\": [\n    {\n      \"kind\": \"code\",\n      \"path\": \"apps/api/src/mcp.ts\",\n      \"text\": \"a per-client token bucket on tool calls\"\n    }\n  ]\n}"
   }
 }

@@ -16,6 +16,7 @@
  */
 
 import { z } from 'zod'
+import { ClarificationSchema } from './clarify.js'
 
 export const ARTEFACT_KINDS = ['document', 'task'] as const
 export type ArtefactKind = (typeof ARTEFACT_KINDS)[number]
@@ -141,6 +142,7 @@ export const ArtefactDraftSchema = z.object({
  */
 export const OUTPUT_SCHEMAS = {
   artefact_draft: ArtefactDraftSchema,
+  clarification: ClarificationSchema,
 } as const
 
 export type OutputSchemaName = keyof typeof OUTPUT_SCHEMAS

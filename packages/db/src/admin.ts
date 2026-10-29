@@ -279,6 +279,11 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
         [ulid(), workspaceId, sessionId, userId],
       )
       await owner.query(
+        `INSERT INTO session_answers (id, workspace_id, session_id, subject, question, answer, answered_by)
+         VALUES ($1, $2, $3, 'seed', 'q', 'a', $4)`,
+        [ulid(), workspaceId, sessionId, userId],
+      )
+      await owner.query(
         `INSERT INTO quick_actions (id, workspace_id, team_id, key, label, prompt)
          VALUES ($1, $2, $3, 'seed_action', 'Seed', 'A prompt')`,
         [ulid(), workspaceId, teamId],
@@ -675,6 +680,15 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
           await tx.execute(
             `INSERT INTO messages (id, workspace_id, session_id, seq, role)
              VALUES ($1, $2, $3, 99, 'user')`,
+            [id, workspaceId, session?.id ?? id],
+          )
+          return
+        }
+        case 'session_answers': {
+          const [session] = await tx.query<{ id: string }>(`SELECT id FROM chat_sessions LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO session_answers (id, workspace_id, session_id, subject, question, answer)
+             VALUES ($1, $2, $3, 'seed', 'q', 'a')`,
             [id, workspaceId, session?.id ?? id],
           )
           return

@@ -1,5 +1,6 @@
 import type { AnyTool } from '@chorus/core'
 import { createFetchUrlTool } from './fetch-url.js'
+import { createClarifyTool } from './clarify.js'
 
 /**
  * The tools this deployment ships.
@@ -22,5 +23,10 @@ export interface ShippedToolOptions {
 }
 
 export function shippedTools(options: ShippedToolOptions): readonly AnyTool[] {
-  return [createFetchUrlTool({ allowedHosts: options.allowedHosts }) as unknown as AnyTool]
+  return [
+    createFetchUrlTool({ allowedHosts: options.allowedHosts }) as unknown as AnyTool,
+    // CHAT-4: the code half of bounded clarifying questions. No side effect and
+    // no network, so it needs nothing from the options.
+    createClarifyTool() as unknown as AnyTool,
+  ]
 }

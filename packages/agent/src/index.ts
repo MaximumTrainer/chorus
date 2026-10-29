@@ -8,11 +8,13 @@ export { createExecutor, expireCheckpoints } from './executor.js'
 export type {
   Executor,
   ExecutorDeps,
+  PromptSource,
   StartInput,
   RunOutcome,
   RunRecord,
   RunStatus,
 } from './executor.js'
+export { createClarifyTool } from './tools/clarify.js'
 export {
   decideCheckpoint,
   readCheckpoint,
