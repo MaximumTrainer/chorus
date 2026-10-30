@@ -69,6 +69,8 @@ export interface ToolContext {
 /** A reference to the external object a sink write created or found (INT-4). */
 export interface ExternalRef {
   readonly externalId: string
+  /** The human-facing key the source shows, e.g. a tracker issue's `ACME-7`. */
+  readonly key?: string
   readonly url?: string
 }
 

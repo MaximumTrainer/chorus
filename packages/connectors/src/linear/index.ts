@@ -240,19 +240,28 @@ export function createLinearConnector(options: LinearOptions = {}): Connector {
   /** The first issue a search by marker turns up, as an external reference. */
   async function findByMarker(key: string, ctx: ConnectorContext): Promise<ExternalRef | null> {
     const data = await query(
-      `query Find($term: String!) { searchIssues(term: $term, first: 1) { nodes { id url } } }`,
+      `query Find($term: String!) { searchIssues(term: $term, first: 1) { nodes { id identifier url } } }`,
       { term: `[chorus-idem:${key}]` },
       ctx,
     )
-    const nodes = ((data.searchIssues ?? {}) as { nodes?: Array<{ id?: string; url?: string }> }).nodes
+    const nodes = ((data.searchIssues ?? {}) as {
+      nodes?: Array<{ id?: string; identifier?: string; url?: string }>
+    }).nodes
     const hit = nodes?.[0]
     if (!hit?.id) return null
-    return { externalId: hit.id, ...(hit.url ? { url: hit.url } : {}) }
+    return {
+      externalId: hit.id,
+      ...(hit.identifier ? { key: hit.identifier } : {}),
+      ...(hit.url ? { url: hit.url } : {}),
+    }
   }
 
-  /** Reads an `{ id, url }` issue out of a mutation payload, or fails permanently. */
+  /** Reads an issue out of a mutation payload, or fails permanently. */
   function issueRefFrom(payload: unknown, action: string): ExternalRef {
-    const result = (payload ?? {}) as { success?: boolean; issue?: { id?: string; url?: string } }
+    const result = (payload ?? {}) as {
+      success?: boolean
+      issue?: { id?: string; identifier?: string; url?: string }
+    }
     if (result.success === false || !result.issue?.id) {
       // A mutation that reports failure without a GraphQL error (which `query`
       // would already have raised) is still permanent — retrying it changes
@@ -260,7 +269,11 @@ export function createLinearConnector(options: LinearOptions = {}): Connector {
       // a reference to an object that does not exist.
       throw new UpstreamError(`Linear ${action} did not return an issue`, { payload })
     }
-    return { externalId: result.issue.id, ...(result.issue.url ? { url: result.issue.url } : {}) }
+    return {
+      externalId: result.issue.id,
+      ...(result.issue.identifier ? { key: result.issue.identifier } : {}),
+      ...(result.issue.url ? { url: result.issue.url } : {}),
+    }
   }
 
   const sink: SinkSpec = {
@@ -305,7 +318,7 @@ export function createLinearConnector(options: LinearOptions = {}): Connector {
           }
           const data = await query(
             `mutation Update($id: String!, $input: IssueUpdateInput!) {
-               issueUpdate(id: $id, input: $input) { success issue { id url } }
+               issueUpdate(id: $id, input: $input) { success issue { id identifier url } }
              }`,
             {
               id: issueId,
@@ -329,7 +342,7 @@ export function createLinearConnector(options: LinearOptions = {}): Connector {
           const { issueId, stateId } = input as { issueId: string; stateId: string }
           const data = await query(
             `mutation Transition($id: String!, $input: IssueUpdateInput!) {
-               issueUpdate(id: $id, input: $input) { success issue { id url } }
+               issueUpdate(id: $id, input: $input) { success issue { id identifier url } }
              }`,
             { id: issueId, input: { stateId } },
             ctx,

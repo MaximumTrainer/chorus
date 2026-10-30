@@ -1226,7 +1226,7 @@ POST           /documents/{id}/decompose  /documents/{id}/export  /documents/{id
 
 GET|POST|PATCH /tasks
 GET|POST       /tasks/{id}/pointers
-POST           /tasks/{id}/push/{integration}   /tasks/{id}/jobs
+POST           /tasks/{id}/push                 /tasks/{id}/jobs
 GET            /tasks/{id}/duplicates
 
 POST   /proposals/{id}/confirm | /proposals/{id}/reject
@@ -1254,6 +1254,8 @@ ALL    /mcp                                 MCP Streamable HTTP
 ALL    /workspaces/{id}/mcp                 MCP Streamable HTTP, personal API tokens and OAuth
 GET    /healthz  /readyz  /metrics
 ```
+
+**Pushing a task to a tracker** (`POST /workspaces/{id}/tasks/{taskId}/push`, `member`, `write:artefacts`, TASK-4) creates or updates the external issue and records the mapping in `task_tracker_links` — external id, the key a person sees, and the url — so the link has a round-trip identity (AC1). The push is idempotent (AC4) at two levels: the mapping is unique per `(task, integration)`, so a second push updates the issue it already made rather than opening another, and the external write carries a key stable per task (`task-push:{taskId}`), so even a create whose response was lost resolves on the connector's search-before-create to the one issue — the mapping is the fast path, the key the safety net. The write goes through a `TrackerSink` port (a test fakes it; the deployment binds it to the connector sink and its `before_external_write` gate, so an agent-initiated push is gated while a user's push from the UI is their own explicit action, AC6). A push from the route is the user's; it refuses with a named message when no tracker is connected. `sync_state` starts `synced` and `last_synced_hash` records the task's content hash (title, description, criteria, tags, status) at that moment — the basis for the inbound mirror and the `conflict` state (AC2/AC3), which land with the webhook path. Inbound status mirroring, the conflict state and its resolution, and the per-tracker status map (AC2, AC3, AC5) are the next TASK-4 slice.
 
 **The team home** (`GET /workspaces/{id}/teams/{teamId}/home`, `member`, `read:artefacts`, NAV-2) is one read answering "what is happening and what needs me": recent sessions, proposals awaiting confirmation, the coding queue (jobs in `awaiting_approval`, `queued` or `running`), and the checkpoint inbox (pending, unexpired gates on the team's runs — scoped by joining `runs`, since a checkpoint carries no team of its own). Each section returns a bounded slice (five rows) with the true `total` beside it, so a busy team gets a page and a link to the full list rather than a firehose (AC6), and a handled item is simply absent on the next read — including when it was settled on another surface (AC3). The queue is visible to everyone; `canLaunch` tells the surface whether to offer its launch actions, set to whether the caller clears the `senior_member` bar that launching a coding job itself clears (AC5). It is a pure read: mounted unconditionally so the permission suite always covers it, it writes nothing and decides nothing. The live push that updates an open home without a reload (AC2) is the web surface over the §19 fan-out; the server side is this read.
 

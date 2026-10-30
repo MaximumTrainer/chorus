@@ -59,6 +59,7 @@ export const TENANT_TABLES = [
   'comments',
   'signals',
   'webhook_deliveries',
+  'task_tracker_links',
   'audit_events',
 ] as const
 
