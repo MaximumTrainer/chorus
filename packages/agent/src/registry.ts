@@ -70,6 +70,9 @@ function toolContextFrom(ctx: ToolContext): ToolContext {
     actor: ctx.actor,
     now: ctx.now,
     ...(ctx.fetch ? { fetch: ctx.fetch } : {}),
+    // A sink tool's only route to a connector write (INT-4). Passed through, not
+    // reachable any other way, for the same reason `fetch` is.
+    ...(ctx.sinkDispatcher ? { sinkDispatcher: ctx.sinkDispatcher } : {}),
   }
 }
 
