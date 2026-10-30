@@ -63,6 +63,8 @@ import { createSessionService } from './sessions.js'
 import { sessionRoutes } from './session-routes.js'
 import { createHomeService } from './home.js'
 import { homeRoutes } from './home-routes.js'
+import { createTaskPushService, type TrackerSink } from './task-push.js'
+import { pushRoutes } from './push-routes.js'
 import { createRetriever } from '@chorus/brain'
 import { createNotifier } from '@chorus/notifications'
 import { createDecisionLinks } from '@chorus/agent'
@@ -151,6 +153,15 @@ export interface AppOptions {
    * but always fails is worse than one that is honestly not there.
    */
   codingJobs?: CodingJobService
+  /**
+   * Performs the external write when a task is pushed to a tracker (TASK-4).
+   *
+   * Injected for the same reason as `turn` and `codingJobs`: the write goes
+   * through a connector sink and its credentials, which a test fakes and a
+   * deployment binds. Absent, the push route refuses rather than being missing,
+   * so the permission suite still covers it.
+   */
+  trackerSink?: TrackerSink
   /**
    * Where a grounded surface reads a stored context bundle (CHAT-3).
    *
@@ -327,6 +338,7 @@ function buildRoutes(
   retriever?: Retriever,
   decompose?: Decomposer,
   codingJobs?: CodingJobService,
+  trackerSink?: TrackerSink,
   mcp?: McpEndpointOptions,
   dispatch: (request: Request) => Promise<Response> = () => {
     throw new Error('MCP requests need the app to dispatch through; this table was built without one')
@@ -383,6 +395,13 @@ function buildRoutes(
       ),
       ...sessionRoutes(createSessionService(config), turn, retriever),
       ...homeRoutes(createHomeService(config)),
+      // Mounted unconditionally so the permission suite covers it; it refuses
+      // when no tracker push is wired (TASK-4).
+      ...pushRoutes(
+        trackerSink
+          ? createTaskPushService(config, { tasks: createTaskService(config), sink: trackerSink })
+          : undefined,
+      ),
       // Unconditional, for the reason `defaultCodingJobs` gives: the permission
       // suite enumerates `routeTable()`, and a route that exists only when a
       // retriever is wired is one it would never check.
@@ -648,6 +667,7 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
           options.retriever,
           options.decompose,
           options.codingJobs,
+          options.trackerSink,
           options.mcp,
           (request) => Promise.resolve(app.fetch(request)),
         )

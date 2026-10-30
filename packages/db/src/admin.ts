@@ -267,6 +267,12 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
          VALUES ($1, $2, 'task', $3, 'document', $3)`,
         [ulid(), workspaceId, taskId],
       )
+      await owner.query(
+        `INSERT INTO task_tracker_links
+           (id, workspace_id, task_id, integration_id, external_id, external_key, external_url)
+         VALUES ($1, $2, $3, $4, 'seed-issue', 'SEED-1', 'https://tracker.test/SEED-1')`,
+        [ulid(), workspaceId, taskId, integrationId],
+      )
       const sessionId = ulid()
       await owner.query(
         `INSERT INTO chat_sessions (id, workspace_id, team_id, entry_point, created_by)
@@ -699,6 +705,17 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
             `INSERT INTO quick_actions (id, workspace_id, team_id, key, label, prompt)
              VALUES ($1, $2, $3, 'seeded', 'x', 'p')`,
             [id, workspaceId, team?.id ?? id],
+          )
+          return
+        }
+        case 'task_tracker_links': {
+          const [task] = await tx.query<{ id: string }>(`SELECT id FROM tasks LIMIT 1`)
+          const [integration] = await tx.query<{ id: string }>(`SELECT id FROM integrations LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO task_tracker_links
+               (id, workspace_id, task_id, integration_id, external_id)
+             VALUES ($1, $2, $3, $4, 'seed-issue')`,
+            [id, workspaceId, task?.id ?? id, integration?.id ?? id],
           )
           return
         }
