@@ -1,0 +1,27 @@
+{
+  "description": "Linear sink: a create_issue with no prior match. First POST is the idempotency search (empty), second is the issueCreate mutation. Hand-authored from the published schema; not recorded against linear.app.",
+  "interactions": [
+    {
+      "request": { "method": "POST", "url": "https://api.linear.app/graphql" },
+      "response": { "status": 200, "body": { "data": { "searchIssues": { "nodes": [] } } } }
+    },
+    {
+      "request": { "method": "POST", "url": "https://api.linear.app/graphql" },
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "issueCreate": {
+              "success": true,
+              "issue": {
+                "id": "lin-issue-new",
+                "identifier": "ACME-42",
+                "url": "https://linear.app/acme/issue/ACME-42"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

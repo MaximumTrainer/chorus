@@ -1,0 +1,12 @@
+{
+  "description": "Linear sink: the issueCreate is rejected as invalid. Linear answers 200 with a GraphQL errors array naming the bad field. Hand-authored; not recorded against linear.app.",
+  "interactions": [
+    {
+      "request": { "method": "POST", "url": "https://api.linear.app/graphql" },
+      "response": {
+        "status": 200,
+        "body": { "errors": [{ "message": "title must not be empty", "extensions": { "code": "INVALID_INPUT" } }] }
+      }
+    }
+  ]
+}

@@ -10,8 +10,10 @@ import type {
   Capabilities,
   Connector,
   ConnectorContext,
+  ExternalRef,
   HealthStatus,
   PullResult,
+  SinkSpec,
   WebhookRequest,
   WebhookSpec,
 } from '../contract.js'
@@ -146,7 +148,7 @@ export function createLinearConnector(options: LinearOptions = {}): Connector {
     scopes: ['read'],
   }
 
-  const capabilities: Capabilities = { source: true }
+  const capabilities: Capabilities = { source: true, sink: true }
 
   async function refresh(ctx: ConnectorContext): Promise<string | undefined> {
     const refreshToken = ctx.credentials.refreshToken
@@ -224,10 +226,151 @@ export function createLinearConnector(options: LinearOptions = {}): Connector {
   const restricted = (ctx: ConnectorContext): boolean =>
     ctx.config.privateByDefault !== false
 
+  /**
+   * The idempotency marker a create stamps onto the object it makes (INT-4 AC2).
+   *
+   * Linear offers no idempotency key of its own, so the fallback is search-
+   * before-create: the key is written into the created object's text, and
+   * `find` searches for it. A retry — including one after a lost response —
+   * then matches the object the first call made rather than making a second.
+   * It is a machine marker, kept on its own line so it reads as metadata.
+   */
+  const marker = (key: string): string => `\n\n[chorus-idem:${key}]`
+
+  /** The first issue a search by marker turns up, as an external reference. */
+  async function findByMarker(key: string, ctx: ConnectorContext): Promise<ExternalRef | null> {
+    const data = await query(
+      `query Find($term: String!) { searchIssues(term: $term, first: 1) { nodes { id url } } }`,
+      { term: `[chorus-idem:${key}]` },
+      ctx,
+    )
+    const nodes = ((data.searchIssues ?? {}) as { nodes?: Array<{ id?: string; url?: string }> }).nodes
+    const hit = nodes?.[0]
+    if (!hit?.id) return null
+    return { externalId: hit.id, ...(hit.url ? { url: hit.url } : {}) }
+  }
+
+  /** Reads an `{ id, url }` issue out of a mutation payload, or fails permanently. */
+  function issueRefFrom(payload: unknown, action: string): ExternalRef {
+    const result = (payload ?? {}) as { success?: boolean; issue?: { id?: string; url?: string } }
+    if (result.success === false || !result.issue?.id) {
+      // A mutation that reports failure without a GraphQL error (which `query`
+      // would already have raised) is still permanent — retrying it changes
+      // nothing — so it fails here with the action named rather than returning
+      // a reference to an object that does not exist.
+      throw new UpstreamError(`Linear ${action} did not return an issue`, { payload })
+    }
+    return { externalId: result.issue.id, ...(result.issue.url ? { url: result.issue.url } : {}) }
+  }
+
+  const sink: SinkSpec = {
+    actions: {
+      create_issue: {
+        name: 'create_issue',
+        sideEffect: 'external',
+        find: (key, ctx) => findByMarker(key, ctx),
+        async execute(input, key, ctx): Promise<ExternalRef> {
+          const { teamId, title, description } = input as {
+            teamId?: string
+            title: string
+            description?: string
+          }
+          const data = await query(
+            `mutation Create($input: IssueCreateInput!) {
+               issueCreate(input: $input) { success issue { id identifier url } }
+             }`,
+            {
+              input: {
+                teamId: teamId ?? (ctx.config.teamId as string | undefined),
+                title,
+                description: `${description ?? ''}${marker(key)}`,
+              },
+            },
+            ctx,
+          )
+          return issueRefFrom(data.issueCreate, 'issueCreate')
+        },
+      },
+
+      update_issue: {
+        name: 'update_issue',
+        sideEffect: 'external',
+        // An update is naturally idempotent — setting the same fields twice
+        // leaves the same issue — so it needs no search-before-create.
+        async execute(input, _key, ctx): Promise<ExternalRef> {
+          const { issueId, title, description } = input as {
+            issueId: string
+            title?: string
+            description?: string
+          }
+          const data = await query(
+            `mutation Update($id: String!, $input: IssueUpdateInput!) {
+               issueUpdate(id: $id, input: $input) { success issue { id url } }
+             }`,
+            {
+              id: issueId,
+              input: {
+                ...(title !== undefined ? { title } : {}),
+                ...(description !== undefined ? { description } : {}),
+              },
+            },
+            ctx,
+          )
+          return issueRefFrom(data.issueUpdate, 'issueUpdate')
+        },
+      },
+
+      transition: {
+        name: 'transition',
+        sideEffect: 'external',
+        // Mirroring a status is setting one field to a target state — applying
+        // it twice is the same end state, so no dedup is needed.
+        async execute(input, _key, ctx): Promise<ExternalRef> {
+          const { issueId, stateId } = input as { issueId: string; stateId: string }
+          const data = await query(
+            `mutation Transition($id: String!, $input: IssueUpdateInput!) {
+               issueUpdate(id: $id, input: $input) { success issue { id url } }
+             }`,
+            { id: issueId, input: { stateId } },
+            ctx,
+          )
+          return issueRefFrom(data.issueUpdate, 'issueUpdate')
+        },
+      },
+
+      comment: {
+        name: 'comment',
+        sideEffect: 'external',
+        // A comment is a create, so it dedupes the same way an issue does: the
+        // marker goes in the body and `find` searches for it.
+        find: (key, ctx) => findByMarker(key, ctx),
+        async execute(input, key, ctx): Promise<ExternalRef> {
+          const { issueId, body } = input as { issueId: string; body: string }
+          const data = await query(
+            `mutation Comment($input: CommentCreateInput!) {
+               commentCreate(input: $input) { success comment { id url } }
+             }`,
+            { input: { issueId, body: `${body}${marker(key)}` } },
+            ctx,
+          )
+          const result = (data.commentCreate ?? {}) as {
+            success?: boolean
+            comment?: { id?: string; url?: string }
+          }
+          if (result.success === false || !result.comment?.id) {
+            throw new UpstreamError('Linear commentCreate did not return a comment', { payload: data })
+          }
+          return { externalId: result.comment.id, ...(result.comment.url ? { url: result.comment.url } : {}) }
+        },
+      },
+    },
+  }
+
   return {
     kind: 'linear',
     auth,
     capabilities,
+    sink,
     webhooks: linearWebhooks,
 
     async pull(cursor: string | null, ctx: ConnectorContext): Promise<PullResult> {
