@@ -14,11 +14,11 @@ import type { AnyTool, ToolContext } from '@chorus/core'
  * eventually is not. The tool most likely to be added ungated is the newest,
  * which is also the least reviewed.
  *
- * Enumeration alone would be **vacuous today** — no shipped tool writes
- * externally yet, because connector sinks are INT-4. A test that passes by
- * having nothing to check is worse than no test, so this suite also probes the
- * *mechanism* with tools of its own, which is non-vacuous now and stays true
- * whatever gets registered later.
+ * The enumeration is **non-vacuous as of INT-4**: the connector sink tools are
+ * the first shipped `external` tools, so the loop below now gates real
+ * subjects. The suite also probes the *mechanism* with tools of its own, which
+ * held even when the shipped set had no external tool and stays true whatever
+ * gets registered later.
  */
 
 const context = (): ToolContext => ({
@@ -76,10 +76,9 @@ describe('AGENT-5 AC2 external tools are gated by enumeration', () => {
       ).rejects.toThrow(/before_external_write/)
     }
 
-    // Recorded rather than asserted: today this list is empty because connector
-    // sinks are INT-4. The loop above becomes the real gate the moment one
-    // lands, and the mechanism tests below hold in the meantime.
-    expect(Array.isArray(external)).toBe(true)
+    // As of INT-4 this list is non-empty — the connector sink tools — so the
+    // loop above is the real gate, not a formality.
+    expect(external.length, 'the sink tools make this gate non-vacuous').toBeGreaterThan(0)
   })
 
   it('AGENT-5 AC2: the mechanism refuses an ungated external tool — checked without relying on the shipped set', async () => {

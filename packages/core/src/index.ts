@@ -45,7 +45,15 @@ export { CONNECTOR_KINDS, SignalSchema, SignalPermissionsSchema, parseSignal } f
 export { ENTITY_KINDS, EntityCandidateSchema, parseEntityCandidate } from './entities.js'
 export type { EntityKind, EntityCandidate } from './entities.js'
 export type { ConnectorKind, Signal, SignalPermissions } from './signals.js'
-export type { Tool, AnyTool, ToolContext, SideEffect } from './tools.js'
+export type {
+  Tool,
+  AnyTool,
+  ToolContext,
+  SideEffect,
+  ExternalRef,
+  SinkDispatch,
+  SinkDispatcher,
+} from './tools.js'
 export {
   STEP_TYPES,
   MODEL_TIERS,

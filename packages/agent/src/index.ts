@@ -3,6 +3,8 @@ export type { ToolRegistry, InvokeOptions } from './registry.js'
 export { createFetchUrlTool } from './tools/fetch-url.js'
 export type { FetchUrlOptions } from './tools/fetch-url.js'
 export { shippedTools } from './tools/index.js'
+export { createSinkTool, trackerSinkTools } from './tools/sink.js'
+export type { SinkToolSpec } from './tools/sink.js'
 export type { ShippedToolOptions } from './tools/index.js'
 export { createExecutor, expireCheckpoints } from './executor.js'
 export type {

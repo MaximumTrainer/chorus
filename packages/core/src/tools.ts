@@ -51,6 +51,58 @@ export interface ToolContext {
   readonly now: () => Date
   /** A tool's only route to the network, and only where one is granted. */
   readonly fetch?: typeof fetch
+  /**
+   * A sink tool's only route to a connector write (INT-4).
+   *
+   * Declared here, in `core`, for the same reason the tool contract is: the
+   * agent runtime holds a sink tool but cannot reach `@chorus/connectors`
+   * (the dependency rule forbids it, as it does between `coding` and
+   * `testing` — which is why the `Sandbox` contract lives here too). The tool
+   * states *what* to write; the dispatcher the worker supplies resolves the
+   * workspace's integration, decrypts its credentials, and performs the write
+   * idempotently. A tool given no dispatcher cannot write, which is the right
+   * failure for a deployment that wired none.
+   */
+  readonly sinkDispatcher?: SinkDispatcher
+}
+
+/** A reference to the external object a sink write created or found (INT-4). */
+export interface ExternalRef {
+  readonly externalId: string
+  readonly url?: string
+}
+
+/** One external write, as a sink tool asks for it (INT-4). */
+export interface SinkDispatch {
+  /**
+   * Which connector performs it — a tracker kind like `linear`. Omitted when
+   * the tool is kind-agnostic and the dispatcher resolves the workspace's
+   * connected tracker for the team.
+   */
+  readonly connector?: string
+  /** The sink action, e.g. `create_issue`. */
+  readonly action: string
+  /** The action's input, already validated by the tool's own schema. */
+  readonly input: unknown
+  /**
+   * The idempotency key the tool derived from its input, carried through so a
+   * retry — including one after a lost response — resolves to the one object
+   * the connector's search-before-create finds rather than making a second.
+   */
+  readonly idempotencyKey: string
+}
+
+/**
+ * Performs a sink tool's external write (INT-4).
+ *
+ * The seam between a sink tool (in the agent runtime) and the connector that
+ * actually writes (in `@chorus/connectors`, which the runtime may not import).
+ * The worker implements it over the credential store and the connector
+ * registry; a test implements it with a fake. Either way the tool stays the
+ * same code.
+ */
+export interface SinkDispatcher {
+  dispatch(request: SinkDispatch, ctx: ToolContext): Promise<ExternalRef>
 }
 
 export interface Tool<I, O> {
