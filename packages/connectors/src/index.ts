@@ -11,7 +11,8 @@ export type {
   WebhookRequest,
   WebhookSpec,
 } from './contract.js'
-export { runSinkAction } from './sink-runner.js'
+export { runSinkAction, runSinkBatch } from './sink-runner.js'
+export type { SinkBatchItem, SinkItemOutcome } from './sink-runner.js'
 export { createReferenceConnector } from './reference/index.js'
 export type {
   ReferenceConnector,
