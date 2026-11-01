@@ -74,6 +74,17 @@ export interface EntityStore {
   reviewItems(
     workspaceId: string,
   ): Promise<readonly { readonly id: string; readonly kind: string; readonly subject: Record<string, unknown> }[]>
+  /**
+   * Every review item in a workspace, open or decided, for a detector's own
+   * deduplication: a decided item is the team's recorded correction, so a
+   * detector must not resurface what was already ruled on — a rejection sticks
+   * (BRAIN-7 AC6).
+   */
+  allReviewItems(
+    workspaceId: string,
+  ): Promise<
+    readonly { readonly id: string; readonly kind: string; readonly status: string; readonly subject: Record<string, unknown> }[]
+  >
   /** One review item by id, or null. */
   reviewItem(
     workspaceId: string,
@@ -355,6 +366,14 @@ export function createEntityStore(config: DbConfig): EntityStore {
         t.query<{ id: string; kind: string; subject: Record<string, unknown> }>(
           `SELECT id, kind, subject FROM brain_review_items
             WHERE status = 'open' ORDER BY created_at DESC`,
+        ),
+      )
+    },
+
+    async allReviewItems(workspaceId) {
+      return tx(workspaceId, (t) =>
+        t.query<{ id: string; kind: string; status: string; subject: Record<string, unknown> }>(
+          `SELECT id, kind, status, subject FROM brain_review_items ORDER BY created_at DESC`,
         ),
       )
     },
