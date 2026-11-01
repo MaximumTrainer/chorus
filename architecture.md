@@ -652,6 +652,8 @@ wiki/graph.json
 
 Pages are committed to the configured git repository under a bot identity (default: a dedicated `product-brain` repository; alternatively `docs/brain/` inside the product repository). Human edits pulled back from git are ingested as **high-trust signals**; `human_edited_at` prevents the compiler from overwriting a hand-edited section — it raises a review item instead (ADR-0010).
 
+The compiler ships in slices. `createWikiCompiler` (in `packages/brain`) is the first: it selects salient entities — those whose edge and evidence counts clear a threshold, so an entity nobody links to or cites earns no page (AC1) — renders each to Markdown whose related-entity and evidence lines are each backed by a real edge or signal (AC2), and lands it in `wiki_pages`. The content hash covers the semantic content, not the `compiledAt` stamp, so an unchanged entity's page is not rewritten on the next run (AC3), and a page with `human_edited_at` set is never clobbered. Committing these pages to git under the bot identity (AC5, AC6) and reconciling hand-edits back into the graph (AC4) are the following slices.
+
 ### 10.7 Brain map (BRAIN-6)
 
 `GET /brain/map` returns nodes (id, kind, name, salience, freshness) and edges (from, to, relation, confidence) for a filtered slice. The client renders a force-directed graph, WebGL above a node threshold. Selecting a node opens a drawer with the compiled page, evidence list and links to artefacts.
