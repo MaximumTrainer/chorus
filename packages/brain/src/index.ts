@@ -512,9 +512,12 @@ export {
   createMergeDetector,
   createStaleDetector,
   createContradictionDetector,
+  createSplitDetector,
   ContradictionOutputSchema,
   MERGE_PROPOSAL_THRESHOLD,
   STALE_AFTER_DAYS,
   REFERENCE_WITHIN_DAYS,
+  SPLIT_MIN_SEPARATION,
+  SPLIT_MIN_CLAIMS,
 } from './self-organise.js'
-export type { MergeDetector, StaleDetector, ContradictionDetector } from './self-organise.js'
+export type { MergeDetector, StaleDetector, ContradictionDetector, SplitDetector } from './self-organise.js'

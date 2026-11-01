@@ -53,7 +53,7 @@ export function createMergeDetector(
       // The pairs already proposed, so a second run does not raise the same
       // item again (the detector is scheduled and will see these entities
       // nightly until a human decides).
-      const open = await store.reviewItems(workspaceId)
+      const open = await store.allReviewItems(workspaceId)
       const existing = new Set(
         open
           .filter((item) => item.kind === 'merge')
@@ -126,7 +126,7 @@ export function createStaleDetector(
         ),
       )
 
-      const open = await store.reviewItems(workspaceId)
+      const open = await store.allReviewItems(workspaceId)
       const already = new Set(
         open
           .filter((item) => item.kind === 'stale')
@@ -210,7 +210,7 @@ export function createContradictionDetector(deps: {
         byEntity.set(row.entity_id, entry)
       }
 
-      const open = await store.reviewItems(workspaceId)
+      const open = await store.allReviewItems(workspaceId)
       const already = new Set(
         open
           .filter((item) => item.kind === 'contradiction')
@@ -278,6 +278,112 @@ export function createContradictionDetector(deps: {
           already.add(key)
           proposed += 1
         }
+      }
+      return { proposed }
+    },
+  }
+}
+
+/** Cosine distance between the two clusters' seeds, above which a split is proposed. */
+export const SPLIT_MIN_SEPARATION = 0.6
+/** Below this many evidence signals, an entity is too thin to cluster. */
+export const SPLIT_MIN_CLAIMS = 4
+
+/** Cosine distance for already-normalised embedding vectors. */
+function cosineDistance(a: readonly number[], b: readonly number[]): number {
+  let dot = 0
+  for (let i = 0; i < a.length && i < b.length; i += 1) dot += (a[i] ?? 0) * (b[i] ?? 0)
+  return 1 - dot
+}
+
+export interface SplitDetector {
+  /** Proposes dividing an entity whose evidence forms two clear clusters (BRAIN-7 AC3). */
+  detect(workspaceId: string): Promise<{ readonly proposed: number }>
+}
+
+export function createSplitDetector(deps: {
+  readonly config: DbConfig
+  readonly models: ModelProvider
+  readonly embeddingModel: ModelRef
+}): SplitDetector {
+  const store = createEntityStore(deps.config)
+  const tx = <T>(workspaceId: string, fn: (t: TenantTx) => Promise<T>) =>
+    withTenant(workspaceId, fn, { config: deps.config })
+
+  return {
+    async detect(workspaceId) {
+      const rows = await tx(workspaceId, (t) =>
+        t.query<ClaimRow>(
+          `SELECT e.id AS entity_id, e.name, s.external_id AS signal_external_id, s.text, s.url
+             FROM entities e
+             JOIN entity_evidence ev ON ev.entity_id = e.id
+             JOIN signals s ON s.id = ev.signal_id AND s.text IS NOT NULL AND s.text <> ''
+            ORDER BY e.id, s.external_id`,
+        ),
+      )
+      const byEntity = new Map<string, { name: string; claims: Map<string, ClaimRow> }>()
+      for (const row of rows) {
+        const entry = byEntity.get(row.entity_id) ?? { name: row.name, claims: new Map() }
+        entry.claims.set(row.signal_external_id, row)
+        byEntity.set(row.entity_id, entry)
+      }
+
+      const existing = new Set(
+        (await store.allReviewItems(workspaceId))
+          .filter((item) => item.kind === 'split')
+          .map((item) => (item.subject as { entity?: { entityId?: string } }).entity?.entityId),
+      )
+
+      let proposed = 0
+      for (const [entityId, entry] of byEntity) {
+        if (existing.has(entityId)) continue
+        const claims = [...entry.claims.values()]
+        if (claims.length < SPLIT_MIN_CLAIMS) continue
+
+        const vectors = await deps.models.embed(
+          claims.map((c) => c.text),
+          deps.embeddingModel,
+        )
+
+        // Two seeds: the first point, and the point farthest from it. If even
+        // the farthest is close, the evidence is cohesive — no split.
+        const seedA = vectors[0]!
+        let seedBIndex = 0
+        let maxDist = -1
+        for (let i = 1; i < vectors.length; i += 1) {
+          const d = cosineDistance(seedA, vectors[i]!)
+          if (d > maxDist) {
+            maxDist = d
+            seedBIndex = i
+          }
+        }
+        if (maxDist < SPLIT_MIN_SEPARATION) continue
+        const seedB = vectors[seedBIndex]!
+
+        // Assign each claim to its nearer seed.
+        const clusterA: string[] = []
+        const clusterB: string[] = []
+        claims.forEach((c, i) => {
+          const toA = cosineDistance(vectors[i]!, seedA)
+          const toB = cosineDistance(vectors[i]!, seedB)
+          ;(toA <= toB ? clusterA : clusterB).push(c.signal_external_id)
+        })
+        // A split needs two genuine groups, not one outlier.
+        if (clusterA.length < 2 || clusterB.length < 2) continue
+
+        await store.openReviewItem({
+          workspaceId,
+          kind: 'split',
+          subject: {
+            entity: { entityId, name: entry.name },
+            clusterA,
+            clusterB,
+            separation: maxDist,
+            detector: 'split',
+          },
+        })
+        existing.add(entityId)
+        proposed += 1
       }
       return { proposed }
     },
