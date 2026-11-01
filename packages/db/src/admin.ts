@@ -273,6 +273,21 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
          VALUES ($1, $2, $3, $4, 'seed-issue', 'SEED-1', 'https://tracker.test/SEED-1')`,
         [ulid(), workspaceId, taskId, integrationId],
       )
+      const entityId = ulid()
+      await owner.query(
+        `INSERT INTO entities (id, workspace_id, kind, external_id, name)
+         VALUES ($1, $2, 'ticket', 'seed:entity', 'seed entity')`,
+        [entityId, workspaceId],
+      )
+      await owner.query(
+        `INSERT INTO entity_aliases (id, workspace_id, entity_id, alias) VALUES ($1, $2, $3, 'SEED')`,
+        [ulid(), workspaceId, entityId],
+      )
+      await owner.query(
+        `INSERT INTO entity_evidence (id, workspace_id, entity_id, signal_id)
+         VALUES ($1, $2, $3, (SELECT id FROM signals WHERE workspace_id = $2 LIMIT 1))`,
+        [ulid(), workspaceId, entityId],
+      )
       const sessionId = ulid()
       await owner.query(
         `INSERT INTO chat_sessions (id, workspace_id, team_id, entry_point, created_by)
@@ -716,6 +731,32 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
                (id, workspace_id, task_id, integration_id, external_id)
              VALUES ($1, $2, $3, $4, 'seed-issue')`,
             [id, workspaceId, task?.id ?? id, integration?.id ?? id],
+          )
+          return
+        }
+        case 'entities': {
+          await tx.execute(
+            `INSERT INTO entities (id, workspace_id, kind, external_id, name)
+             VALUES ($1, $2, 'ticket', $1, 'seed entity')`,
+            [id, workspaceId],
+          )
+          return
+        }
+        case 'entity_aliases': {
+          const [entity] = await tx.query<{ id: string }>(`SELECT id FROM entities LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO entity_aliases (id, workspace_id, entity_id, alias) VALUES ($1, $2, $3, $1)`,
+            [id, workspaceId, entity?.id ?? id],
+          )
+          return
+        }
+        case 'entity_evidence': {
+          const [entity] = await tx.query<{ id: string }>(`SELECT id FROM entities LIMIT 1`)
+          const [signal] = await tx.query<{ id: string }>(`SELECT id FROM signals LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO entity_evidence (id, workspace_id, entity_id, signal_id)
+             VALUES ($1, $2, $3, $4)`,
+            [id, workspaceId, entity?.id ?? id, signal?.id ?? id],
           )
           return
         }
