@@ -140,10 +140,19 @@ export function createEntityStore(config: DbConfig): EntityStore {
         }
 
         await t.execute(
-          `INSERT INTO entity_evidence (id, workspace_id, entity_id, signal_id, extractor_version)
-           VALUES ($1, $2, $3, $4, $5)
+          `INSERT INTO entity_evidence
+             (id, workspace_id, entity_id, signal_id, char_start, char_end, extractor_version)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
            ON CONFLICT (workspace_id, entity_id, signal_id, extractor_version) DO NOTHING`,
-          [ulid(), workspaceId, entityId, signalId, extractorVersion],
+          [
+            ulid(),
+            workspaceId,
+            entityId,
+            signalId,
+            candidate.evidence.charStart ?? null,
+            candidate.evidence.charEnd ?? null,
+            extractorVersion,
+          ],
         )
 
         return { entityId, created: row!.created }

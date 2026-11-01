@@ -32,5 +32,8 @@
   "shape/plan-action": {
     "text": "Add acceptance criteria to CH-12: parsing is separated from validation.",
     "gather": "{\n  \"fragments\": [\n    { \"kind\": \"task\", \"key\": \"CH-12\", \"title\": \"Split the invoice parser\" }\n  ]\n}"
+  },
+  "brain/extract": {
+    "text": "ACME-7: The deploy step times out. Ada will take this; it blocks the billing release."
   }
 }
