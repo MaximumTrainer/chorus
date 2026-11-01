@@ -582,6 +582,8 @@ Two passes, deliberately in this order:
 
 Every extraction records `extractor_version`. Bumping a version enqueues re-extraction of affected signals rather than silently changing history.
 
+The graph's nodes live in `entities`, with `entity_aliases` for the other names a thing goes by and `entity_evidence` linking each entity to the signal that justifies it — evidence is a row, not a confidence number, because a belief with no traceable source is an unfalsifiable assertion. The deterministic pass is `createEntityStore` (in `packages/brain`, pure persistence) driven by `createDeterministicExtractor` (in `apps/worker`, which calls each connector's `mapExternal` — the mapping is the connector's and the runtime may not import it, the same seam the sink dispatcher uses). Identity is the source's namespaced external id, so re-extracting the same signals at one version is idempotent at the database (AC4) rather than by a check-then-insert that races a sync. The LLM pass — candidate entities and edges with character-span evidence, resolution by alias then trigram then embedding, automatic merge only above threshold and a `brain_review_items` row below it — is the next slice; the `entity_edges` and `brain_review_items` tables arrive with it.
+
 ### 10.4 Self-organisation (BRAIN-7)
 
 Nightly jobs propose, never apply silently:

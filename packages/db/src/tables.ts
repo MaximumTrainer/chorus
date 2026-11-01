@@ -60,6 +60,9 @@ export const TENANT_TABLES = [
   'signals',
   'webhook_deliveries',
   'task_tracker_links',
+  'entities',
+  'entity_aliases',
+  'entity_evidence',
   'audit_events',
 ] as const
 

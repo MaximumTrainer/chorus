@@ -501,3 +501,6 @@ export function createRetriever(config: DbConfig, options: RetrieverOptions): Re
  * evaluation set's remit, not in intuition.
  */
 const MAX_COSINE_DISTANCE = 0.6
+
+export { createEntityStore } from './entities.js'
+export type { EntityStore, StoredEntity, UpsertResult } from './entities.js'
