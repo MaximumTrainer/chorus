@@ -111,7 +111,7 @@ export interface EntityStore {
     readonly itemId: string
     readonly decision: 'accept' | 'reject'
     readonly decidedBy?: string
-  }): Promise<{ readonly applied: boolean }>
+  }): Promise<{ readonly applied: boolean; readonly decided: boolean }>
   /** The entity with this external id, or null. */
   findByExternalId(workspaceId: string, externalId: string): Promise<string | null>
   /**
@@ -401,7 +401,7 @@ export function createEntityStore(config: DbConfig): EntityStore {
           `SELECT kind, status, subject FROM brain_review_items WHERE id = $1`,
           [itemId],
         )
-        if (!item || item.status !== 'open') return { applied: false }
+        if (!item || item.status !== 'open') return { applied: false, decided: false }
 
         let applied = false
         if (decision === 'accept' && item.kind === 'merge') {
@@ -427,7 +427,7 @@ export function createEntityStore(config: DbConfig): EntityStore {
             WHERE id = $1`,
           [itemId, decision === 'accept' ? 'accepted' : 'rejected', decidedBy ?? null],
         )
-        return { applied }
+        return { applied, decided: true }
       })
     },
 

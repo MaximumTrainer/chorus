@@ -68,7 +68,9 @@ import { createTaskSyncService, type TaskSyncService } from './task-sync.js'
 import { pushRoutes } from './push-routes.js'
 import { webhookRoutes } from './webhook-routes.js'
 import type { TrackerWebhook } from './tracker-webhook.js'
-import { createRetriever } from '@chorus/brain'
+import { createRetriever, createEntityStore } from '@chorus/brain'
+import { createInboxService } from './inbox.js'
+import { inboxRoutes } from './inbox-routes.js'
 import { createNotifier } from '@chorus/notifications'
 import { createDecisionLinks } from '@chorus/agent'
 // WALKING SKELETON — delete in Phase 1. See src/walking-skeleton/README.md.
@@ -412,6 +414,7 @@ function buildRoutes(
       ),
       ...sessionRoutes(createSessionService(config), turn, retriever),
       ...homeRoutes(createHomeService(config)),
+      ...inboxRoutes(createInboxService(config, { entities: createEntityStore(config) })),
       // Mounted unconditionally so the permission suite covers it; it refuses
       // when no tracker push is wired (TASK-4).
       ...pushRoutes(
