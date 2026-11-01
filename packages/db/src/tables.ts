@@ -63,6 +63,8 @@ export const TENANT_TABLES = [
   'entities',
   'entity_aliases',
   'entity_evidence',
+  'entity_edges',
+  'brain_review_items',
   'audit_events',
 ] as const
 

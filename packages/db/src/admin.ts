@@ -288,6 +288,22 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
          VALUES ($1, $2, $3, (SELECT id FROM signals WHERE workspace_id = $2 LIMIT 1))`,
         [ulid(), workspaceId, entityId],
       )
+      const entityId2 = ulid()
+      await owner.query(
+        `INSERT INTO entities (id, workspace_id, kind, external_id, name)
+         VALUES ($1, $2, 'feature', 'seed:entity-2', 'seed feature')`,
+        [entityId2, workspaceId],
+      )
+      await owner.query(
+        `INSERT INTO entity_edges (id, workspace_id, from_entity_id, to_entity_id, kind)
+         VALUES ($1, $2, $3, $4, 'relates_to')`,
+        [ulid(), workspaceId, entityId, entityId2],
+      )
+      await owner.query(
+        `INSERT INTO brain_review_items (id, workspace_id, kind, subject)
+         VALUES ($1, $2, 'merge', '{}'::jsonb)`,
+        [ulid(), workspaceId],
+      )
       const sessionId = ulid()
       await owner.query(
         `INSERT INTO chat_sessions (id, workspace_id, team_id, entry_point, created_by)
@@ -757,6 +773,23 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
             `INSERT INTO entity_evidence (id, workspace_id, entity_id, signal_id)
              VALUES ($1, $2, $3, $4)`,
             [id, workspaceId, entity?.id ?? id, signal?.id ?? id],
+          )
+          return
+        }
+        case 'entity_edges': {
+          const entities = await tx.query<{ id: string }>(`SELECT id FROM entities LIMIT 2`)
+          await tx.execute(
+            `INSERT INTO entity_edges (id, workspace_id, from_entity_id, to_entity_id, kind)
+             VALUES ($1, $2, $3, $4, 'relates_to')`,
+            [id, workspaceId, entities[0]?.id ?? id, entities[1]?.id ?? entities[0]?.id ?? id],
+          )
+          return
+        }
+        case 'brain_review_items': {
+          await tx.execute(
+            `INSERT INTO brain_review_items (id, workspace_id, kind, subject)
+             VALUES ($1, $2, 'merge', '{}'::jsonb)`,
+            [id, workspaceId],
           )
           return
         }
