@@ -35,5 +35,9 @@
   },
   "brain/extract": {
     "text": "ACME-7: The deploy step times out. Ada will take this; it blocks the billing release."
+  },
+  "brain/contradiction": {
+    "entity": "Payments Gateway",
+    "claims": "[sig-1] The Payments Gateway is deprecated.\n[sig-2] The Payments Gateway is the recommended path for new work."
   }
 }

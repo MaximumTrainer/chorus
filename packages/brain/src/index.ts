@@ -511,8 +511,10 @@ export type { LlmExtractor, LlmExtractInput, LlmExtractorDeps } from './llm-extr
 export {
   createMergeDetector,
   createStaleDetector,
+  createContradictionDetector,
+  ContradictionOutputSchema,
   MERGE_PROPOSAL_THRESHOLD,
   STALE_AFTER_DAYS,
   REFERENCE_WITHIN_DAYS,
 } from './self-organise.js'
-export type { MergeDetector, StaleDetector } from './self-organise.js'
+export type { MergeDetector, StaleDetector, ContradictionDetector } from './self-organise.js'

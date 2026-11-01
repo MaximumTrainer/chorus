@@ -1,4 +1,7 @@
+import { z } from 'zod'
+import { ulid } from '@chorus/core'
 import { withTenant, type DbConfig, type TenantTx } from '@chorus/db'
+import { renderPrompt, type ModelProvider, type ModelRef, type Prompt } from '@chorus/llm'
 import { createEntityStore, type EntityStore } from './entities.js'
 
 /**
@@ -139,6 +142,142 @@ export function createStaleDetector(
           subject: { entity: { entityId: entity.id, name: entity.name }, detector: 'stale' },
         })
         proposed += 1
+      }
+      return { proposed }
+    },
+  }
+}
+
+/** The strict shape the contradiction pass returns — pairs of signal ids that conflict. */
+export const ContradictionOutputSchema = z.object({
+  contradictions: z
+    .array(
+      z.object({
+        aSignalExternalId: z.string().min(1),
+        bSignalExternalId: z.string().min(1),
+        reason: z.string().default(''),
+      }),
+    )
+    .default([]),
+})
+
+export interface ContradictionDetector {
+  /** Surfaces conflicting claims about one entity as a review item showing both (BRAIN-7 AC5). */
+  detect(workspaceId: string): Promise<{ readonly proposed: number }>
+}
+
+interface ClaimRow {
+  readonly entity_id: string
+  readonly name: string
+  readonly signal_external_id: string
+  readonly text: string
+  readonly url: string | null
+}
+
+export function createContradictionDetector(deps: {
+  readonly config: DbConfig
+  readonly models: ModelProvider
+  readonly modelFor: (tier: string) => ModelRef
+  readonly prompt: Prompt
+  readonly priceFor?: (model: ModelRef, usage: { inputTokens: number; outputTokens: number }) => number
+}): ContradictionDetector {
+  const store = createEntityStore(deps.config)
+  const model = deps.modelFor('fast')
+  const tx = <T>(workspaceId: string, fn: (t: TenantTx) => Promise<T>) =>
+    withTenant(workspaceId, fn, { config: deps.config })
+
+  return {
+    async detect(workspaceId) {
+      // Co-located claims only (per the impl note): the texts of the signals
+      // that evidence one entity. Contradiction detection is the most expensive
+      // and least reliable of the four, so it is scoped tightly and tuned for
+      // precision rather than run over the whole corpus.
+      const rows = await tx(workspaceId, (t) =>
+        t.query<ClaimRow>(
+          `SELECT e.id AS entity_id, e.name, s.external_id AS signal_external_id, s.text, s.url
+             FROM entities e
+             JOIN entity_evidence ev ON ev.entity_id = e.id
+             JOIN signals s ON s.id = ev.signal_id AND s.text IS NOT NULL AND s.text <> ''
+            ORDER BY e.id, s.external_id`,
+        ),
+      )
+
+      // Group claims per entity, de-duplicating by signal.
+      const byEntity = new Map<string, { name: string; claims: Map<string, ClaimRow> }>()
+      for (const row of rows) {
+        const entry = byEntity.get(row.entity_id) ?? { name: row.name, claims: new Map() }
+        entry.claims.set(row.signal_external_id, row)
+        byEntity.set(row.entity_id, entry)
+      }
+
+      const open = await store.reviewItems(workspaceId)
+      const already = new Set(
+        open
+          .filter((item) => item.kind === 'contradiction')
+          .map((item) => {
+            const s = item.subject as {
+              entity?: { entityId?: string }
+              claimA?: { signalExternalId?: string }
+              claimB?: { signalExternalId?: string }
+            }
+            return [s.entity?.entityId, [s.claimA?.signalExternalId, s.claimB?.signalExternalId].sort().join('~')].join('|')
+          }),
+      )
+
+      let proposed = 0
+      for (const [entityId, entry] of byEntity) {
+        if (entry.claims.size < 2) continue
+        const claims = [...entry.claims.values()]
+        const { value, usage } = await deps.models.generate({
+          model,
+          messages: [
+            {
+              role: 'user',
+              content: renderPrompt(deps.prompt, {
+                entity: entry.name,
+                claims: claims.map((c) => `[${c.signal_external_id}] ${c.text}`).join('\n'),
+              }),
+            },
+          ],
+          context: { workspaceId, teamId: '', purpose: 'classify' },
+          schema: ContradictionOutputSchema,
+          schemaName: 'contradiction',
+        })
+
+        const costCents = deps.priceFor
+          ? deps.priceFor(model, { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens })
+          : 0
+        await tx(workspaceId, (t) =>
+          t.execute(
+            `INSERT INTO spend_ledger
+               (id, workspace_id, provider, model, purpose, tokens_in, tokens_cached_in, tokens_out, cost_cents)
+             VALUES ($1, $2, $3, $4, 'classify', $5, $6, $7, $8)`,
+            [ulid(), workspaceId, model.provider, model.model, usage.inputTokens, usage.cachedInputTokens ?? 0, usage.outputTokens, costCents],
+          ),
+        )
+
+        for (const c of value.contradictions) {
+          const a = entry.claims.get(c.aSignalExternalId)
+          const b = entry.claims.get(c.bSignalExternalId)
+          // Only pairs the model drew from the claims it was given — a
+          // hallucinated id names no real source and cannot be shown.
+          if (!a || !b || a.signal_external_id === b.signal_external_id) continue
+          const key = [entityId, [a.signal_external_id, b.signal_external_id].sort().join('~')].join('|')
+          if (already.has(key)) continue
+          await store.openReviewItem({
+            workspaceId,
+            kind: 'contradiction',
+            subject: {
+              entity: { entityId, name: entry.name },
+              claimA: { signalExternalId: a.signal_external_id, text: a.text, url: a.url },
+              claimB: { signalExternalId: b.signal_external_id, text: b.text, url: b.url },
+              reason: c.reason,
+              detector: 'contradiction',
+            },
+          })
+          already.add(key)
+          proposed += 1
+        }
       }
       return { proposed }
     },

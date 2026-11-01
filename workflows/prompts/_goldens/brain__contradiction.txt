@@ -1,0 +1,14 @@
+These claims all concern the same thing — "Payments Gateway" — each drawn from a
+different source and labelled with its signal id:
+
+[sig-1] The Payments Gateway is deprecated.
+[sig-2] The Payments Gateway is the recommended path for new work.
+
+Find only pairs that **genuinely contradict**: two claims that cannot both be
+true of Payments Gateway at once. A difference in emphasis, scope, or time is not a
+contradiction, and proposing one that is not costs a human the work of
+dismissing it — so when in doubt, leave it out.
+
+For each real contradiction, return the two signal ids (`aSignalExternalId`,
+`bSignalExternalId`) exactly as labelled above, and a one-line `reason`. Prefer
+neither side; the point is to show both.
