@@ -84,6 +84,13 @@ export const EntityCandidateSchema = z.object({
   evidence: z.object({
     signalExternalId: z.string().min(1),
     source: z.string().min(1),
+    /**
+     * The character range in the signal that justifies this, when the LLM pass
+     * cites one. Absent for the deterministic pass, which reads a whole field
+     * the source defined and cites the signal rather than a span (AC2).
+     */
+    charStart: z.number().int().min(0).optional(),
+    charEnd: z.number().int().min(0).optional(),
   }),
 })
 
