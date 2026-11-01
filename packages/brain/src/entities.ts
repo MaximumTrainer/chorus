@@ -74,6 +74,33 @@ export interface EntityStore {
   reviewItems(
     workspaceId: string,
   ): Promise<readonly { readonly id: string; readonly kind: string; readonly subject: Record<string, unknown> }[]>
+  /** One review item by id, or null. */
+  reviewItem(
+    workspaceId: string,
+    itemId: string,
+  ): Promise<{ readonly id: string; readonly kind: string; readonly status: string; readonly subject: Record<string, unknown> } | null>
+  /**
+   * Consolidates `loserId` into `winnerId` in one transaction (BRAIN-7 AC2):
+   * the loser's aliases, edges and evidence move to the winner, the loser's
+   * name becomes an alias, and the loser is deleted — leaving no dangling
+   * reference. Idempotent: merging an already-gone loser is a no-op.
+   */
+  mergeEntities(input: {
+    readonly workspaceId: string
+    readonly winnerId: string
+    readonly loserId: string
+  }): Promise<void>
+  /**
+   * Decides a review item, applying its effect and clearing it (NAV-3 AC3).
+   * Accepting a `merge` consolidates the two entities; any decision records
+   * who made it and closes the item. A no-op if it is already decided.
+   */
+  decideReviewItem(input: {
+    readonly workspaceId: string
+    readonly itemId: string
+    readonly decision: 'accept' | 'reject'
+    readonly decidedBy?: string
+  }): Promise<{ readonly applied: boolean }>
   /** The entity with this external id, or null. */
   findByExternalId(workspaceId: string, externalId: string): Promise<string | null>
   /**
@@ -96,6 +123,78 @@ export interface EntityStore {
   ): Promise<readonly { readonly fromEntityId: string; readonly toEntityId: string; readonly kind: string }[]>
   /** The signal ids that justify an entity (BRAIN-3 AC2). */
   evidenceFor(workspaceId: string, entityId: string): Promise<readonly string[]>
+}
+
+/**
+ * Consolidates `loserId` into `winnerId` within one transaction (BRAIN-7 AC2).
+ *
+ * A free function on the tenant transaction, so both `mergeEntities` and a
+ * `decideReviewItem` that accepts a merge run it in the *same* transaction as
+ * their own writes — the consolidation and the decision commit together or not
+ * at all, which is what makes "no dangling reference" a guarantee rather than a
+ * hope. Repoint the loser's edges, evidence and aliases to the winner, dropping
+ * the ones that would collide, then delete the loser.
+ */
+async function mergeWithinTx(
+  t: TenantTx,
+  workspaceId: string,
+  winnerId: string,
+  loserId: string,
+): Promise<void> {
+  if (winnerId === loserId) return
+  const [loser] = await t.query<{ name: string }>(`SELECT name FROM entities WHERE id = $1`, [loserId])
+  if (!loser) return // already merged away — idempotent
+
+  // Edges: drop the loser's that, once repointed, self-loop or duplicate an
+  // edge not itself involving the loser, then repoint the rest — so no repoint
+  // violates the (from, to, kind) uniqueness.
+  await t.execute(
+    `DELETE FROM entity_edges e
+      WHERE (e.from_entity_id = $2 OR e.to_entity_id = $2)
+        AND (
+          (CASE WHEN e.from_entity_id = $2 THEN $1 ELSE e.from_entity_id END)
+          = (CASE WHEN e.to_entity_id = $2 THEN $1 ELSE e.to_entity_id END)
+          OR EXISTS (
+            SELECT 1 FROM entity_edges w
+             WHERE w.from_entity_id <> $2 AND w.to_entity_id <> $2
+               AND w.kind = e.kind
+               AND w.from_entity_id = (CASE WHEN e.from_entity_id = $2 THEN $1 ELSE e.from_entity_id END)
+               AND w.to_entity_id   = (CASE WHEN e.to_entity_id   = $2 THEN $1 ELSE e.to_entity_id   END)
+          )
+        )`,
+    [winnerId, loserId],
+  )
+  await t.execute(`UPDATE entity_edges SET from_entity_id = $1 WHERE from_entity_id = $2`, [winnerId, loserId])
+  await t.execute(`UPDATE entity_edges SET to_entity_id = $1 WHERE to_entity_id = $2`, [winnerId, loserId])
+
+  // Evidence: drop the loser's rows that collide with the winner's, repoint the rest.
+  await t.execute(
+    `DELETE FROM entity_evidence l
+      WHERE l.entity_id = $2
+        AND EXISTS (
+          SELECT 1 FROM entity_evidence w
+           WHERE w.entity_id = $1 AND w.signal_id = l.signal_id AND w.extractor_version = l.extractor_version
+        )`,
+    [winnerId, loserId],
+  )
+  await t.execute(`UPDATE entity_evidence SET entity_id = $1 WHERE entity_id = $2`, [winnerId, loserId])
+
+  // Aliases: the loser's name becomes an alias, then its own aliases move over.
+  await t.execute(
+    `INSERT INTO entity_aliases (id, workspace_id, entity_id, alias)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (workspace_id, entity_id, lower(alias)) DO NOTHING`,
+    [ulid(), workspaceId, winnerId, loser.name],
+  )
+  await t.execute(
+    `DELETE FROM entity_aliases l
+      WHERE l.entity_id = $2
+        AND EXISTS (SELECT 1 FROM entity_aliases w WHERE w.entity_id = $1 AND lower(w.alias) = lower(l.alias))`,
+    [winnerId, loserId],
+  )
+  await t.execute(`UPDATE entity_aliases SET entity_id = $1 WHERE entity_id = $2`, [winnerId, loserId])
+
+  await t.execute(`DELETE FROM entities WHERE id = $1`, [loserId])
 }
 
 export function createEntityStore(config: DbConfig): EntityStore {
@@ -258,6 +357,59 @@ export function createEntityStore(config: DbConfig): EntityStore {
             WHERE status = 'open' ORDER BY created_at DESC`,
         ),
       )
+    },
+
+    async reviewItem(workspaceId, itemId) {
+      return tx(workspaceId, async (t) => {
+        const [row] = await t.query<{
+          id: string
+          kind: string
+          status: string
+          subject: Record<string, unknown>
+        }>(`SELECT id, kind, status, subject FROM brain_review_items WHERE id = $1`, [itemId])
+        return row ?? null
+      })
+    },
+
+    async mergeEntities({ workspaceId, winnerId, loserId }) {
+      if (winnerId === loserId) return
+      await tx(workspaceId, (t) => mergeWithinTx(t, workspaceId, winnerId, loserId))
+    },
+
+    async decideReviewItem({ workspaceId, itemId, decision, decidedBy }) {
+      return tx(workspaceId, async (t) => {
+        const [item] = await t.query<{ kind: string; status: string; subject: Record<string, unknown> }>(
+          `SELECT kind, status, subject FROM brain_review_items WHERE id = $1`,
+          [itemId],
+        )
+        if (!item || item.status !== 'open') return { applied: false }
+
+        let applied = false
+        if (decision === 'accept' && item.kind === 'merge') {
+          // Tolerant of both shapes: BRAIN-3's ingestor writes {proposed, existing},
+          // BRAIN-7's detector writes {winner, loser}. The existing entity wins.
+          const subject = item.subject as {
+            winner?: { entityId?: string }
+            loser?: { entityId?: string }
+            existing?: { entityId?: string }
+            proposed?: { entityId?: string }
+          }
+          const winnerId = subject.winner?.entityId ?? subject.existing?.entityId
+          const loserId = subject.loser?.entityId ?? subject.proposed?.entityId
+          if (winnerId && loserId && winnerId !== loserId) {
+            await mergeWithinTx(t, workspaceId, winnerId, loserId)
+            applied = true
+          }
+        }
+
+        await t.execute(
+          `UPDATE brain_review_items
+              SET status = $2, decided_by = $3, decided_at = now()
+            WHERE id = $1`,
+          [itemId, decision === 'accept' ? 'accepted' : 'rejected', decidedBy ?? null],
+        )
+        return { applied }
+      })
     },
 
     async edges(workspaceId) {

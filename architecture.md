@@ -595,6 +595,8 @@ Nightly jobs propose, never apply silently:
 
 Each lands in the review inbox (NAV-3). An accepted decision is itself written as a high-trust signal, so the team's corrections feed back into extraction.
 
+The **merge** detector ships first: `createMergeDetector` proposes a `brain_review_items` row for each same-kind pair above a name-similarity threshold it has not already proposed, evidenced and never applied (AC1). Accepting one — `EntityStore.decideReviewItem` — consolidates the two in **one transaction** via `mergeWithinTx`: the loser's edges, evidence and aliases repoint to the winner (dropping those that would self-loop or collide), the loser's name becomes an alias, and the loser is deleted, so no dangling edge, alias or evidence row is left behind (AC2) — the place data loss would otherwise hide. The same `decideReviewItem` closes the item, so it leaves the inbox the moment it is decided (NAV-3 AC3). Split, stale and contradiction detection, and writing an accepted decision back as a high-trust signal (AC6), are the following slices.
+
 ### 10.5 Retrieval (BRAIN-4)
 
 One function, used by chat, workflows, MCP and global search alike:
