@@ -64,7 +64,10 @@ import { sessionRoutes } from './session-routes.js'
 import { createHomeService } from './home.js'
 import { homeRoutes } from './home-routes.js'
 import { createTaskPushService, type TrackerSink } from './task-push.js'
+import { createTaskSyncService, type TaskSyncService } from './task-sync.js'
 import { pushRoutes } from './push-routes.js'
+import { webhookRoutes } from './webhook-routes.js'
+import type { TrackerWebhook } from './tracker-webhook.js'
 import { createRetriever } from '@chorus/brain'
 import { createNotifier } from '@chorus/notifications'
 import { createDecisionLinks } from '@chorus/agent'
@@ -162,6 +165,14 @@ export interface AppOptions {
    * so the permission suite still covers it.
    */
   trackerSink?: TrackerSink
+  /**
+   * Receives inbound tracker webhooks and reports the status changes they
+   * carried, which the webhook route mirrors onto tasks (TASK-4 AC2). Injected
+   * like `trackerSink`: the deployment binds it to the connector webhook
+   * receiver over a credential store; a test fakes it. Absent, the webhook
+   * route is not mounted.
+   */
+  trackerWebhook?: TrackerWebhook
   /**
    * Where a grounded surface reads a stored context bundle (CHAT-3).
    *
@@ -339,6 +350,7 @@ function buildRoutes(
   decompose?: Decomposer,
   codingJobs?: CodingJobService,
   trackerSink?: TrackerSink,
+  trackerWebhook?: TrackerWebhook,
   mcp?: McpEndpointOptions,
   dispatch: (request: Request) => Promise<Response> = () => {
     throw new Error('MCP requests need the app to dispatch through; this table was built without one')
@@ -359,6 +371,11 @@ function buildRoutes(
   const oauth = createOAuthService(config)
   const repositories = createRepositoryService(config)
   const jobs = codingJobs ?? defaultCodingJobs(config)
+  // One sync service, shared by the push, transition and webhook routes, so a
+  // status mapped one way is mapped the same the other (TASK-4).
+  const taskSync: TaskSyncService | undefined = trackerSink
+    ? createTaskSyncService(config, { tasks: createTaskService(config), sink: trackerSink })
+    : undefined
   // A settled checkpoint first releases or cancels any coding job it held
   // (CODE-1 AC4), then resumes the run as before. Both decision doors, the app
   // and the emailed link, go through this one function, so a job cannot be
@@ -401,7 +418,12 @@ function buildRoutes(
         trackerSink
           ? createTaskPushService(config, { tasks: createTaskService(config), sink: trackerSink })
           : undefined,
+        taskSync,
       ),
+      // The inbound tracker webhook, mirroring a status change onto its task
+      // (TASK-4 AC2). Mounted only with both the gateway and the sync service,
+      // since without a tracker there is nothing for this public route to do.
+      ...webhookRoutes(trackerWebhook, taskSync),
       // Unconditional, for the reason `defaultCodingJobs` gives: the permission
       // suite enumerates `routeTable()`, and a route that exists only when a
       // retriever is wired is one it would never check.
@@ -668,6 +690,7 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
           options.decompose,
           options.codingJobs,
           options.trackerSink,
+          options.trackerWebhook,
           options.mcp,
           (request) => Promise.resolve(app.fetch(request)),
         )

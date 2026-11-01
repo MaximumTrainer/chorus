@@ -45,6 +45,15 @@ export interface TrackerSink {
     readonly description: string
     readonly idempotencyKey: string
   }): Promise<ExternalRef>
+  /** Moves the external issue to a target status (TASK-4 AC5 names the mapped one). */
+  transition(input: {
+    readonly workspaceId: string
+    readonly teamId: string
+    readonly integrationId: string
+    readonly externalId: string
+    readonly toExternalStatus: string
+    readonly idempotencyKey: string
+  }): Promise<ExternalRef>
 }
 
 export interface TaskTrackerLink {

@@ -37,6 +37,13 @@ export interface DeliveryOutcome {
   readonly deliveryId: string | null
   /** Signals written. Excludes any the source had already delivered. */
   readonly ingested: number
+  /**
+   * The signals this delivery carried, so a caller can act on what arrived —
+   * mirroring a tracker status change onto a task (TASK-4 AC2), say — without
+   * re-reading them or running the connector a second time. Empty for a
+   * duplicate or a rejected delivery, which carried nothing new.
+   */
+  readonly signals: readonly Signal[]
   readonly reason?: string
 }
 
@@ -153,7 +160,7 @@ export function createWebhookReceiver(
         deliveryRowId,
         signals,
       )
-      return { state: 'processed', deliveryId, ingested }
+      return { state: 'processed', deliveryId, ingested, signals }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       // Left unprocessed on purpose, so a retry or a replay attempts it again
@@ -164,7 +171,7 @@ export function createWebhookReceiver(
           deliveryRowId,
         ]),
       )
-      return { state: 'failed', deliveryId, ingested: 0, reason: message }
+      return { state: 'failed', deliveryId, ingested: 0, signals: [], reason: message }
     }
   }
 
@@ -213,6 +220,7 @@ export function createWebhookReceiver(
           state: 'rejected',
           deliveryId: null,
           ingested: 0,
+          signals: [],
           reason: 'the delivery carried no identifier, so it cannot be deduplicated',
         }
       }
@@ -271,7 +279,7 @@ export function createWebhookReceiver(
           return handle(workspaceId, integrationId, connector, request, rowId, ctx)
         }
 
-        return { state: 'duplicate', deliveryId, ingested: 0 }
+        return { state: 'duplicate', deliveryId, ingested: 0, signals: [] }
       }
 
       if (!signatureOk) {
@@ -281,6 +289,7 @@ export function createWebhookReceiver(
           state: 'rejected',
           deliveryId,
           ingested: 0,
+          signals: [],
           reason: 'the signature did not verify',
         }
       }

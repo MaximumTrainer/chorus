@@ -45,6 +45,9 @@ function fakeTrackerSink(): TrackerSink & {
       const match = [...byKey.values()].find((ref) => ref.externalId === externalId)
       return match ?? { externalId }
     },
+    async transition({ externalId }) {
+      return { externalId }
+    },
   }
 }
 
