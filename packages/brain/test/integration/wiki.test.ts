@@ -141,4 +141,54 @@ describe('BRAIN-5 wiki compilation', () => {
     const after = await pageFor(e.entityId)
     expect(after?.compiled_at.toISOString()).toBe(first?.compiled_at.toISOString())
   })
+
+  it('BRAIN-5 AC4: a hand-edited page is preserved, raises a review item, and is fed back', async () => {
+    const { workspaceId, integrationId, store } = await setup()
+    const s1 = await signal(workspaceId, integrationId, 'ACME-1')
+    const s2 = await signal(workspaceId, integrationId, 'ACME-2')
+    const e = await store.upsertCandidate({
+      workspaceId,
+      candidate: entity({ externalId: 'e:x', name: 'Thing' }),
+      signalId: s1,
+      extractorVersion: 1,
+    })
+    await store.upsertCandidate({
+      workspaceId,
+      candidate: entity({ externalId: 'e:x', name: 'Thing' }),
+      signalId: s2,
+      extractorVersion: 1,
+    })
+    const compiler = createWikiCompiler(db.config)
+    await compiler.compile(workspaceId)
+
+    // A person edits the page in git.
+    const edited = '# Thing\n\nHand-written by a human who knows better.\n'
+    const outcome = await compiler.reconcileHumanEdit({ workspaceId, entityId: e.entityId, editedMarkdown: edited })
+    expect(outcome.reconciled).toBe(true)
+
+    // The edit is preserved and marked.
+    const [page] = await db.admin.query<{ markdown: string; human_edited_at: Date | null }>(
+      `SELECT markdown, human_edited_at FROM wiki_pages WHERE entity_id = $1`,
+      [e.entityId],
+    )
+    expect(page?.markdown).toBe(edited)
+    expect(page?.human_edited_at).not.toBeNull()
+
+    // A review item was raised, and the entity learned it.
+    const items = await store.reviewItems(workspaceId)
+    expect(items.some((i) => (i.subject as { humanEdited?: boolean }).humanEdited)).toBe(true)
+    const [ent] = await db.admin.query<{ attributes: { humanEdited?: boolean } }>(
+      `SELECT attributes FROM entities WHERE id = $1`,
+      [e.entityId],
+    )
+    expect(ent?.attributes.humanEdited).toBe(true)
+
+    // The next compile does not overwrite the hand-edited page.
+    await compiler.compile(workspaceId)
+    const [after] = await db.admin.query<{ markdown: string }>(
+      `SELECT markdown FROM wiki_pages WHERE entity_id = $1`,
+      [e.entityId],
+    )
+    expect(after?.markdown, 'a hand-edited page must not be clobbered by a later compile').toBe(edited)
+  })
 })
