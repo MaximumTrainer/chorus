@@ -523,3 +523,5 @@ export {
 export type { MergeDetector, StaleDetector, ContradictionDetector, SplitDetector } from './self-organise.js'
 export { createWikiCompiler, SALIENCE_THRESHOLD } from './wiki.js'
 export type { WikiCompiler } from './wiki.js'
+export { createWikiPublisher } from './wiki-publish.js'
+export type { WikiPublisher, WikiPublishResult, WikiPublisherDeps } from './wiki-publish.js'
