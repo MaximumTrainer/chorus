@@ -521,3 +521,5 @@ export {
   SPLIT_MIN_CLAIMS,
 } from './self-organise.js'
 export type { MergeDetector, StaleDetector, ContradictionDetector, SplitDetector } from './self-organise.js'
+export { createWikiCompiler, SALIENCE_THRESHOLD } from './wiki.js'
+export type { WikiCompiler } from './wiki.js'

@@ -304,6 +304,11 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
          VALUES ($1, $2, 'merge', '{}'::jsonb)`,
         [ulid(), workspaceId],
       )
+      await owner.query(
+        `INSERT INTO wiki_pages (id, workspace_id, entity_id, slug, kind, markdown, content_hash)
+         VALUES ($1, $2, $3, 'seed-entity', 'ticket', '# seed', 'seedhash')`,
+        [ulid(), workspaceId, entityId],
+      )
       const sessionId = ulid()
       await owner.query(
         `INSERT INTO chat_sessions (id, workspace_id, team_id, entry_point, created_by)
@@ -790,6 +795,15 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
             `INSERT INTO brain_review_items (id, workspace_id, kind, subject)
              VALUES ($1, $2, 'merge', '{}'::jsonb)`,
             [id, workspaceId],
+          )
+          return
+        }
+        case 'wiki_pages': {
+          const [entity] = await tx.query<{ id: string }>(`SELECT id FROM entities LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO wiki_pages (id, workspace_id, entity_id, slug, kind, markdown, content_hash)
+             VALUES ($1, $2, $3, $1, 'ticket', '# seed', 'seedhash')`,
+            [id, workspaceId, entity?.id ?? id],
           )
           return
         }
