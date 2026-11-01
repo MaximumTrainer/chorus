@@ -64,6 +64,7 @@ import { sessionRoutes } from './session-routes.js'
 import { createHomeService } from './home.js'
 import { homeRoutes } from './home-routes.js'
 import { createTaskPushService, type TrackerSink } from './task-push.js'
+import { createTaskSyncService } from './task-sync.js'
 import { pushRoutes } from './push-routes.js'
 import { createRetriever } from '@chorus/brain'
 import { createNotifier } from '@chorus/notifications'
@@ -400,6 +401,9 @@ function buildRoutes(
       ...pushRoutes(
         trackerSink
           ? createTaskPushService(config, { tasks: createTaskService(config), sink: trackerSink })
+          : undefined,
+        trackerSink
+          ? createTaskSyncService(config, { tasks: createTaskService(config), sink: trackerSink })
           : undefined,
       ),
       // Unconditional, for the reason `defaultCodingJobs` gives: the permission

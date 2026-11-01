@@ -2,6 +2,7 @@ import { ValidationError } from '@chorus/core'
 import { route, type RouteDefinition } from './routes.js'
 import { caller } from './authorisation.js'
 import type { TaskPushService } from './task-push.js'
+import type { TaskSyncService } from './task-sync.js'
 
 /**
  * Pushing a task to its tracker (TASK-4).
@@ -15,7 +16,7 @@ import type { TaskPushService } from './task-push.js'
  * tracker push is wired, it refuses with a clear message rather than being
  * absent, the same shape the turn route uses.
  */
-export function pushRoutes(push?: TaskPushService): RouteDefinition[] {
+export function pushRoutes(push?: TaskPushService, sync?: TaskSyncService): RouteDefinition[] {
   return [
     route({
       method: 'POST',
@@ -30,6 +31,29 @@ export function pushRoutes(push?: TaskPushService): RouteDefinition[] {
         }
         return c.json(
           await push.push({
+            workspaceId: c.req.param('workspaceId'),
+            taskId: c.req.param('taskId'),
+            actorId: caller(c).userId,
+          }),
+        )
+      },
+    }),
+
+    route({
+      method: 'POST',
+      path: '/workspaces/:workspaceId/tasks/:taskId/transition',
+      summary: 'Push the task’s current status out to its tracker issue.',
+      // The user's own explicit action, like a push; the agent path to the same
+      // transition runs through the gated connector sink tool (TASK-4 AC6).
+      auth: { kind: 'workspace', role: 'member', scopes: ['write:artefacts'] },
+      handler: async (c) => {
+        if (!sync) {
+          throw new ValidationError('this deployment cannot push tasks to a tracker', {
+            field: 'tracker',
+          })
+        }
+        return c.json(
+          await sync.transitionOut({
             workspaceId: c.req.param('workspaceId'),
             taskId: c.req.param('taskId'),
             actorId: caller(c).userId,
