@@ -33,6 +33,35 @@ export const ENTITY_KINDS = [
 
 export type EntityKind = (typeof ENTITY_KINDS)[number]
 
+/** The edge kinds the LLM pass may propose between entities (architecture.md §10.3, BRAIN-3). */
+export const EDGE_KINDS = [
+  'implements',
+  'mentions',
+  'depends_on',
+  'owned_by',
+  'measured_by',
+  'decided_in',
+  'duplicates',
+  'blocks',
+  'relates_to',
+] as const
+
+export type EdgeKind = (typeof EDGE_KINDS)[number]
+
+/** A proposed edge between two candidate entities, each named by its external id. */
+export const EdgeCandidateSchema = z.object({
+  kind: z.enum(EDGE_KINDS),
+  fromExternalId: z.string().min(1),
+  toExternalId: z.string().min(1),
+  confidence: z.number().min(0).max(1),
+  evidence: z.object({
+    signalExternalId: z.string().min(1),
+    source: z.string().min(1),
+  }),
+})
+
+export type EdgeCandidate = z.infer<typeof EdgeCandidateSchema>
+
 export const EntityCandidateSchema = z.object({
   kind: z.enum(ENTITY_KINDS),
   /**

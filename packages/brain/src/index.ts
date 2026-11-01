@@ -504,3 +504,5 @@ const MAX_COSINE_DISTANCE = 0.6
 
 export { createEntityStore } from './entities.js'
 export type { EntityStore, StoredEntity, UpsertResult } from './entities.js'
+export { createExtractionIngestor, MERGE_THRESHOLD, REVIEW_FLOOR } from './extraction.js'
+export type { ExtractionIngestor, ExtractionBatch, IngestOutcome } from './extraction.js'
