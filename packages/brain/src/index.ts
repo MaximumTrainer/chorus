@@ -508,5 +508,11 @@ export { createExtractionIngestor, MERGE_THRESHOLD, REVIEW_FLOOR } from './extra
 export type { ExtractionIngestor, ExtractionBatch, IngestOutcome } from './extraction.js'
 export { createLlmExtractor, ExtractionOutputSchema } from './llm-extract.js'
 export type { LlmExtractor, LlmExtractInput, LlmExtractorDeps } from './llm-extract.js'
-export { createMergeDetector, MERGE_PROPOSAL_THRESHOLD } from './self-organise.js'
-export type { MergeDetector } from './self-organise.js'
+export {
+  createMergeDetector,
+  createStaleDetector,
+  MERGE_PROPOSAL_THRESHOLD,
+  STALE_AFTER_DAYS,
+  REFERENCE_WITHIN_DAYS,
+} from './self-organise.js'
+export type { MergeDetector, StaleDetector } from './self-organise.js'
