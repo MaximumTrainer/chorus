@@ -38,7 +38,7 @@ export { createLinearConnector, linearWebhooks } from './linear/index.js'
 export type { LinearOptions } from './linear/index.js'
 export { adfToMarkdown, markdownToAdf } from './jira/adf.js'
 export type { AdfNode, AdfMark } from './jira/adf.js'
-export { createJiraConnector } from './jira/index.js'
+export { createJiraConnector, jiraWebhooks } from './jira/index.js'
 export type {
   JiraOptions,
   JiraCreateIssueInput,
