@@ -20,7 +20,9 @@ import type { EntityStore } from '@chorus/brain'
  */
 
 export interface DeterministicExtractor {
-  extract(workspaceId: string): Promise<{ readonly signals: number; readonly entities: number }>
+  extract(
+    workspaceId: string,
+  ): Promise<{ readonly signals: number; readonly entities: number; readonly edges: number }>
 }
 
 interface SignalRow {
@@ -91,7 +93,32 @@ export function createDeterministicExtractor(deps: {
           entities += 1
         }
       }
-      return { signals: rows.length, entities }
+
+      // Edges run in a second pass, after every entity exists: an issue link
+      // names two issues, and the edge can only be landed once both ends have
+      // been read into the store. An edge whose other end has not been ingested
+      // is skipped, not guessed — it lands on the pass where that issue arrives.
+      let edges = 0
+      for (const row of rows) {
+        const connector = deps.connectorsByKind[row.source]?.()
+        if (!connector?.mapEdges) continue
+        for (const edge of connector.mapEdges(toSignal(row))) {
+          const from = await deps.entities.findByExternalId(workspaceId, edge.fromExternalId)
+          const to = await deps.entities.findByExternalId(workspaceId, edge.toExternalId)
+          if (!from || !to) continue
+          await deps.entities.addEdge({
+            workspaceId,
+            fromEntityId: from,
+            toEntityId: to,
+            kind: edge.kind,
+            confidence: edge.confidence,
+            signalId: row.id,
+            extractorVersion: version,
+          })
+          edges += 1
+        }
+      }
+      return { signals: rows.length, entities, edges }
     },
   }
 }

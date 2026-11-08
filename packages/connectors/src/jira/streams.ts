@@ -1,4 +1,4 @@
-import type { EntityCandidate, Signal } from '@chorus/core'
+import type { EdgeCandidate, EdgeKind, EntityCandidate, Signal } from '@chorus/core'
 import { adfToMarkdown, type AdfNode } from './adf.js'
 
 /**
@@ -17,6 +17,13 @@ interface JiraUser {
   readonly emailAddress?: string
 }
 
+/** One entry of a Jira issue's `issuelinks`, naming the type and the other end. */
+export interface JiraIssueLink {
+  readonly type?: { readonly name?: string; readonly inward?: string; readonly outward?: string }
+  readonly inwardIssue?: { readonly key?: string }
+  readonly outwardIssue?: { readonly key?: string }
+}
+
 export interface JiraIssue {
   readonly id: string
   readonly key: string
@@ -30,6 +37,7 @@ export interface JiraIssue {
     readonly project?: { readonly key?: string; readonly id?: string }
     readonly updated?: string
     readonly parent?: { readonly key?: string } | null
+    readonly issuelinks?: readonly JiraIssueLink[]
   }
 }
 
@@ -111,4 +119,40 @@ export function candidatesFor(signal: Signal): readonly EntityCandidate[] {
   }
 
   return candidates
+}
+
+/** The edge kind a Jira link type names, or null for one this slice does not map. */
+function edgeKindOf(typeName: string): EdgeKind | null {
+  const name = typeName.toLowerCase()
+  if (name.includes('duplicate')) return 'duplicates'
+  if (name.includes('block')) return 'blocks'
+  return null
+}
+
+/**
+ * The `duplicates` and `blocks` edges a Jira issue's links plainly state (AC7).
+ *
+ * Direction follows Jira's own: an `outwardIssue` is what this issue points at
+ * (this → other), an `inwardIssue` points at this (other → this). Reading it
+ * the same way from either end means the link seen on both issues yields one
+ * edge, not two that disagree. Deterministic, so the confidence is full; other
+ * link types are left for a later slice rather than forced into `relates_to`.
+ */
+export function edgesFor(signal: Signal): readonly EdgeCandidate[] {
+  if (signal.kind !== 'issue') return []
+  const issue = (signal.raw ?? {}) as JiraIssue
+  const links = issue.fields?.issuelinks ?? []
+  const self = `jira:issue:${issue.key}`
+  const evidence = { signalExternalId: signal.externalId, source: signal.source }
+  const edges: EdgeCandidate[] = []
+  for (const link of links) {
+    const kind = edgeKindOf(link.type?.name ?? '')
+    if (!kind) continue
+    if (link.outwardIssue?.key) {
+      edges.push({ kind, fromExternalId: self, toExternalId: `jira:issue:${link.outwardIssue.key}`, confidence: 1, evidence })
+    } else if (link.inwardIssue?.key) {
+      edges.push({ kind, fromExternalId: `jira:issue:${link.inwardIssue.key}`, toExternalId: self, confidence: 1, evidence })
+    }
+  }
+  return edges
 }

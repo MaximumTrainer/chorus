@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto'
 import {
   RateLimitedError,
   UpstreamError,
+  type EdgeCandidate,
   type EntityCandidate,
   type Signal,
 } from '@chorus/core'
@@ -17,7 +18,7 @@ import type {
   WebhookRequest,
   WebhookSpec,
 } from '../contract.js'
-import { candidatesFor, issueToSignal, type JiraIssue } from './streams.js'
+import { candidatesFor, edgesFor, issueToSignal, type JiraIssue } from './streams.js'
 import { markdownToAdf } from './adf.js'
 import { requireMapping, requireTransition, type JiraTransition, type StatusMap } from './status-map.js'
 
@@ -138,7 +139,7 @@ export interface JiraOptions {
 
 const DEFAULT_OAUTH = 'https://auth.atlassian.com/oauth/token'
 const PAGE_SIZE = 50
-const FIELDS = 'summary,description,status,issuetype,assignee,reporter,project,updated,parent'
+const FIELDS = 'summary,description,status,issuetype,assignee,reporter,project,updated,parent,issuelinks'
 
 interface Cursor {
   readonly startAt: number
@@ -405,6 +406,10 @@ export function createJiraConnector(options: JiraOptions = {}): Connector {
 
     mapExternal(signal: Signal): readonly EntityCandidate[] {
       return candidatesFor(signal)
+    },
+
+    mapEdges(signal: Signal): readonly EdgeCandidate[] {
+      return edgesFor(signal)
     },
 
     webhooks: jiraWebhooks,

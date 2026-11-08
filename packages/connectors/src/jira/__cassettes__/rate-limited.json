@@ -1,6 +1,6 @@
 {
   "description": "Jira rate limit: the search returns 429 with retry-after. Hand-authored; not recorded against a live site.",
   "interactions": [
-    { "request": { "method": "GET", "url": "https://jira.test/api/rest/api/3/search?jql=order%20by%20updated%20asc&startAt=0&maxResults=50&fields=summary,description,status,issuetype,assignee,reporter,project,updated,parent" }, "response": { "status": 429, "headers": { "retry-after": "30" }, "body": {} } }
+    { "request": { "method": "GET", "url": "https://jira.test/api/rest/api/3/search?jql=order%20by%20updated%20asc&startAt=0&maxResults=50&fields=summary,description,status,issuetype,assignee,reporter,project,updated,parent,issuelinks" }, "response": { "status": 429, "headers": { "retry-after": "30" }, "body": {} } }
   ]
 }

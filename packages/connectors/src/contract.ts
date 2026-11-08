@@ -1,4 +1,4 @@
-import type { ConnectorKind, EntityCandidate, Signal } from '@chorus/core'
+import type { ConnectorKind, EdgeCandidate, EntityCandidate, Signal } from '@chorus/core'
 
 /**
  * The connector interface (architecture.md §17, INT-1).
@@ -242,5 +242,15 @@ export interface Connector {
    * BRAIN-3's; this is only the reading.
    */
   mapExternal?(signal: Signal): readonly EntityCandidate[]
+  /**
+   * The deterministic edges a signal plainly states between entities — a Jira
+   * issue linked as a duplicate of or a blocker on another (INT-8 AC7).
+   *
+   * Parallel to `mapExternal` and optional for the same reason: most sources
+   * state no edges of their own, and inferring them is the LLM pass's job, not
+   * this one. Each end is named by the same `externalId` the entity candidate
+   * carries, so the edge resolves to entities once both have been landed.
+   */
+  mapEdges?(signal: Signal): readonly EdgeCandidate[]
   health(ctx: ConnectorContext): Promise<HealthStatus>
 }
