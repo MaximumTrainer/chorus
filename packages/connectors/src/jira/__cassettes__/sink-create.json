@@ -1,0 +1,23 @@
+{
+  "description": "INT-8 Jira sink: find-before-create finds nothing, creates the issue, then stamps the chorus identity property.",
+  "interactions": [
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://jira.test/api/rest/api/3/search?jql=issue.property%5Bchorus%5D.idempotencyKey%20%3D%20%22idem-create-1%22&maxResults=1&fields=summary"
+      },
+      "response": { "status": 200, "body": { "issues": [], "total": 0 } }
+    },
+    {
+      "request": { "method": "POST", "url": "https://jira.test/api/rest/api/3/issue" },
+      "response": {
+        "status": 201,
+        "body": { "id": "10101", "key": "ACME-101", "self": "https://jira.test/api/rest/api/3/issue/10101" }
+      }
+    },
+    {
+      "request": { "method": "PUT", "url": "https://jira.test/api/rest/api/3/issue/ACME-101/properties/chorus" },
+      "response": { "status": 204 }
+    }
+  ]
+}

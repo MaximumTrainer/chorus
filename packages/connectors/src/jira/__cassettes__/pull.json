@@ -1,0 +1,36 @@
+{
+  "description": "Jira REST: one page of issues (ADF descriptions) and a myself health check. Hand-authored from the published schema; not recorded against a live site.",
+  "interactions": [
+    {
+      "request": { "method": "GET", "url": "https://jira.test/api/rest/api/3/search?jql=order%20by%20updated%20asc&startAt=0&maxResults=50&fields=summary,description,status,issuetype,assignee,reporter,project,updated,parent" },
+      "response": {
+        "status": 200,
+        "body": {
+          "startAt": 0,
+          "maxResults": 50,
+          "total": 1,
+          "issues": [
+            {
+              "id": "10001",
+              "key": "ACME-7",
+              "fields": {
+                "summary": "The deploy step times out",
+                "description": { "type": "doc", "version": 1, "content": [ { "type": "paragraph", "content": [ { "type": "text", "text": "It hangs after the build." } ] } ] },
+                "status": { "name": "To Do" },
+                "issuetype": { "name": "Bug", "subtask": false },
+                "assignee": { "accountId": "user-1", "displayName": "Ada Lovelace", "emailAddress": "ada@acme.test" },
+                "reporter": { "accountId": "user-2", "displayName": "Grace Hopper" },
+                "project": { "key": "ACME", "id": "proj-1" },
+                "updated": "2026-09-01T09:10:00.000+0000"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": { "method": "GET", "url": "https://jira.test/api/rest/api/3/myself" },
+      "response": { "status": 200, "body": { "accountId": "user-self", "displayName": "Bot" } }
+    }
+  ]
+}
