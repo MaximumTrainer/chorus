@@ -18,7 +18,7 @@ import type {
   WebhookRequest,
   WebhookSpec,
 } from '../contract.js'
-import { candidatesFor, edgesFor, issueToSignal, type JiraIssue } from './streams.js'
+import { candidatesFor, commentsFrom, edgesFor, issueToSignal, type JiraComment, type JiraIssue } from './streams.js'
 import { markdownToAdf } from './adf.js'
 import { requireMapping, requireTransition, type JiraTransition, type StatusMap } from './status-map.js'
 
@@ -139,7 +139,7 @@ export interface JiraOptions {
 
 const DEFAULT_OAUTH = 'https://auth.atlassian.com/oauth/token'
 const PAGE_SIZE = 50
-const FIELDS = 'summary,description,status,issuetype,assignee,reporter,project,updated,parent,issuelinks'
+const FIELDS = 'summary,description,status,issuetype,assignee,reporter,project,updated,parent,issuelinks,comment'
 
 interface Cursor {
   readonly startAt: number
@@ -394,7 +394,12 @@ export function createJiraConnector(options: JiraOptions = {}): Connector {
       const issues = Array.isArray(data.issues) ? (data.issues as JiraIssue[]) : []
       const total = typeof data.total === 'number' ? data.total : startAt + issues.length
 
-      const signals = issues.map((issue) => issueToSignal(issue, siteUrl(ctx), restricted(ctx)))
+      // An issue and its comments ride the same page: the issue as one signal,
+      // each comment as its own, so the brain sees the discussion as evidence.
+      const signals = issues.flatMap((issue) => [
+        issueToSignal(issue, siteUrl(ctx), restricted(ctx)),
+        ...commentsFrom(issue, siteUrl(ctx), restricted(ctx)),
+      ])
 
       const consumed = startAt + issues.length
       // Null means caught up. Jira's search is offset-based, but the sync's
@@ -420,13 +425,26 @@ export function createJiraConnector(options: JiraOptions = {}): Connector {
     // one (AC2). Only issue create/update events become signals; anything else
     // (worklogs, deletions, a body without an issue) has nothing to ingest here.
     async handleWebhook(request: WebhookRequest, ctx: ConnectorContext): Promise<readonly Signal[]> {
-      let payload: { webhookEvent?: unknown; issue?: unknown }
+      let payload: { webhookEvent?: unknown; issue?: unknown; comment?: unknown }
       try {
-        payload = JSON.parse(request.body) as { webhookEvent?: unknown; issue?: unknown }
+        payload = JSON.parse(request.body) as { webhookEvent?: unknown; issue?: unknown; comment?: unknown }
       } catch {
         return []
       }
       const event = typeof payload.webhookEvent === 'string' ? payload.webhookEvent : ''
+
+      // A comment event carries both the comment and its issue; the comment is
+      // wrapped into the issue so the same `commentsFrom` the pull uses produces
+      // the same `jira:comment:<id>` identity, and the two paths dedupe (AC2).
+      if (/^comment_(created|updated)$/.test(event) && payload.comment && payload.issue) {
+        const issue = payload.issue as JiraIssue
+        const withComment: JiraIssue = {
+          ...issue,
+          fields: { ...(issue.fields ?? {}), comment: { comments: [payload.comment as JiraComment] } },
+        }
+        return commentsFrom(withComment, siteUrl(ctx), restricted(ctx))
+      }
+
       if (!payload.issue || !/^jira:issue_(created|updated)$/.test(event)) return []
       return [issueToSignal(payload.issue as JiraIssue, siteUrl(ctx), restricted(ctx))]
     },

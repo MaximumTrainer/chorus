@@ -24,6 +24,15 @@ export interface JiraIssueLink {
   readonly outwardIssue?: { readonly key?: string }
 }
 
+/** One comment on a Jira issue, its body in ADF. */
+export interface JiraComment {
+  readonly id: string
+  readonly author?: JiraUser | null
+  readonly body?: AdfNode | null
+  readonly created?: string
+  readonly updated?: string
+}
+
 export interface JiraIssue {
   readonly id: string
   readonly key: string
@@ -38,6 +47,7 @@ export interface JiraIssue {
     readonly updated?: string
     readonly parent?: { readonly key?: string } | null
     readonly issuelinks?: readonly JiraIssueLink[]
+    readonly comment?: { readonly comments?: readonly JiraComment[] }
   }
 }
 
@@ -81,12 +91,61 @@ export function issueToSignal(issue: JiraIssue, baseUrl: string, restricted: boo
   }
 }
 
-/** The deterministic entities a Jira issue plainly states exist (INT-8). */
+/**
+ * A Jira issue's comments as their own signals (INT-8 source).
+ *
+ * A comment is evidence authored by a person, not an entity, so it rides the
+ * same ingestion path as the issue — one signal each, scoped to the issue it
+ * belongs to, its ADF body converted to Markdown like the description. The
+ * commenter becomes a `person` in the deterministic pass.
+ */
+export function commentsFrom(issue: JiraIssue, baseUrl: string, restricted: boolean): readonly Signal[] {
+  const fields = issue.fields ?? {}
+  const comments = fields.comment?.comments ?? []
+  const base = baseUrl.replace(/\/$/, '')
+  return comments.map((comment) => {
+    const body = comment.body ? adfToMarkdown(comment.body) : null
+    const when = comment.updated ?? comment.created
+    return {
+      source: 'jira',
+      externalId: `jira:comment:${comment.id}`,
+      kind: 'comment',
+      text: body && body.trim() !== '' ? body : null,
+      structured: { issue: issue.key },
+      author: person(comment.author),
+      occurredAt: when ? new Date(when) : new Date(0),
+      url: `${base}/browse/${issue.key}?focusedCommentId=${comment.id}`,
+      permissions: scope(fields.project?.id, restricted),
+      raw: comment,
+    }
+  })
+}
+
+/** The deterministic entities a Jira signal plainly states exist (INT-8). */
 export function candidatesFor(signal: Signal): readonly EntityCandidate[] {
+  const evidence = { signalExternalId: signal.externalId, source: signal.source }
+
+  // A comment states its author is a person; the comment itself is evidence,
+  // not an entity.
+  if (signal.kind === 'comment') {
+    const comment = (signal.raw ?? {}) as JiraComment
+    const user = comment.author
+    if (!user || typeof user.accountId !== 'string') return []
+    return [
+      {
+        kind: 'person',
+        externalId: `jira:user:${user.accountId}`,
+        name: user.displayName ?? user.accountId,
+        aliases: user.emailAddress ? [user.emailAddress] : [],
+        attributes: {},
+        evidence,
+      },
+    ]
+  }
+
   if (signal.kind !== 'issue') return []
   const issue = (signal.raw ?? {}) as JiraIssue
   const fields = issue.fields ?? {}
-  const evidence = { signalExternalId: signal.externalId, source: signal.source }
   const candidates: EntityCandidate[] = []
 
   // The issue itself. An epic is a Feature; anything else is a Ticket.
