@@ -1,0 +1,16 @@
+{
+  "description": "INT-8 Jira sink: the mapped Jira status (Done) is not among the transitions available from the issue's current status, so the push is an illegal transition rather than a guessed move.",
+  "interactions": [
+    {
+      "request": { "method": "GET", "url": "https://jira.test/api/rest/api/3/issue/ACME-101/transitions" },
+      "response": {
+        "status": 200,
+        "body": {
+          "transitions": [
+            { "id": "11", "name": "Start progress", "to": { "name": "In Progress" } }
+          ]
+        }
+      }
+    }
+  ]
+}

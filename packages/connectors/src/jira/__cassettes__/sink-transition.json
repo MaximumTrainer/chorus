@@ -1,0 +1,21 @@
+{
+  "description": "INT-8 Jira sink: a status transition. The mapped Jira status (Done) is an available transition, so it is applied.",
+  "interactions": [
+    {
+      "request": { "method": "GET", "url": "https://jira.test/api/rest/api/3/issue/ACME-101/transitions" },
+      "response": {
+        "status": 200,
+        "body": {
+          "transitions": [
+            { "id": "11", "name": "Start progress", "to": { "name": "In Progress" } },
+            { "id": "31", "name": "Mark done", "to": { "name": "Done" } }
+          ]
+        }
+      }
+    },
+    {
+      "request": { "method": "POST", "url": "https://jira.test/api/rest/api/3/issue/ACME-101/transitions" },
+      "response": { "status": 204 }
+    }
+  ]
+}
