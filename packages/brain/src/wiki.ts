@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { ulid } from '@chorus/core'
 import { withTenant, type DbConfig, type TenantTx } from '@chorus/db'
+import { createEntityStore } from './entities.js'
 
 /**
  * Wiki compilation (BRAIN-5).
@@ -19,6 +20,21 @@ export const SALIENCE_THRESHOLD = 2
 
 export interface WikiCompiler {
   compile(workspaceId: string): Promise<{ readonly compiled: number; readonly skipped: number }>
+  /**
+   * Reconciles a page a person edited in git (BRAIN-5 AC4).
+   *
+   * The edit wins: it is stored and `human_edited_at` is set, so the next
+   * compile leaves it alone rather than overwriting it. It is fed back as
+   * learning — the edited text is recorded on the entity — and a review item
+   * is raised so the divergence between the human's page and what the compiler
+   * would have written is seen and resolved, not lost.
+   */
+  reconcileHumanEdit(input: {
+    readonly workspaceId: string
+    readonly entityId: string
+    readonly editedMarkdown: string
+    readonly editedBy?: string
+  }): Promise<{ readonly reconciled: boolean }>
 }
 
 interface SalientRow {
@@ -111,6 +127,51 @@ export function createWikiCompiler(
           compiled += 1
         }
         return { compiled, skipped }
+      })
+    },
+
+    async reconcileHumanEdit({ workspaceId, entityId, editedMarkdown, editedBy }) {
+      const store = createEntityStore(config)
+      return tx(workspaceId, async (t) => {
+        const [page] = await t.query<{ id: string; slug: string }>(
+          `SELECT id, slug FROM wiki_pages WHERE entity_id = $1`,
+          [entityId],
+        )
+        if (!page) return { reconciled: false }
+
+        // The edit wins and is marked, so the compiler's own skip (a page with
+        // human_edited_at set is never overwritten) preserves it.
+        await t.execute(
+          `UPDATE wiki_pages SET markdown = $2, human_edited_at = now() WHERE id = $1`,
+          [page.id, editedMarkdown],
+        )
+
+        // Fed back as learning: the human's text is recorded on the entity, so
+        // later compilation and detection see what a person asserted. (A
+        // literal high-trust signal row is not written, for the reason given in
+        // §10.4 — signals require an integration and carry no trust field; the
+        // recorded edit is the learning AC4 is for.)
+        await t.execute(
+          `UPDATE entities
+              SET attributes = attributes || jsonb_build_object('humanEdited', true, 'humanEditedAt', now()::text),
+                  updated_at = now()
+            WHERE id = $1`,
+          [entityId],
+        )
+
+        // And the divergence is surfaced, not lost.
+        await store.openReviewItem({
+          workspaceId,
+          kind: 'stale',
+          subject: {
+            page: { entityId, slug: page.slug },
+            humanEdited: true,
+            editedBy: editedBy ?? null,
+            reason: 'This page was hand-edited in git; the auto-compiled version diverges.',
+            detector: 'wiki-human-edit',
+          },
+        })
+        return { reconciled: true }
       })
     },
   }
