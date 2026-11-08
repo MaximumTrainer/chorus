@@ -2,7 +2,7 @@
   "description": "Jira REST: one page of issues (ADF descriptions) and a myself health check. Hand-authored from the published schema; not recorded against a live site.",
   "interactions": [
     {
-      "request": { "method": "GET", "url": "https://jira.test/api/rest/api/3/search?jql=order%20by%20updated%20asc&startAt=0&maxResults=50&fields=summary,description,status,issuetype,assignee,reporter,project,updated,parent,issuelinks" },
+      "request": { "method": "GET", "url": "https://jira.test/api/rest/api/3/search?jql=order%20by%20updated%20asc&startAt=0&maxResults=50&fields=summary,description,status,issuetype,assignee,reporter,project,updated,parent,issuelinks,comment" },
       "response": {
         "status": 200,
         "body": {
@@ -21,7 +21,18 @@
                 "assignee": { "accountId": "user-1", "displayName": "Ada Lovelace", "emailAddress": "ada@acme.test" },
                 "reporter": { "accountId": "user-2", "displayName": "Grace Hopper" },
                 "project": { "key": "ACME", "id": "proj-1" },
-                "updated": "2026-09-01T09:10:00.000+0000"
+                "updated": "2026-09-01T09:10:00.000+0000",
+                "comment": {
+                  "comments": [
+                    {
+                      "id": "90001",
+                      "author": { "accountId": "user-3", "displayName": "Katherine Johnson" },
+                      "body": { "type": "doc", "version": 1, "content": [ { "type": "paragraph", "content": [ { "type": "text", "text": "Raising the timeout fixed it locally." } ] } ] },
+                      "created": "2026-09-01T10:00:00.000+0000",
+                      "updated": "2026-09-01T10:00:00.000+0000"
+                    }
+                  ]
+                }
               }
             }
           ]
