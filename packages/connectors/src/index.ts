@@ -39,4 +39,11 @@ export type { LinearOptions } from './linear/index.js'
 export { adfToMarkdown, markdownToAdf } from './jira/adf.js'
 export type { AdfNode, AdfMark } from './jira/adf.js'
 export { createJiraConnector } from './jira/index.js'
-export type { JiraOptions } from './jira/index.js'
+export type {
+  JiraOptions,
+  JiraCreateIssueInput,
+  JiraUpdateIssueInput,
+  JiraTransitionInput,
+} from './jira/index.js'
+export { validateStatusMap, requireMapping, requireTransition } from './jira/status-map.js'
+export type { StatusMap, StatusMapProblem, JiraTransition } from './jira/status-map.js'

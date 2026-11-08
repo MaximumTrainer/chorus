@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { RateLimitedError, UpstreamError } from '@chorus/core'
+import { RateLimitedError, TransitionError, UpstreamError, ValidationError } from '@chorus/core'
 import { createJiraConnector } from '../../src/jira/index.js'
 import { runSinkAction } from '../../src/sink-runner.js'
 import { cassettePlayer } from '../../src/testing/cassettes.js'
@@ -44,7 +44,7 @@ describe('INT-8 Jira sink', () => {
     const connector = createJiraConnector()
     expect(connector.capabilities.sink).toBe(true)
     const actions = connector.sink?.actions ?? {}
-    expect(Object.keys(actions).sort()).toEqual(['create_issue', 'update_issue'].sort())
+    expect(Object.keys(actions).sort()).toEqual(['create_issue', 'transition', 'update_issue'].sort())
     for (const action of Object.values(actions)) {
       expect(action.sideEffect).toBe('external')
     }
@@ -143,5 +143,51 @@ describe('INT-8 Jira sink', () => {
     expect(raised).toBeInstanceOf(UpstreamError)
     expect(raised).not.toBeInstanceOf(RateLimitedError)
     expect((raised as UpstreamError).message).toMatch(/summary/i)
+  })
+
+  const withStatusMap = (cassette: string, statusMap: Record<string, string>): ConnectorContext => ({
+    ...context(cassette),
+    config: { siteUrl: 'https://acme.atlassian.net', statusMap },
+  })
+
+  it('INT-8 AC5: a transition maps the Chorus status to its Jira transition and applies it', async () => {
+    const connector = connectorFor('jira/sink-transition.json')
+    const ref = await connector.sink!.actions.transition!.execute(
+      { issueKey: 'ACME-101', status: 'done' },
+      'idem-tr-1',
+      withStatusMap('jira/sink-transition.json', { done: 'Done' }),
+    )
+    expect(ref.externalId).toBe('ACME-101')
+    expect(ref.url).toBe('https://acme.atlassian.net/browse/ACME-101')
+  })
+
+  it('INT-8 AC5: an unmapped status blocks the transition with a message naming it, before any call to Jira', async () => {
+    const connector = connectorFor('jira/sink-transition.json')
+    const raised = await connector
+      .sink!.actions.transition!.execute(
+        { issueKey: 'ACME-101', status: 'in_review' },
+        'idem-tr-unmapped',
+        withStatusMap('jira/sink-transition.json', { done: 'Done' }),
+      )
+      .then(() => undefined)
+      .catch((error: unknown) => error)
+
+    expect(raised).toBeInstanceOf(ValidationError)
+    expect((raised as ValidationError).message).toMatch(/in_review/)
+  })
+
+  it('INT-8 AC5: a mapped status Jira cannot currently reach is an illegal transition, not a guess', async () => {
+    const connector = connectorFor('jira/sink-transition-illegal.json')
+    const raised = await connector
+      .sink!.actions.transition!.execute(
+        { issueKey: 'ACME-101', status: 'done' },
+        'idem-tr-illegal',
+        withStatusMap('jira/sink-transition-illegal.json', { done: 'Done' }),
+      )
+      .then(() => undefined)
+      .catch((error: unknown) => error)
+
+    expect(raised).toBeInstanceOf(TransitionError)
+    expect((raised as TransitionError).message).toMatch(/Done/)
   })
 })

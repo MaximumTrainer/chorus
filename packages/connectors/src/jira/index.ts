@@ -16,6 +16,7 @@ import type {
 } from '../contract.js'
 import { candidatesFor, issueToSignal, type JiraIssue } from './streams.js'
 import { markdownToAdf } from './adf.js'
+import { requireMapping, requireTransition, type JiraTransition, type StatusMap } from './status-map.js'
 
 /** The input `create_issue` accepts. */
 export interface JiraCreateIssueInput {
@@ -31,6 +32,12 @@ export interface JiraUpdateIssueInput {
   readonly issueKey: string
   readonly summary?: string
   readonly description?: string
+}
+
+/** The input `transition` accepts: the Chorus status to move the issue to. */
+export interface JiraTransitionInput {
+  readonly issueKey: string
+  readonly status: string
 }
 
 /**
@@ -293,6 +300,32 @@ export function createJiraConnector(options: JiraOptions = {}): Connector {
                   : {}),
               },
             },
+            ctx,
+          )
+          return { externalId: issueKey, url: browseUrl(issueKey, ctx) }
+        },
+      },
+
+      transition: {
+        name: 'transition',
+        sideEffect: 'external',
+        // Mirroring a status is setting one field to a target state, so the
+        // write is naturally idempotent and needs no search-before-write. The
+        // mapping, not the write, is where AC5 lives: an unmapped Chorus status
+        // is blocked here — before any call to Jira — rather than guessed.
+        async execute(input, _key, ctx): Promise<ExternalRef> {
+          const { issueKey, status } = input as JiraTransitionInput
+          const map = (ctx.config.statusMap ?? {}) as StatusMap
+          const jiraStatus = requireMapping(status, map)
+          const data = await get(`/rest/api/3/issue/${issueKey}/transitions`, ctx)
+          const available = Array.isArray(data.transitions)
+            ? (data.transitions as JiraTransition[])
+            : []
+          const transition = requireTransition(jiraStatus, available)
+          await request(
+            'POST',
+            `/rest/api/3/issue/${issueKey}/transitions`,
+            { transition: { id: transition.id } },
             ctx,
           )
           return { externalId: issueKey, url: browseUrl(issueKey, ctx) }
