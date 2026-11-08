@@ -1,0 +1,12 @@
+{
+  "description": "INT-8 Jira sink: the create is rejected as invalid. A permanent failure whose message names the offending field.",
+  "interactions": [
+    {
+      "request": { "method": "POST", "url": "https://jira.test/api/rest/api/3/issue" },
+      "response": {
+        "status": 400,
+        "body": { "errorMessages": [], "errors": { "summary": "You must specify a summary of the issue." } }
+      }
+    }
+  ]
+}

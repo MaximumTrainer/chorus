@@ -1,0 +1,13 @@
+{
+  "description": "INT-8 Jira sink: the create is rate limited. A retryable failure, with the delay Jira asked for.",
+  "interactions": [
+    {
+      "request": { "method": "POST", "url": "https://jira.test/api/rest/api/3/issue" },
+      "response": {
+        "status": 429,
+        "headers": { "retry-after": "30" },
+        "body": { "errorMessages": ["Rate limit exceeded"], "errors": {} }
+      }
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "description": "INT-8 Jira sink: a create whose response was lost. The direct create succeeds and stamps the property; the retry's find discovers that issue through the chorus property instead of making a second.",
+  "interactions": [
+    {
+      "request": { "method": "POST", "url": "https://jira.test/api/rest/api/3/issue" },
+      "response": {
+        "status": 201,
+        "body": { "id": "10101", "key": "ACME-101", "self": "https://jira.test/api/rest/api/3/issue/10101" }
+      }
+    },
+    {
+      "request": { "method": "PUT", "url": "https://jira.test/api/rest/api/3/issue/ACME-101/properties/chorus" },
+      "response": { "status": 204 }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://jira.test/api/rest/api/3/search?jql=issue.property%5Bchorus%5D.idempotencyKey%20%3D%20%22idem-lost-1%22&maxResults=1&fields=summary"
+      },
+      "response": {
+        "status": 200,
+        "body": { "issues": [{ "id": "10101", "key": "ACME-101", "fields": { "summary": "The deploy step times out" } }], "total": 1 }
+      }
+    }
+  ]
+}
