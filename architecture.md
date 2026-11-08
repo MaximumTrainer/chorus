@@ -1178,7 +1178,7 @@ Atlassian connectors share one OAuth grant and one credential record with per-pr
 
 - **Hierarchy** is detected at connect time (company-managed vs team-managed, epic-link field vs parent field) and stored on the integration; the task tree maps to epic → story → subtask or to parent/child links accordingly.
 - **Status** uses a per-project configurable map between Chorus statuses and Jira workflow statuses, validated against the project's real transitions at save time; an unmapped status blocks the push with a clear message rather than guessing.
-- **Rich text** converts Markdown to ADF on write and ADF to Markdown on read, with a round-trip fixture suite covering headings, lists, code blocks, links, mentions, panels and tables.
+- **Rich text** converts Markdown to ADF on write and ADF to Markdown on read, with a round-trip fixture suite covering headings, lists, code blocks, links, mentions, panels and tables. The converter is `adfToMarkdown`/`markdownToAdf` (`packages/connectors/src/jira/adf.ts`): the round trip is structural, not byte-exact, and a construct it does not yet model is degraded to its text rather than dropped — losing a sentence a person wrote is the one unrecoverable outcome, so forward compatibility wins over fidelity for the long tail. Headings, paragraphs with bold/italic/code, bullet and ordered lists, fenced code blocks and links round-trip today; panels, tables and mentions degrade to their text and gain structural fidelity in a following slice.
 - **Identity** is round-tripped through a `chorus` issue property carrying the task id and canonical URL, so a re-sync recognises its own issues even if `external_links` were lost.
 
 ### 17.3 Confluence mapping detail
