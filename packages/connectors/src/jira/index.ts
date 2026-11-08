@@ -1,3 +1,4 @@
+import { createHmac, timingSafeEqual } from 'node:crypto'
 import {
   RateLimitedError,
   UpstreamError,
@@ -13,6 +14,8 @@ import type {
   HealthStatus,
   PullResult,
   SinkSpec,
+  WebhookRequest,
+  WebhookSpec,
 } from '../contract.js'
 import { candidatesFor, issueToSignal, type JiraIssue } from './streams.js'
 import { markdownToAdf } from './adf.js'
@@ -47,6 +50,46 @@ export interface JiraTransitionInput {
  * than making a second.
  */
 const CHORUS_PROPERTY = 'chorus'
+
+/**
+ * Jira Cloud's webhook authentication (INT-8 AC2).
+ *
+ * A dynamically-registered Jira webhook signs the raw body with HMAC-SHA256 in
+ * `X-Hub-Signature` as `sha256=<hex>`, so this is a real signature scheme: the
+ * body is authenticated, not merely the sender. Jira sends no stable per-event
+ * delivery id, so one is derived from the event, the issue key and the event
+ * timestamp — the triple that varies per event and survives a redelivery, which
+ * is exactly what deduplication needs.
+ */
+export const jiraWebhooks: WebhookSpec = {
+  secretKey: 'webhookSecret',
+  verification: 'signature',
+
+  deliveryId(request: WebhookRequest): string | null {
+    try {
+      const payload = JSON.parse(request.body) as {
+        webhookEvent?: unknown
+        timestamp?: unknown
+        issue?: { key?: unknown }
+      }
+      const key = payload.issue?.key
+      if (typeof key !== 'string') return null
+      return `${String(payload.webhookEvent)}:${key}:${String(payload.timestamp)}`
+    } catch {
+      // An unparseable body cannot be deduplicated, so the framework refuses it
+      // rather than accepting an event that might arrive again.
+      return null
+    }
+  },
+
+  verify(request: WebhookRequest, secret: string): boolean {
+    const presented = request.headers['x-hub-signature'] ?? ''
+    const expected = `sha256=${createHmac('sha256', secret).update(request.body).digest('hex')}`
+    const a = Buffer.from(presented, 'utf8')
+    const b = Buffer.from(expected, 'utf8')
+    return a.length === b.length && timingSafeEqual(a, b)
+  },
+}
 
 /**
  * Pull a human reason out of a Jira error body. Jira reports a rejected write as
@@ -362,6 +405,25 @@ export function createJiraConnector(options: JiraOptions = {}): Connector {
 
     mapExternal(signal: Signal): readonly EntityCandidate[] {
       return candidatesFor(signal)
+    },
+
+    webhooks: jiraWebhooks,
+
+    // A webhook carries the whole issue, so the same `issueToSignal` the pull
+    // uses produces the same `jira:issue:<key>` identity — which is what lets a
+    // change seen by both the live webhook and the catch-up JQL sync dedupe to
+    // one (AC2). Only issue create/update events become signals; anything else
+    // (worklogs, deletions, a body without an issue) has nothing to ingest here.
+    async handleWebhook(request: WebhookRequest, ctx: ConnectorContext): Promise<readonly Signal[]> {
+      let payload: { webhookEvent?: unknown; issue?: unknown }
+      try {
+        payload = JSON.parse(request.body) as { webhookEvent?: unknown; issue?: unknown }
+      } catch {
+        return []
+      }
+      const event = typeof payload.webhookEvent === 'string' ? payload.webhookEvent : ''
+      if (!payload.issue || !/^jira:issue_(created|updated)$/.test(event)) return []
+      return [issueToSignal(payload.issue as JiraIssue, siteUrl(ctx), restricted(ctx))]
     },
 
     async health(ctx: ConnectorContext): Promise<HealthStatus> {
