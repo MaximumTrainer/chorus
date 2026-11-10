@@ -1186,7 +1186,7 @@ Atlassian connectors share one OAuth grant and one credential record with per-pr
 
 ### 17.3 Confluence mapping detail
 
-Storage-format XHTML or ADF converts to Markdown with page-tree context and macro handling (expand, table of contents, tracker-issue macros resolved to Ticket links). Publishing writes a `chorus-doc-id` content property and a header banner linking back. Two-way mode ingests Confluence edits as high-trust signals surfaced as suggested changes, never as a silent overwrite.
+Storage-format XHTML or ADF converts to Markdown with page-tree context and macro handling (expand, table of contents, tracker-issue macros resolved to Ticket links). Bodies are read and written as ADF (ADR-0022), reusing the Atlassian ADF converter; `confluenceToMarkdown`/`markdownToConfluence` (`packages/connectors/src/confluence/body.ts`) add only the macro layer — an expand keeps its body, a tracker-issue macro becomes a `jira:issue:<key>` Ticket link, a table-of-contents macro becomes a labelled marker, and an unknown macro is preserved as a labelled placeholder rather than silently dropped. Publishing writes a `chorus-doc-id` content property and a header banner linking back. Two-way mode ingests Confluence edits as high-trust signals surfaced as suggested changes, never as a silent overwrite.
 
 ### 17.4 Miro mapping detail
 
