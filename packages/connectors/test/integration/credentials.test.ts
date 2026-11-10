@@ -245,3 +245,94 @@ describe('INT-1 credential store', () => {
     expect(JSON.stringify(events)).not.toContain(SECRET.accessToken)
   })
 })
+
+
+describe('INT-9 shared Atlassian grant (AC1)', () => {
+  let db: IsolatedDatabase
+  let store: CredentialStore
+  const key = parseMasterKey('k-grant', randomBytes(32).toString('base64'))
+  const GRANT = { accessToken: 'atl_access', refreshToken: 'atl_refresh' }
+
+  async function freshWorkspace(): Promise<string> {
+    const id = ulid()
+    await db.admin.seedWorkspace(id)
+    await db.admin.execute(`DELETE FROM workspace_data_keys WHERE workspace_id = $1`, [id])
+    return id
+  }
+
+  beforeAll(async () => {
+    db = await createIsolatedDatabase()
+    store = createCredentialStore(db.config, createKeyring([key]), key)
+  }, 120_000)
+
+  afterAll(async () => {
+    await db?.drop()
+  })
+
+  it('INT-9 AC1: adding Confluence onto Jira is a scope upgrade on one credential record, not a second sign-in', async () => {
+    const workspaceId = await freshWorkspace()
+    const jira = await store.connect({
+      workspaceId,
+      kind: 'jira',
+      credentials: GRANT,
+      config: { scopes: ['read:jira-work'] },
+    })
+
+    const confluence = await store.connectSharedProduct({
+      workspaceId,
+      kind: 'confluence',
+      fromIntegrationId: jira.id,
+      scopes: ['read:confluence-content.all'],
+    })
+
+    // The Confluence product took no credentials of its own: its row holds none
+    // and points at the Jira grant.
+    const [row] = await db.admin.query<{ encrypted_credentials: string | null; shared_credentials_id: string | null }>(
+      `SELECT encrypted_credentials, shared_credentials_id FROM integrations WHERE id = $1`,
+      [confluence.id],
+    )
+    expect(row!.encrypted_credentials).toBeNull()
+    expect(row!.shared_credentials_id).toBe(jira.id)
+
+    // Both products read the same credentials — one grant.
+    expect(await store.credentialsFor(workspaceId, confluence.id)).toEqual(GRANT)
+    expect(await store.credentialsFor(workspaceId, confluence.id)).toEqual(
+      await store.credentialsFor(workspaceId, jira.id),
+    )
+
+    // The grant's scopes are the union of both products'.
+    expect(confluence.config.scopes).toEqual(['read:jira-work', 'read:confluence-content.all'])
+  })
+
+  it('INT-9 AC1: the add is audited as a scope upgrade, not a connect', async () => {
+    const workspaceId = await freshWorkspace()
+    const jira = await store.connect({ workspaceId, kind: 'jira', credentials: GRANT })
+    const confluence = await store.connectSharedProduct({
+      workspaceId,
+      kind: 'confluence',
+      fromIntegrationId: jira.id,
+    })
+    const events = await db.admin.query<{ action: string }>(
+      `SELECT action FROM audit_events WHERE workspace_id = $1 AND target_id = $2`,
+      [workspaceId, confluence.id],
+    )
+    expect(events.map((e) => e.action)).toEqual(['integration.scope_upgraded'])
+  })
+
+  it('INT-9 AC1: refreshing the grant through either product is seen by both', async () => {
+    const workspaceId = await freshWorkspace()
+    const jira = await store.connect({ workspaceId, kind: 'jira', credentials: GRANT })
+    const confluence = await store.connectSharedProduct({
+      workspaceId,
+      kind: 'confluence',
+      fromIntegrationId: jira.id,
+    })
+
+    const rotated = { accessToken: 'atl_access_2', refreshToken: 'atl_refresh_2' }
+    // Refresh via the Confluence product; the Jira grant must see it.
+    await store.updateCredentials(workspaceId, confluence.id, rotated)
+
+    expect(await store.credentialsFor(workspaceId, jira.id)).toEqual(rotated)
+    expect(await store.credentialsFor(workspaceId, confluence.id)).toEqual(rotated)
+  })
+})

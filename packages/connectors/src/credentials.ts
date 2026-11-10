@@ -52,6 +52,22 @@ export interface CredentialStore {
     config?: Readonly<Record<string, unknown>>
     actorId?: string
   }): Promise<IntegrationRecord>
+  /**
+   * Add a product onto an existing grant (INT-8/INT-9 AC1).
+   *
+   * The new integration of `kind` shares `fromIntegrationId`'s credentials
+   * rather than taking its own — no second sign-in — and the grant's scopes
+   * become the union of what each product needs. A refresh on either product
+   * updates the one shared record, so the grant never splits.
+   */
+  connectSharedProduct(input: {
+    workspaceId: string
+    kind: ConnectorKind
+    fromIntegrationId: string
+    scopes?: readonly string[]
+    config?: Readonly<Record<string, unknown>>
+    actorId?: string
+  }): Promise<IntegrationRecord>
   credentialsFor(workspaceId: string, integrationId: string): Promise<Record<string, string>>
   updateCredentials(
     workspaceId: string,
@@ -182,10 +198,62 @@ export function createCredentialStore(
       )
     },
 
+    async connectSharedProduct({ workspaceId, kind, fromIntegrationId, scopes, config: settings, actorId }) {
+      const id = ulid()
+      return tx(
+        workspaceId,
+        async (t) => {
+          const [owner] = await t.query<{ id: string; config: Record<string, unknown> }>(
+            `SELECT id, config FROM integrations WHERE id = $1 AND deleted_at IS NULL`,
+            [fromIntegrationId],
+          )
+          if (!owner) {
+            throw new NotFoundError('No integration to share credentials from', { fromIntegrationId })
+          }
+          const ownerScopes = Array.isArray(owner.config.scopes) ? (owner.config.scopes as string[]) : []
+          const unioned = Array.from(new Set([...ownerScopes, ...(scopes ?? [])]))
+          const mergedConfig = { ...(settings ?? {}), scopes: unioned }
+
+          return mutate(t, {
+            workspaceId,
+            actor: actorId ? { type: 'user', id: actorId } : { type: 'system' },
+            // A scope upgrade on an existing grant, not a fresh connect: the
+            // distinction is the whole point of AC1, and the audit says so.
+            action: 'integration.scope_upgraded',
+            targetType: 'integration',
+            targetId: id,
+            after: { kind, sharedFrom: fromIntegrationId, scopes: unioned },
+            apply: async () => {
+              // The grant now covers the new product's scopes too.
+              await t.execute(
+                `UPDATE integrations SET config = jsonb_set(config, '{scopes}', $1::jsonb), updated_at = now()
+                  WHERE id = $2`,
+                [JSON.stringify(unioned), fromIntegrationId],
+              )
+              await t.execute(
+                `INSERT INTO integrations (id, workspace_id, kind, encrypted_credentials, config, shared_credentials_id)
+                 VALUES ($1, $2, $3, NULL, $4, $5)`,
+                [id, workspaceId, kind, JSON.stringify(mergedConfig), fromIntegrationId],
+              )
+              return {
+                id,
+                workspaceId,
+                kind,
+                status: 'connected' as const,
+                config: mergedConfig,
+                syncCursor: null,
+              }
+            },
+          })
+        },
+        actorId,
+      )
+    },
+
     async credentialsFor(workspaceId, integrationId) {
       return tx(workspaceId, async (t) => {
-        const [row] = await t.query<{ encrypted_credentials: string | null }>(
-          `SELECT encrypted_credentials FROM integrations
+        const [row] = await t.query<{ encrypted_credentials: string | null; shared_credentials_id: string | null }>(
+          `SELECT encrypted_credentials, shared_credentials_id FROM integrations
             WHERE id = $1 AND deleted_at IS NULL`,
           [integrationId],
         )
@@ -193,15 +261,23 @@ export function createCredentialStore(
         // from here: row-level security did not surface it, and there is
         // nothing to distinguish.
         if (!row) throw new NotFoundError('No such integration', { integrationId })
-        if (!row.encrypted_credentials) {
+
+        // A product sharing a grant carries no credentials of its own; follow
+        // the reference to the record that holds them (AC1).
+        let sealed = row.encrypted_credentials
+        if (!sealed && row.shared_credentials_id) {
+          const [owner] = await t.query<{ encrypted_credentials: string | null }>(
+            `SELECT encrypted_credentials FROM integrations WHERE id = $1 AND deleted_at IS NULL`,
+            [row.shared_credentials_id],
+          )
+          sealed = owner?.encrypted_credentials ?? null
+        }
+        if (!sealed) {
           throw new NotFoundError('That integration holds no credentials', { integrationId })
         }
 
         const dataKey = await dataKeyFor(t, workspaceId)
-        return JSON.parse(decryptWithDataKey(row.encrypted_credentials, dataKey, workspaceId)) as Record<
-          string,
-          string
-        >
+        return JSON.parse(decryptWithDataKey(sealed, dataKey, workspaceId)) as Record<string, string>
       })
     },
 
@@ -209,14 +285,17 @@ export function createCredentialStore(
       await tx(
         workspaceId,
         async (t) => {
-          const [existing] = await t.query<{ kind: string }>(
-            `SELECT kind FROM integrations WHERE id = $1 AND deleted_at IS NULL`,
+          const [existing] = await t.query<{ kind: string; shared_credentials_id: string | null }>(
+            `SELECT kind, shared_credentials_id FROM integrations WHERE id = $1 AND deleted_at IS NULL`,
             [integrationId],
           )
           if (!existing) throw new NotFoundError('No such integration', { integrationId })
 
           const dataKey = await dataKeyFor(t, workspaceId)
           const sealed = encryptWithDataKey(JSON.stringify(credentials), dataKey, workspaceId)
+          // A shared product refreshes the grant it points at, so the rotation
+          // is seen by every product on that grant rather than splitting it.
+          const target = existing.shared_credentials_id ?? integrationId
 
           await mutate(t, {
             workspaceId,
@@ -231,7 +310,7 @@ export function createCredentialStore(
               t.execute(
                 `UPDATE integrations SET encrypted_credentials = $1, updated_at = now()
                   WHERE id = $2`,
-                [sealed, integrationId],
+                [sealed, target],
               ),
           })
         },

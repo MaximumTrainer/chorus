@@ -366,6 +366,12 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
          VALUES ($1, $2, $3, 1, ''::bytea, '# seed document', 'manual', $4)`,
         [ulid(), workspaceId, documentId, userId],
       )
+      await owner.query(
+        `INSERT INTO document_external_links
+           (id, workspace_id, document_id, external_kind, external_id)
+         VALUES ($1, $2, $3, 'confluence:page', $4)`,
+        [ulid(), workspaceId, documentId, `seed-page-${workspaceId}`],
+      )
       const proposalId = ulid()
       await owner.query(
         `INSERT INTO structure_proposals (id, workspace_id, team_id, session_id, tree, status)
@@ -893,6 +899,16 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
                (id, workspace_id, set_id, sequence, original_text, replacement_text)
              VALUES ($1, $2, $3, 99, 'a', 'b')`,
             [id, workspaceId, set?.id ?? id],
+          )
+          return
+        }
+        case 'document_external_links': {
+          const [document] = await tx.query<{ id: string }>(`SELECT id FROM documents LIMIT 1`)
+          await tx.execute(
+            `INSERT INTO document_external_links
+               (id, workspace_id, document_id, external_kind, external_id)
+             VALUES ($1, $2, $3, 'confluence:page', $4)`,
+            [id, workspaceId, document?.id ?? id, `ext-${id}`],
           )
           return
         }
