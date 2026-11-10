@@ -146,3 +146,51 @@ describe('INT-8 Jira comments as signals (source)', () => {
     ])
   })
 })
+
+describe('INT-8 Jira entity-mapping enrichment', () => {
+  function enrichedSignal(): Signal {
+    const issue: JiraIssue = {
+      id: '10001',
+      key: 'ACME-7',
+      fields: {
+        summary: 'The deploy step times out',
+        issuetype: { name: 'Bug' },
+        project: { key: 'ACME', id: 'proj-1' },
+        components: [
+          { id: 'c-1', name: 'Billing' },
+          { id: 'c-2', name: 'Checkout' },
+        ],
+        fixVersions: [{ id: 'v-1', name: '2026.11' }],
+        sprint: [{ name: 'Sprint 42', state: 'active' }],
+      },
+    }
+    return issueToSignal(issue, 'https://acme.atlassian.net', false)
+  }
+
+  it('INT-8: each component becomes a Component entity candidate', () => {
+    const components = candidatesFor(enrichedSignal())
+      .filter((c) => c.kind === 'component')
+      .map((c) => `${c.externalId}:${c.name}`)
+      .sort()
+    expect(components).toEqual(['jira:component:c-1:Billing', 'jira:component:c-2:Checkout'])
+  })
+
+  it('INT-8: the Ticket carries its fix versions as a release attribute', () => {
+    const ticket = candidatesFor(enrichedSignal()).find((c) => c.kind === 'ticket')
+    expect(ticket?.attributes).toMatchObject({ versions: ['2026.11'] })
+  })
+
+  it('INT-8: the Ticket carries its sprint when present', () => {
+    const ticket = candidatesFor(enrichedSignal()).find((c) => c.kind === 'ticket')
+    expect(ticket?.attributes).toMatchObject({ sprints: ['Sprint 42'] })
+  })
+
+  it('INT-8: an issue with no components or versions adds no such entities or attributes', () => {
+    const issue: JiraIssue = { id: '1', key: 'ACME-9', fields: { summary: 'plain', issuetype: { name: 'Task' } } }
+    const candidates = candidatesFor(issueToSignal(issue, 'https://acme.atlassian.net', false))
+    expect(candidates.some((c) => c.kind === 'component')).toBe(false)
+    const ticket = candidates.find((c) => c.kind === 'ticket')
+    expect(ticket?.attributes).not.toHaveProperty('versions')
+    expect(ticket?.attributes).not.toHaveProperty('sprints')
+  })
+})
