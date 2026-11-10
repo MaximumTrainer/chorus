@@ -1,0 +1,8 @@
+{
+  "description": "INT-9 AC5: publishing a new document. No page carries the chorus-doc-id yet, so one is created and the property stamped.",
+  "interactions": [
+    { "request": { "method": "GET", "url": "https://conf.test/api/wiki/rest/api/content/search?cql=type%3Dpage%20and%20content.property%5Bchorus-doc-id%5D.docId%20%3D%20%22doc-abc%22&limit=1&expand=version" }, "response": { "status": 200, "body": { "results": [], "size": 0 } } },
+    { "request": { "method": "POST", "url": "https://conf.test/api/wiki/rest/api/content" }, "response": { "status": 200, "body": { "id": "55501", "type": "page", "title": "Deploy runbook", "version": { "number": 1 }, "_links": { "webui": "/spaces/ENG/pages/55501/Deploy+runbook" } } } },
+    { "request": { "method": "PUT", "url": "https://conf.test/api/wiki/rest/api/content/55501/property/chorus-doc-id" }, "response": { "status": 200, "body": { "key": "chorus-doc-id", "version": { "number": 1 } } } }
+  ]
+}

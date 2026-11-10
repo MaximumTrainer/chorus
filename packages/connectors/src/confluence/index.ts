@@ -4,11 +4,31 @@ import type {
   Capabilities,
   Connector,
   ConnectorContext,
+  ExternalRef,
   HealthStatus,
   PullResult,
+  SinkSpec,
 } from '../contract.js'
 import { createAtlassianClient, ATLASSIAN_OAUTH } from '../atlassian/client.js'
 import { candidatesFor, pageToSignal, type ConfluencePage } from './streams.js'
+import { markdownToConfluence } from './body.js'
+
+/** The input the `publish` sink action accepts. */
+export interface ConfluencePublishInput {
+  readonly spaceKey: string
+  readonly title: string
+  /** The document body, in Markdown. */
+  readonly body: string
+  /** The Chorus document id, carried in the `chorus-doc-id` property for AC5. */
+  readonly docId: string
+  /** Optional parent page id to publish under. */
+  readonly parentId?: string
+  /** Optional Chorus document URL; when given, a header banner links back to it. */
+  readonly chorusUrl?: string
+}
+
+/** The Confluence content property that carries a page's Chorus document identity. */
+const DOC_PROPERTY = 'chorus-doc-id'
 
 /**
  * The Confluence source connector (INT-9).
@@ -67,7 +87,7 @@ export function createConfluenceConnector(options: ConfluenceOptions = {}): Conn
     tokenUrl: ATLASSIAN_OAUTH,
     scopes: ['read:confluence-content.all', 'read:confluence-space.summary', 'offline_access'],
   }
-  const capabilities: Capabilities = { source: true }
+  const capabilities: Capabilities = { source: true, sink: true }
 
   const client = createAtlassianClient({
     apiUrl: api,
@@ -78,17 +98,116 @@ export function createConfluenceConnector(options: ConfluenceOptions = {}): Conn
     ...(options.clientSecret ? { clientSecret: options.clientSecret } : {}),
   })
   const get = client.get
+  const request = client.request
 
   const siteUrl = (ctx: ConnectorContext): string =>
     typeof ctx.config.siteUrl === 'string' ? ctx.config.siteUrl : 'https://example.atlassian.net'
   const restricted = (ctx: ConnectorContext): boolean => ctx.config.privateByDefault !== false
   const cqlFor = (ctx: ConnectorContext): string =>
     typeof ctx.config.cql === 'string' ? ctx.config.cql : 'type in (page, blogpost) order by lastmodified asc'
+  const pageUrl = (page: { _links?: { webui?: string } }, ctx: ConnectorContext): string =>
+    `${siteUrl(ctx).replace(/\/$/, '')}/wiki${page._links?.webui ?? ''}`
+
+  /**
+   * The page already published for this document, found through its
+   * `chorus-doc-id` content property (AC5). This is what makes republishing
+   * update in place even after the local mapping is lost — the identity lives
+   * in Confluence, not only in our database.
+   */
+  async function findByDocId(
+    docId: string,
+    ctx: ConnectorContext,
+  ): Promise<{ id: string; version: number; webui?: string } | null> {
+    const cql = `type=page and content.property[${DOC_PROPERTY}].docId = "${docId}"`
+    const data = await get(
+      `/wiki/rest/api/content/search?cql=${encodeURIComponent(cql)}&limit=1&expand=version`,
+      ctx,
+    )
+    const results = Array.isArray(data.results)
+      ? (data.results as Array<{ id?: string; version?: { number?: number }; _links?: { webui?: string } }>)
+      : []
+    const found = results[0]
+    if (!found?.id) return null
+    return { id: found.id, version: found.version?.number ?? 1, ...(found._links?.webui ? { webui: found._links.webui } : {}) }
+  }
+
+  // A header banner linking back to the source document, so a reader of the
+  // Confluence page knows it is published from Chorus and where to edit it.
+  const withBanner = (markdown: string, chorusUrl: string | undefined): string =>
+    chorusUrl
+      ? `> [!INFO]\n> Published from Chorus — [view the source document](${chorusUrl})\n\n${markdown}`
+      : markdown
+
+  const bodyField = (markdown: string, chorusUrl?: string): Record<string, unknown> => ({
+    atlas_doc_format: {
+      value: JSON.stringify(markdownToConfluence(withBanner(markdown, chorusUrl))),
+      representation: 'atlas_doc_format',
+    },
+  })
+
+  const sink: SinkSpec = {
+    actions: {
+      publish: {
+        name: 'publish',
+        sideEffect: 'external',
+        // Publish is an upsert, so idempotency is handled inside execute by the
+        // doc-id property search — a republish, a lost-response retry, and a
+        // recovery after the local mapping is gone all resolve the same page.
+        async execute(input, _key, ctx): Promise<ExternalRef> {
+          const { spaceKey, title, body, docId, parentId, chorusUrl } = input as ConfluencePublishInput
+          const existing = await findByDocId(docId, ctx)
+
+          if (existing) {
+            const updated = (await request(
+              'PUT',
+              `/wiki/rest/api/content/${existing.id}`,
+              {
+                type: 'page',
+                title,
+                version: { number: existing.version + 1 },
+                body: bodyField(body, chorusUrl),
+              },
+              ctx,
+            ).then((r) => r.json())) as { id?: string; _links?: { webui?: string } }
+            return {
+              externalId: existing.id,
+              url: pageUrl({ _links: updated._links ?? (existing.webui ? { webui: existing.webui } : {}) }, ctx),
+            }
+          }
+
+          const created = (await request(
+            'POST',
+            '/wiki/rest/api/content',
+            {
+              type: 'page',
+              title,
+              space: { key: spaceKey },
+              ...(parentId ? { ancestors: [{ id: parentId }] } : {}),
+              body: bodyField(body, chorusUrl),
+            },
+            ctx,
+          ).then((r) => r.json())) as { id?: string; _links?: { webui?: string } }
+          if (!created.id) {
+            throw new UpstreamError('Confluence page create returned no id', { payload: created })
+          }
+          // Stamp the identity so the next publish finds this page (AC5).
+          await request(
+            'PUT',
+            `/wiki/rest/api/content/${created.id}/property/${DOC_PROPERTY}`,
+            { key: DOC_PROPERTY, value: { docId } },
+            ctx,
+          )
+          return { externalId: created.id, url: pageUrl(created, ctx) }
+        },
+      },
+    },
+  }
 
   return {
     kind: 'confluence',
     auth,
     capabilities,
+    sink,
 
     async pull(cursor: string | null, ctx: ConnectorContext): Promise<PullResult> {
       const { start } = parseCursor(cursor)
