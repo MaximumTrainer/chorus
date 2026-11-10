@@ -22,6 +22,7 @@ import { candidatesFor, commentsFrom, edgesFor, issueToSignal, type JiraComment,
 import { markdownToAdf } from './adf.js'
 import { requireMapping, requireTransition, type JiraTransition, type StatusMap } from './status-map.js'
 import { detectHierarchyScheme, hierarchyFields, type HierarchyConfig } from './hierarchy.js'
+import { createAtlassianClient, ATLASSIAN_OAUTH } from '../atlassian/client.js'
 
 /** The input `create_issue` accepts. */
 export interface JiraCreateIssueInput {
@@ -143,7 +144,6 @@ export interface JiraOptions {
   readonly clientSecret?: string
 }
 
-const DEFAULT_OAUTH = 'https://auth.atlassian.com/oauth/token'
 const PAGE_SIZE = 50
 const FIELDS = 'summary,description,status,issuetype,assignee,reporter,project,updated,parent,issuelinks,comment'
 
@@ -177,89 +177,24 @@ export function createJiraConnector(options: JiraOptions = {}): JiraConnector {
   const auth: AuthSpec = {
     kind: 'oauth2',
     authorizationUrl: 'https://auth.atlassian.com/authorize',
-    tokenUrl: DEFAULT_OAUTH,
+    tokenUrl: ATLASSIAN_OAUTH,
     scopes: ['read:jira-work', 'read:jira-user', 'offline_access'],
   }
   const capabilities: Capabilities = { source: true, sink: true }
 
-  async function refresh(ctx: ConnectorContext): Promise<string | undefined> {
-    const refreshToken = ctx.credentials.refreshToken
-    if (!refreshToken || !options.clientId) return undefined
-    const http = options.fetch ?? ctx.fetch
-    const response = await http(DEFAULT_OAUTH, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        grant_type: 'refresh_token',
-        refresh_token: refreshToken,
-        client_id: options.clientId,
-        ...(options.clientSecret ? { client_secret: options.clientSecret } : {}),
-      }),
-    })
-    if (!response.ok) return undefined
-    const granted = (await response.json()) as { access_token?: string; refresh_token?: string }
-    if (!granted.access_token) return undefined
-    await ctx.saveCredentials({
-      ...ctx.credentials,
-      accessToken: granted.access_token,
-      // Atlassian rotates the refresh token; persist the new one or the next
-      // refresh fails with nothing in the logs to explain it.
-      ...(granted.refresh_token ? { refreshToken: granted.refresh_token } : {}),
-    })
-    return granted.access_token
-  }
-
-  /**
-   * One authenticated request, with a single refresh-and-retry on a 401. A rate
-   * limit is raised as retryable; any other non-2xx as an `UpstreamError` whose
-   * message carries Jira's own reason, because a sink's caller needs to tell a
-   * permanent validation failure from a transient one and show the person why.
-   */
-  async function request(
-    method: string,
-    path: string,
-    body: unknown,
-    ctx: ConnectorContext,
-  ): Promise<Response> {
-    const http = options.fetch ?? ctx.fetch
-    const send = (token: string) =>
-      http(`${api}${path}`, {
-        method,
-        headers: {
-          authorization: `Bearer ${token}`,
-          accept: 'application/json',
-          ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
-        },
-        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-      })
-
-    let response = await send(ctx.credentials.accessToken ?? '')
-    if (response.status === 401) {
-      const refreshed = await refresh(ctx)
-      if (refreshed) response = await send(refreshed)
-    }
-    if (response.status === 429) {
-      const retryAfter = response.headers.get('retry-after')
-      throw new RateLimitedError('Jira applied a rate limit', {
-        retryAfterMs: retryAfter ? Number(retryAfter) * 1000 : 60_000,
-        status: 429,
-      })
-    }
-    if (!response.ok) {
-      const raw = await response.text().catch(() => '')
-      throw new UpstreamError(`Jira responded ${response.status}: ${jiraReason(raw)}`, {
-        status: response.status,
-        body: raw.slice(0, 500),
-      })
-    }
-    return response
-  }
-
-  /** One authenticated GET, parsed as JSON. */
-  async function get(path: string, ctx: ConnectorContext): Promise<Record<string, unknown>> {
-    const response = await request('GET', path, undefined, ctx)
-    return (await response.json()) as Record<string, unknown>
-  }
+  // The Bearer auth, rotating-refresh and error handling are identical across
+  // Atlassian products, so they come from the shared client; only the reason
+  // extractor is Jira's.
+  const client = createAtlassianClient({
+    apiUrl: api,
+    product: 'Jira',
+    reason: jiraReason,
+    ...(options.fetch ? { fetch: options.fetch } : {}),
+    ...(options.clientId ? { clientId: options.clientId } : {}),
+    ...(options.clientSecret ? { clientSecret: options.clientSecret } : {}),
+  })
+  const request = client.request
+  const get = client.get
 
   const siteUrl = (ctx: ConnectorContext): string =>
     typeof ctx.config.siteUrl === 'string' ? ctx.config.siteUrl : 'https://example.atlassian.net'
