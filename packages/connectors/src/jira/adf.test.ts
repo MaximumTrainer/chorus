@@ -80,20 +80,87 @@ describe('INT-8 ADF conversion', () => {
     expect(adfToMarkdown(adf)).toBe('## Summary\n\nDeploy **times out**.')
   })
 
-  it('INT-8 AC3: an unknown node degrades to its text rather than vanishing', () => {
-    // Forward-compatibility: a construct this version does not model must not
-    // silently drop the words a person wrote inside it.
+  it('INT-8 AC3: tables survive the round trip', () => {
+    const md = ['| Name | State |', '| --- | --- |', '| Deploy | open |', '| Build | done |'].join('\n')
+    expect(roundTrip(md)).toBe(md)
+  })
+
+  it('INT-8 AC3: panels survive the round trip', () => {
+    const md = '> [!INFO]\n> Heads up: the deploy is slow.'
+    expect(roundTrip(md)).toBe(md)
+  })
+
+  it('INT-8 AC3: a warning panel keeps its type', () => {
+    const md = '> [!WARNING]\n> This is destructive.'
+    expect(roundTrip(md)).toBe(md)
+  })
+
+  it('INT-8 AC3: mentions survive the round trip', () => {
+    const md = 'Ping [@Ada Lovelace](jira:mention:557058:abc-123) about the build.'
+    expect(roundTrip(md)).toBe(md)
+  })
+
+  it('INT-8 AC3: a Jira table converts to a readable Markdown table', () => {
     const adf: AdfNode = {
       type: 'doc',
       version: 1,
       content: [
         {
-          type: 'panel',
-          attrs: { panelType: 'info' },
-          content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Heads up.' }] }],
+          type: 'table',
+          content: [
+            {
+              type: 'tableRow',
+              content: [
+                { type: 'tableHeader', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Name' }] }] },
+                { type: 'tableHeader', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'State' }] }] },
+              ],
+            },
+            {
+              type: 'tableRow',
+              content: [
+                { type: 'tableCell', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Deploy' }] }] },
+                { type: 'tableCell', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'open' }] }] },
+              ],
+            },
+          ],
         },
       ],
     }
-    expect(adfToMarkdown(adf)).toContain('Heads up.')
+    expect(adfToMarkdown(adf)).toBe('| Name | State |\n| --- | --- |\n| Deploy | open |')
+  })
+
+  it('INT-8 AC3: a Jira mention converts to a mention link carrying its id', () => {
+    const adf: AdfNode = {
+      type: 'doc',
+      version: 1,
+      content: [
+        {
+          type: 'paragraph',
+          content: [
+            { type: 'text', text: 'Ping ' },
+            { type: 'mention', attrs: { id: '557058:abc-123', text: '@Ada Lovelace' } },
+            { type: 'text', text: '.' },
+          ],
+        },
+      ],
+    }
+    expect(adfToMarkdown(adf)).toBe('Ping [@Ada Lovelace](jira:mention:557058:abc-123).')
+  })
+
+  it('INT-8 AC3: a construct this version still does not model degrades to its text', () => {
+    // Forward-compatibility: a construct not yet modelled must not silently drop
+    // the words a person wrote inside it.
+    const adf: AdfNode = {
+      type: 'doc',
+      version: 1,
+      content: [
+        {
+          type: 'expand',
+          attrs: { title: 'Details' },
+          content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Hidden detail.' }] }],
+        },
+      ],
+    }
+    expect(adfToMarkdown(adf)).toContain('Hidden detail.')
   })
 })

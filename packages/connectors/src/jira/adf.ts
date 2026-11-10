@@ -30,11 +30,15 @@ export interface AdfNode {
 
 // ─── Markdown → ADF ──────────────────────────────────────────────────────────
 
-/** Splits a paragraph's text into ADF text nodes, carrying one inline mark each. */
+/** The href prefix that marks a Markdown link as an encoded Jira mention. */
+const MENTION_HREF = 'jira:mention:'
+
+/** Splits a paragraph's text into ADF inline nodes, carrying one mark each. */
 function inlineToAdf(text: string): AdfNode[] {
   const nodes: AdfNode[] = []
   // Ordered by how Markdown disambiguates: `**` before `*`, and code spans and
-  // links are matched whole so their contents are not re-scanned for marks.
+  // links are matched whole so their contents are not re-scanned for marks. A
+  // link whose href is a `jira:mention:` uri is a mention, not a plain link.
   const pattern = /(\*\*([^*]+)\*\*)|(\*([^*]+)\*)|(`([^`]+)`)|(\[([^\]]+)\]\(([^)]+)\))/g
   let last = 0
   let match: RegExpExecArray | null
@@ -43,13 +47,33 @@ function inlineToAdf(text: string): AdfNode[] {
     if (match[2] !== undefined) nodes.push({ type: 'text', text: match[2], marks: [{ type: 'strong' }] })
     else if (match[4] !== undefined) nodes.push({ type: 'text', text: match[4], marks: [{ type: 'em' }] })
     else if (match[6] !== undefined) nodes.push({ type: 'text', text: match[6], marks: [{ type: 'code' }] })
-    else if (match[8] !== undefined)
-      nodes.push({ type: 'text', text: match[8], marks: [{ type: 'link', attrs: { href: match[9] } }] })
+    else if (match[8] !== undefined) {
+      const linkText = match[8]
+      const href = match[9]!
+      if (href.startsWith(MENTION_HREF)) {
+        nodes.push({ type: 'mention', attrs: { id: href.slice(MENTION_HREF.length), text: linkText } })
+      } else {
+        nodes.push({ type: 'text', text: linkText, marks: [{ type: 'link', attrs: { href } }] })
+      }
+    }
     last = pattern.lastIndex
   }
   if (last < text.length) nodes.push({ type: 'text', text: text.slice(last) })
   return nodes.length > 0 ? nodes : [{ type: 'text', text }]
 }
+
+/** The cells of a Markdown table row: `| a | b |` → `['a', 'b']`. */
+function tableCells(line: string): string[] {
+  return line
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((cell) => cell.trim())
+}
+
+const TABLE_SEPARATOR = /^\|(\s*:?-+:?\s*\|)+\s*$/
+const PANEL_START = /^>\s*\[!(INFO|NOTE|WARNING|SUCCESS|ERROR)\]\s*$/i
 
 export function markdownToAdf(markdown: string): AdfNode {
   const lines = markdown.replace(/\r\n/g, '\n').split('\n')
@@ -94,6 +118,60 @@ export function markdownToAdf(markdown: string): AdfNode {
         content: inlineToAdf(heading[2]!),
       })
       i += 1
+      continue
+    }
+
+    // Panel: a GitHub-style alert blockquote, `> [!INFO]` then `> `-prefixed body.
+    const panel = PANEL_START.exec(line)
+    if (panel) {
+      flushParagraph()
+      const body: string[] = []
+      i += 1
+      while (i < lines.length && /^>\s?/.test(lines[i]!)) {
+        body.push(lines[i]!.replace(/^>\s?/, ''))
+        i += 1
+      }
+      // Blank `>` lines separate paragraphs; a run of non-blank lines is one.
+      const paragraphs: AdfNode[] = []
+      let buffer: string[] = []
+      const flush = (): void => {
+        if (buffer.length === 0) return
+        paragraphs.push({ type: 'paragraph', content: inlineToAdf(buffer.join(' ')) })
+        buffer = []
+      }
+      for (const bodyLine of body) {
+        if (bodyLine.trim() === '') flush()
+        else buffer.push(bodyLine)
+      }
+      flush()
+      content.push({ type: 'panel', attrs: { panelType: panel[1]!.toLowerCase() }, content: paragraphs })
+      continue
+    }
+
+    // Table: a `|`-delimited header row followed by a `| --- |` separator.
+    if (/^\|.*\|\s*$/.test(line) && i + 1 < lines.length && TABLE_SEPARATOR.test(lines[i + 1]!)) {
+      flushParagraph()
+      const rows: AdfNode[] = []
+      const headerCells = tableCells(line)
+      rows.push({
+        type: 'tableRow',
+        content: headerCells.map((cell) => ({
+          type: 'tableHeader',
+          content: [{ type: 'paragraph', content: inlineToAdf(cell) }],
+        })),
+      })
+      i += 2 // header + separator
+      while (i < lines.length && /^\|.*\|\s*$/.test(lines[i]!)) {
+        rows.push({
+          type: 'tableRow',
+          content: tableCells(lines[i]!).map((cell) => ({
+            type: 'tableCell',
+            content: [{ type: 'paragraph', content: inlineToAdf(cell) }],
+          })),
+        })
+        i += 1
+      }
+      content.push({ type: 'table', content: rows })
       continue
     }
 
@@ -158,8 +236,18 @@ function textOf(node: AdfNode): string {
   return (node.content ?? []).map(textOf).join('')
 }
 
+/** One inline child rendered to Markdown: text with marks, or a mention link. */
+function inlineChild(child: AdfNode): string {
+  if (child.type === 'text') return inlineToMarkdown(child)
+  if (child.type === 'mention') {
+    const attrs = child.attrs as { id?: string; text?: string } | undefined
+    return `[${attrs?.text ?? ''}](${MENTION_HREF}${attrs?.id ?? ''})`
+  }
+  return textOf(child)
+}
+
 function inlineContent(node: AdfNode): string {
-  return (node.content ?? []).map((child) => (child.type === 'text' ? inlineToMarkdown(child) : textOf(child))).join('')
+  return (node.content ?? []).map(inlineChild).join('')
 }
 
 function blockToMarkdown(node: AdfNode): string {
@@ -180,6 +268,23 @@ function blockToMarkdown(node: AdfNode): string {
       return (node.content ?? [])
         .map((item, index) => `${index + 1}. ${inlineContent(item.content?.[0] ?? item)}`)
         .join('\n')
+    case 'table': {
+      const rows = node.content ?? []
+      const lines: string[] = []
+      rows.forEach((row, index) => {
+        const cells = (row.content ?? []).map((cell) => inlineContent(cell.content?.[0] ?? cell))
+        lines.push(`| ${cells.join(' | ')} |`)
+        // GFM needs a header separator under the first row.
+        if (index === 0) lines.push(`| ${cells.map(() => '---').join(' | ')} |`)
+      })
+      return lines.join('\n')
+    }
+    case 'panel': {
+      const type = String((node.attrs as { panelType?: string })?.panelType ?? 'info').toUpperCase()
+      const body = (node.content ?? []).map(blockToMarkdown).join('\n\n')
+      const quoted = body.split('\n').map((bodyLine) => `> ${bodyLine}`).join('\n')
+      return `> [!${type}]\n${quoted}`
+    }
     default: {
       // Unknown block: keep its words rather than dropping them.
       const inner = (node.content ?? []).map(blockToMarkdown).join('\n\n')
