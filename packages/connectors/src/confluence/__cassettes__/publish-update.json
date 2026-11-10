@@ -1,0 +1,7 @@
+{
+  "description": "INT-9 AC5: republishing. The page is found by its chorus-doc-id property and updated in place at the next version, not duplicated.",
+  "interactions": [
+    { "request": { "method": "GET", "url": "https://conf.test/api/wiki/rest/api/content/search?cql=type%3Dpage%20and%20content.property%5Bchorus-doc-id%5D.docId%20%3D%20%22doc-abc%22&limit=1&expand=version" }, "response": { "status": 200, "body": { "results": [ { "id": "55501", "type": "page", "title": "Deploy runbook", "version": { "number": 3 }, "_links": { "webui": "/spaces/ENG/pages/55501/Deploy+runbook" } } ], "size": 1 } } },
+    { "request": { "method": "PUT", "url": "https://conf.test/api/wiki/rest/api/content/55501" }, "response": { "status": 200, "body": { "id": "55501", "type": "page", "title": "Deploy runbook (v2)", "version": { "number": 4 }, "_links": { "webui": "/spaces/ENG/pages/55501/Deploy+runbook" } } } }
+  ]
+}
