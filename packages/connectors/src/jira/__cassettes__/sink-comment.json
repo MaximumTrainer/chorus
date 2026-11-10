@@ -1,0 +1,7 @@
+{
+  "description": "INT-8 Jira sink: posting a comment. No existing comment carries the idempotency marker, so one is created.",
+  "interactions": [
+    { "request": { "method": "GET", "url": "https://jira.test/api/rest/api/3/issue/ACME-101/comment" }, "response": { "status": 200, "body": { "comments": [], "total": 0 } } },
+    { "request": { "method": "POST", "url": "https://jira.test/api/rest/api/3/issue/ACME-101/comment" }, "response": { "status": 201, "body": { "id": "c-1" } } }
+  ]
+}

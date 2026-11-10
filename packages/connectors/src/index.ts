@@ -45,6 +45,7 @@ export type {
   JiraCreateIssueInput,
   JiraUpdateIssueInput,
   JiraTransitionInput,
+  JiraCommentInput,
 } from './jira/index.js'
 export { detectHierarchyScheme, hierarchyFields } from './jira/hierarchy.js'
 export type { HierarchyScheme, HierarchyConfig } from './jira/hierarchy.js'
