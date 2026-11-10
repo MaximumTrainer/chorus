@@ -1,0 +1,20 @@
+{
+  "description": "INT-8 AC4: a company-managed (classic) project exposes an Epic Link custom field.",
+  "interactions": [
+    {
+      "request": { "method": "GET", "url": "https://jira.test/api/rest/api/3/project/ACME" },
+      "response": { "status": 200, "body": { "key": "ACME", "style": "classic" } }
+    },
+    {
+      "request": { "method": "GET", "url": "https://jira.test/api/rest/api/3/field" },
+      "response": {
+        "status": 200,
+        "body": [
+          { "id": "summary", "name": "Summary" },
+          { "id": "customfield_10014", "name": "Epic Link" },
+          { "id": "parent", "name": "Parent" }
+        ]
+      }
+    }
+  ]
+}

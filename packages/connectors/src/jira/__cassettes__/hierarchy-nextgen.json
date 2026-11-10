@@ -1,0 +1,19 @@
+{
+  "description": "INT-8 AC4: a team-managed (next-gen) project links every level through parent.",
+  "interactions": [
+    {
+      "request": { "method": "GET", "url": "https://jira.test/api/rest/api/3/project/ACME" },
+      "response": { "status": 200, "body": { "key": "ACME", "style": "next-gen" } }
+    },
+    {
+      "request": { "method": "GET", "url": "https://jira.test/api/rest/api/3/field" },
+      "response": {
+        "status": 200,
+        "body": [
+          { "id": "summary", "name": "Summary" },
+          { "id": "parent", "name": "Parent" }
+        ]
+      }
+    }
+  ]
+}

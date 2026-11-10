@@ -21,6 +21,7 @@ import type {
 import { candidatesFor, commentsFrom, edgesFor, issueToSignal, type JiraComment, type JiraIssue } from './streams.js'
 import { markdownToAdf } from './adf.js'
 import { requireMapping, requireTransition, type JiraTransition, type StatusMap } from './status-map.js'
+import { detectHierarchyScheme, hierarchyFields, type HierarchyConfig } from './hierarchy.js'
 
 /** The input `create_issue` accepts. */
 export interface JiraCreateIssueInput {
@@ -29,6 +30,11 @@ export interface JiraCreateIssueInput {
   readonly summary: string
   readonly description?: string
   readonly taskId?: string
+  /** The key of the parent issue to link this one under, if any (AC4). */
+  readonly parentKey?: string
+  /** True when the parent is an epic, selecting the epic-link path on a
+   * company-managed project; a subtask leaves this false. */
+  readonly parentIsEpic?: boolean
 }
 
 /** The input `update_issue` accepts. */
@@ -155,7 +161,17 @@ function parseCursor(raw: string | null): Cursor {
   }
 }
 
-export function createJiraConnector(options: JiraOptions = {}): Connector {
+/**
+ * The Jira connector, with its one Jira-specific capability beyond the common
+ * `Connector` contract: detecting a project's hierarchy scheme at connect time
+ * (AC4). It is a method rather than a contract addition because no other
+ * connector has Jira's company-managed / team-managed split.
+ */
+export interface JiraConnector extends Connector {
+  detectHierarchy(projectKey: string, ctx: ConnectorContext): Promise<HierarchyConfig>
+}
+
+export function createJiraConnector(options: JiraOptions = {}): JiraConnector {
   const api = (options.apiUrl ?? 'https://api.atlassian.com/ex/jira/cloud').replace(/\/$/, '')
 
   const auth: AuthSpec = {
@@ -252,6 +268,11 @@ export function createJiraConnector(options: JiraOptions = {}): Connector {
     typeof ctx.config.jql === 'string' ? ctx.config.jql : 'order by updated asc'
   const browseUrl = (key: string, ctx: ConnectorContext): string =>
     `${siteUrl(ctx).replace(/\/$/, '')}/browse/${key}`
+  /** The hierarchy scheme stored on the integration, or the classic default. */
+  const hierarchyFor = (ctx: ConnectorContext): HierarchyConfig => {
+    const stored = ctx.config.hierarchy as HierarchyConfig | undefined
+    return stored?.scheme ? stored : { scheme: 'epic_link' }
+  }
 
   /**
    * Find an issue a previous create stamped with this idempotency key, through
@@ -296,9 +317,15 @@ export function createJiraConnector(options: JiraOptions = {}): Connector {
         sideEffect: 'external',
         find: (key, ctx) => findByProperty(key, ctx),
         async execute(input, key, ctx): Promise<ExternalRef> {
-          const { projectKey, issueType, summary, description, taskId } =
+          const { projectKey, issueType, summary, description, taskId, parentKey, parentIsEpic } =
             input as JiraCreateIssueInput
           const project = projectKey ?? (ctx.config.projectKey as string | undefined)
+          // The parent linkage obeys the scheme detected for the project at
+          // connect time and stored on the integration (AC4); no parent means
+          // no linkage fields.
+          const parentFields = parentKey
+            ? hierarchyFields(hierarchyFor(ctx), parentKey, parentIsEpic === true)
+            : {}
           const response = await request(
             'POST',
             '/rest/api/3/issue',
@@ -310,6 +337,7 @@ export function createJiraConnector(options: JiraOptions = {}): Connector {
                 ...(description !== undefined
                   ? { description: markdownToAdf(description) }
                   : {}),
+                ...parentFields,
               },
             },
             ctx,
@@ -478,6 +506,17 @@ export function createJiraConnector(options: JiraOptions = {}): Connector {
           remedy: 'No action needed yet — usually transient. Investigate if it persists.',
         }
       }
+    },
+
+    // Detected at connect time and stored on the integration (AC4): the connect
+    // flow calls this per project and persists the result as `config.hierarchy`,
+    // which the sink then reads to link a task tree the right way.
+    async detectHierarchy(projectKey: string, ctx: ConnectorContext): Promise<HierarchyConfig> {
+      const project = await get(`/rest/api/3/project/${encodeURIComponent(projectKey)}`, ctx)
+      // The field catalogue is a JSON array, not an object.
+      const fields = (await request('GET', '/rest/api/3/field', undefined, ctx).then((r) => r.json())) as unknown
+      const list = Array.isArray(fields) ? (fields as Array<{ id?: string; name?: string }>) : []
+      return detectHierarchyScheme(typeof project.style === 'string' ? project.style : undefined, list)
     },
   }
 }
