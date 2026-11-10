@@ -1173,7 +1173,7 @@ The webhook path reuses the same mapping functions as the pull path, so a push a
 | Amplitude / Mixpanel | API key | events, experiments, dashboards, anomalies | Metric, Experiment | — | scheduled pull; emits `metric_change` signals |
 | Generic MCP server | per server | resources | as declared | tools (allow-listed) | MCP-7 |
 
-Atlassian connectors share one OAuth grant and one credential record with per-product scopes, so connecting Jira and then Confluence is a scope upgrade rather than a second sign-in. Microsoft connectors likewise share one Entra app registration.
+Atlassian connectors share one OAuth grant and one credential record with per-product scopes, so connecting Jira and then Confluence is a scope upgrade rather than a second sign-in. Microsoft connectors likewise share one Entra app registration. The Atlassian Bearer auth, rotating-refresh and error handling are one shared HTTP client (`createAtlassianClient`, `packages/connectors/src/atlassian/client.js`) that Jira and Confluence both build on, so the token-refresh path cannot drift between them; only the content converters differ per product.
 
 ### 17.2 Jira mapping detail
 
