@@ -145,7 +145,7 @@ export interface JiraOptions {
 }
 
 const PAGE_SIZE = 50
-const FIELDS = 'summary,description,status,issuetype,assignee,reporter,project,updated,parent,issuelinks,comment'
+const FIELDS = 'summary,description,status,issuetype,assignee,reporter,project,updated,parent,issuelinks,comment,components,fixVersions'
 
 interface Cursor {
   readonly startAt: number

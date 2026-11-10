@@ -1,10 +1,10 @@
 {
   "description": "Jira access-token refresh: the first search is 401, the token endpoint returns a new access AND refresh token (Atlassian rotates), the retried search succeeds. Hand-authored; not recorded against a live site.",
   "interactions": [
-    { "request": { "method": "GET", "url": "https://jira.test/api/rest/api/3/search?jql=order%20by%20updated%20asc&startAt=0&maxResults=50&fields=summary,description,status,issuetype,assignee,reporter,project,updated,parent,issuelinks,comment" }, "response": { "status": 401, "body": {} } },
+    { "request": { "method": "GET", "url": "https://jira.test/api/rest/api/3/search?jql=order%20by%20updated%20asc&startAt=0&maxResults=50&fields=summary,description,status,issuetype,assignee,reporter,project,updated,parent,issuelinks,comment,components,fixVersions" }, "response": { "status": 401, "body": {} } },
     { "request": { "method": "POST", "url": "https://auth.atlassian.com/oauth/token" }, "response": { "status": 200, "body": { "access_token": "new-access", "refresh_token": "rotated-refresh" } } },
     {
-      "request": { "method": "GET", "url": "https://jira.test/api/rest/api/3/search?jql=order%20by%20updated%20asc&startAt=0&maxResults=50&fields=summary,description,status,issuetype,assignee,reporter,project,updated,parent,issuelinks,comment" },
+      "request": { "method": "GET", "url": "https://jira.test/api/rest/api/3/search?jql=order%20by%20updated%20asc&startAt=0&maxResults=50&fields=summary,description,status,issuetype,assignee,reporter,project,updated,parent,issuelinks,comment,components,fixVersions" },
       "response": { "status": 200, "body": { "startAt": 0, "maxResults": 50, "total": 1, "issues": [ { "id": "10001", "key": "ACME-7", "fields": { "summary": "ok", "status": { "name": "Done" }, "issuetype": { "name": "Task" }, "project": { "key": "ACME", "id": "p" }, "updated": "2026-09-01T09:10:00.000+0000" } } ] } }
     }
   ]

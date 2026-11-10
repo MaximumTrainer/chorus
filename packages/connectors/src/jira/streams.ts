@@ -48,6 +48,9 @@ export interface JiraIssue {
     readonly parent?: { readonly key?: string } | null
     readonly issuelinks?: readonly JiraIssueLink[]
     readonly comment?: { readonly comments?: readonly JiraComment[] }
+    readonly components?: readonly { readonly id?: string; readonly name?: string }[]
+    readonly fixVersions?: readonly { readonly id?: string; readonly name?: string }[]
+    readonly sprint?: readonly { readonly name?: string; readonly state?: string }[]
   }
 }
 
@@ -148,8 +151,11 @@ export function candidatesFor(signal: Signal): readonly EntityCandidate[] {
   const fields = issue.fields ?? {}
   const candidates: EntityCandidate[] = []
 
-  // The issue itself. An epic is a Feature; anything else is a Ticket.
+  // The issue itself. An epic is a Feature; anything else is a Ticket. Sprints
+  // and fix versions ride as release attributes rather than their own entities.
   const isEpic = (fields.issuetype?.name ?? '').toLowerCase() === 'epic'
+  const versions = (fields.fixVersions ?? []).map((v) => v.name).filter((n): n is string => Boolean(n))
+  const sprints = (fields.sprint ?? []).map((s) => s.name).filter((n): n is string => Boolean(n))
   candidates.push({
     kind: isEpic ? 'feature' : 'ticket',
     externalId: `jira:issue:${issue.key}`,
@@ -160,9 +166,24 @@ export function candidatesFor(signal: Signal): readonly EntityCandidate[] {
       type: fields.issuetype?.name ?? null,
       project: fields.project?.key ?? null,
       url: signal.url,
+      ...(versions.length ? { versions } : {}),
+      ...(sprints.length ? { sprints } : {}),
     },
     evidence,
   })
+
+  // Each component the issue names is a Component entity.
+  for (const component of fields.components ?? []) {
+    if (!component.id) continue
+    candidates.push({
+      kind: 'component',
+      externalId: `jira:component:${component.id}`,
+      name: component.name ?? component.id,
+      aliases: [],
+      attributes: { project: fields.project?.key ?? null },
+      evidence,
+    })
+  }
 
   // Everyone the issue names is a person.
   for (const user of [fields.assignee, fields.reporter]) {
