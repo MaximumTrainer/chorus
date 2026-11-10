@@ -1,0 +1,33 @@
+{
+  "description": "Confluence REST: one page of content (ADF body) and a current-user health check. Hand-authored from the published schema; not recorded against a live site.",
+  "interactions": [
+    {
+      "request": { "method": "GET", "url": "https://conf.test/api/wiki/rest/api/content/search?cql=type%20in%20(page%2C%20blogpost)%20order%20by%20lastmodified%20asc&limit=25&start=0&expand=space,version,history.createdBy,body.atlas_doc_format" },
+      "response": {
+        "status": 200,
+        "body": {
+          "start": 0,
+          "limit": 25,
+          "size": 1,
+          "results": [
+            {
+              "id": "12345",
+              "type": "page",
+              "status": "current",
+              "title": "Deploy runbook",
+              "space": { "id": 98, "key": "ENG", "name": "Engineering" },
+              "history": { "createdBy": { "accountId": "u1", "displayName": "Ada Lovelace" } },
+              "version": { "number": 3, "when": "2026-09-01T10:00:00.000Z", "by": { "accountId": "u2", "displayName": "Grace Hopper" } },
+              "body": { "atlas_doc_format": { "value": "{\"type\":\"doc\",\"version\":1,\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"Raise the timeout to fix the deploy.\"}]}]}", "representation": "atlas_doc_format" } },
+              "_links": { "webui": "/spaces/ENG/pages/12345/Deploy+runbook" }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": { "method": "GET", "url": "https://conf.test/api/wiki/rest/api/user/current" },
+      "response": { "status": 200, "body": { "accountId": "u-self", "displayName": "Bot" } }
+    }
+  ]
+}
