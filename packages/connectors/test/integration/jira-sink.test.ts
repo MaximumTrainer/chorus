@@ -44,7 +44,7 @@ describe('INT-8 Jira sink', () => {
     const connector = createJiraConnector()
     expect(connector.capabilities.sink).toBe(true)
     const actions = connector.sink?.actions ?? {}
-    expect(Object.keys(actions).sort()).toEqual(['create_issue', 'transition', 'update_issue'].sort())
+    expect(Object.keys(actions).sort()).toEqual(['comment', 'create_issue', 'transition', 'update_issue'].sort())
     for (const action of Object.values(actions)) {
       expect(action.sideEffect).toBe('external')
     }
@@ -189,5 +189,29 @@ describe('INT-8 Jira sink', () => {
 
     expect(raised).toBeInstanceOf(TransitionError)
     expect((raised as TransitionError).message).toMatch(/Done/)
+  })
+})
+
+describe('INT-8 Jira sink — comments', () => {
+  it('INT-8: posting a comment returns the created comment', async () => {
+    const connector = connectorFor('jira/sink-comment.json')
+    const ref = await connector.sink!.actions.comment!.execute(
+      { issueKey: 'ACME-101', body: 'Looks fixed by the timeout bump.' },
+      'idem-cmt-1',
+      context('jira/sink-comment.json'),
+    )
+    expect(ref.externalId).toBe('c-1')
+    expect(ref.url).toContain('/browse/ACME-101')
+  })
+
+  it('INT-8: a comment retried with the same key finds the first, not a second', async () => {
+    const connector = connectorFor('jira/sink-comment-idempotent.json')
+    const action = connector.sink!.actions.comment!
+    const ctx = context('jira/sink-comment-idempotent.json')
+
+    const first = await action.execute({ issueKey: 'ACME-101', body: 'Same note.' }, 'idem-cmt-2', ctx)
+    const retried = await action.execute({ issueKey: 'ACME-101', body: 'Same note.' }, 'idem-cmt-2', ctx)
+
+    expect(retried.externalId).toBe(first.externalId)
   })
 })

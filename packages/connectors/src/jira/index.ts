@@ -19,7 +19,7 @@ import type {
   WebhookSpec,
 } from '../contract.js'
 import { candidatesFor, commentsFrom, edgesFor, issueToSignal, type JiraComment, type JiraIssue } from './streams.js'
-import { markdownToAdf } from './adf.js'
+import { adfToMarkdown, markdownToAdf, type AdfNode } from './adf.js'
 import { requireMapping, requireTransition, type JiraTransition, type StatusMap } from './status-map.js'
 import { detectHierarchyScheme, hierarchyFields, type HierarchyConfig } from './hierarchy.js'
 import { createAtlassianClient, ATLASSIAN_OAUTH } from '../atlassian/client.js'
@@ -43,6 +43,13 @@ export interface JiraUpdateIssueInput {
   readonly issueKey: string
   readonly summary?: string
   readonly description?: string
+}
+
+/** The input `comment` accepts. */
+export interface JiraCommentInput {
+  readonly issueKey: string
+  /** The comment body, in Markdown. */
+  readonly body: string
 }
 
 /** The input `transition` accepts: the Chorus status to move the issue to. */
@@ -336,6 +343,37 @@ export function createJiraConnector(options: JiraOptions = {}): JiraConnector {
             ctx,
           )
           return { externalId: issueKey, url: browseUrl(issueKey, ctx) }
+        },
+      },
+
+      comment: {
+        name: 'comment',
+        sideEffect: 'external',
+        // A comment is a create, so a lost-response retry would double-post. The
+        // action has the issue key, so it searches that issue's own comments for
+        // its idempotency marker before posting — the marker rides on its own
+        // line so it reads as metadata rather than prose.
+        async execute(input, key, ctx): Promise<ExternalRef> {
+          const { issueKey, body } = input as JiraCommentInput
+          const marker = `[chorus-idem:${key}]`
+          const data = await get(`/rest/api/3/issue/${issueKey}/comment`, ctx)
+          const comments = Array.isArray(data.comments)
+            ? (data.comments as Array<{ id?: string; body?: AdfNode }>)
+            : []
+          const already = comments.find((c) => c.body && adfToMarkdown(c.body).includes(marker))
+          if (already?.id) {
+            return { externalId: already.id, url: `${browseUrl(issueKey, ctx)}?focusedCommentId=${already.id}` }
+          }
+          const created = (await request(
+            'POST',
+            `/rest/api/3/issue/${issueKey}/comment`,
+            { body: markdownToAdf(`${body}\n\n${marker}`) },
+            ctx,
+          ).then((r) => r.json())) as { id?: string }
+          if (!created.id) {
+            throw new UpstreamError('Jira comment create returned no id', { payload: created })
+          }
+          return { externalId: created.id, url: `${browseUrl(issueKey, ctx)}?focusedCommentId=${created.id}` }
         },
       },
     },

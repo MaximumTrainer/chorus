@@ -1,0 +1,8 @@
+{
+  "description": "INT-8 Jira sink: a comment retried with the same key. The first call creates it with a marker; the retry finds that comment by the marker rather than posting a second.",
+  "interactions": [
+    { "request": { "method": "GET", "url": "https://jira.test/api/rest/api/3/issue/ACME-101/comment" }, "response": { "status": 200, "body": { "comments": [] } } },
+    { "request": { "method": "POST", "url": "https://jira.test/api/rest/api/3/issue/ACME-101/comment" }, "response": { "status": 201, "body": { "id": "c-1" } } },
+    { "request": { "method": "GET", "url": "https://jira.test/api/rest/api/3/issue/ACME-101/comment" }, "response": { "status": 200, "body": { "comments": [ { "id": "c-1", "body": { "type": "doc", "version": 1, "content": [ { "type": "paragraph", "content": [ { "type": "text", "text": "Same note." } ] }, { "type": "paragraph", "content": [ { "type": "text", "text": "[chorus-idem:idem-cmt-2]" } ] } ] } } ] } } }
+  ]
+}
