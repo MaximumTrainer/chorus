@@ -1,6 +1,6 @@
 {
   "description": "INT-9: Confluence rate-limits the content search.",
   "interactions": [
-    { "request": { "method": "GET", "url": "https://conf.test/api/wiki/rest/api/content/search?cql=type%20in%20(page%2C%20blogpost)%20order%20by%20lastmodified%20asc&limit=25&start=0&expand=space,version,history.createdBy,body.atlas_doc_format" }, "response": { "status": 429, "headers": { "retry-after": "30" }, "body": { "message": "rate limited" } } }
+    { "request": { "method": "GET", "url": "https://conf.test/api/wiki/rest/api/content/search?cql=type%20in%20(page%2C%20blogpost)%20order%20by%20lastmodified%20asc&limit=25&start=0&expand=space,version,history.createdBy,body.atlas_doc_format,restrictions.read.restrictions.user,restrictions.read.restrictions.group" }, "response": { "status": 429, "headers": { "retry-after": "30" }, "body": { "message": "rate limited" } } }
   ]
 }

@@ -27,6 +27,14 @@ export interface ConfluencePage {
   readonly version?: { readonly number?: number; readonly when?: string; readonly by?: ConfluenceUser }
   readonly body?: { readonly atlas_doc_format?: { readonly value?: string } }
   readonly _links?: { readonly webui?: string }
+  readonly restrictions?: {
+    readonly read?: {
+      readonly restrictions?: {
+        readonly user?: { readonly results?: readonly { readonly accountId?: string }[] }
+        readonly group?: { readonly results?: readonly { readonly name?: string }[] }
+      }
+    }
+  }
 }
 
 function person(user: ConfluenceUser | undefined): Signal['author'] {
@@ -34,8 +42,24 @@ function person(user: ConfluenceUser | undefined): Signal['author'] {
   return { externalId: user.accountId, display: user.displayName ?? user.accountId }
 }
 
-/** A space's pages are visible to its members; absent membership, scope to the space. */
-function scope(spaceId: number | string | undefined, restricted: boolean): Signal['permissions'] {
+/**
+ * A page's read permission (AC4).
+ *
+ * A page can be restricted to specific groups or users; that restriction is the
+ * narrowest and wins — the signal is scoped to exactly those readers, so a
+ * person outside them cannot retrieve it. Absent a page restriction we fall back
+ * to the space: a space's pages are visible to its members, and absent that
+ * membership we scope to the space id rather than under-restricting.
+ */
+function scope(page: ConfluencePage, restricted: boolean): Signal['permissions'] {
+  const read = page.restrictions?.read?.restrictions
+  const groups = (read?.group?.results ?? []).map((g) => g.name).filter((n): n is string => Boolean(n))
+  const users = (read?.user?.results ?? []).map((u) => u.accountId).filter((a): a is string => Boolean(a))
+  const pageScopes = [...groups.map((g) => `confluence:group:${g}`), ...users.map((u) => `confluence:user:${u}`)]
+  if (pageScopes.length > 0) {
+    return { visibility: 'restricted', scopeIds: pageScopes }
+  }
+  const spaceId = page.space?.id
   return restricted && spaceId !== undefined
     ? { visibility: 'restricted', scopeIds: [`confluence:space:${spaceId}`] }
     : { visibility: 'public', scopeIds: [] }
@@ -70,7 +94,7 @@ export function pageToSignal(page: ConfluencePage, baseUrl: string, restricted: 
     author: person(page.version?.by) ?? person(page.history?.createdBy),
     occurredAt: page.version?.when ? new Date(page.version.when) : new Date(0),
     url: `${base}/wiki${page._links?.webui ?? ''}`,
-    permissions: scope(page.space?.id, restricted),
+    permissions: scope(page, restricted),
     raw: page,
   }
 }

@@ -73,3 +73,48 @@ describe('INT-9 Confluence page mapping', () => {
     expect(pageEntity?.attributes).toMatchObject({ space: 'ENG', url: signal.url })
   })
 })
+
+describe('INT-9 Confluence page restrictions (AC4)', () => {
+  function restrictedPage(restrictions: unknown): ConfluencePage {
+    return {
+      id: '12345',
+      type: 'page',
+      title: 'Secret runbook',
+      space: { id: 98, key: 'ENG', name: 'Engineering' },
+      version: { number: 1, when: '2026-09-01T10:00:00.000Z', by: { accountId: 'u2' } },
+      body: { atlas_doc_format: { value: adfString } },
+      _links: { webui: '/spaces/ENG/pages/12345/x' },
+      restrictions: restrictions as never,
+    }
+  }
+
+  it('INT-9 AC4: a page restricted to a group is scoped to that group, not the whole space', () => {
+    const page = restrictedPage({ read: { restrictions: { group: { results: [{ name: 'eng-admins' }] } } } })
+    expect(pageToSignal(page, 'https://acme.atlassian.net', true).permissions).toEqual({
+      visibility: 'restricted',
+      scopeIds: ['confluence:group:eng-admins'],
+    })
+  })
+
+  it('INT-9 AC4: a page restricted to users is scoped to those users', () => {
+    const page = restrictedPage({ read: { restrictions: { user: { results: [{ accountId: 'u-7' }, { accountId: 'u-8' }] } } } })
+    expect(pageToSignal(page, 'https://acme.atlassian.net', true).permissions).toEqual({
+      visibility: 'restricted',
+      scopeIds: ['confluence:user:u-7', 'confluence:user:u-8'],
+    })
+  })
+
+  it('INT-9 AC4: a page with read restrictions is restricted even when the space default is public', () => {
+    const page = restrictedPage({ read: { restrictions: { group: { results: [{ name: 'eng-admins' }] } } } })
+    // restricted=false (space default public), but the page restriction wins.
+    expect(pageToSignal(page, 'https://acme.atlassian.net', false).permissions.visibility).toBe('restricted')
+  })
+
+  it('INT-9 AC4: a page with no read restrictions falls back to the space scope', () => {
+    const page = restrictedPage({ read: { restrictions: { user: { results: [] }, group: { results: [] } } } })
+    expect(pageToSignal(page, 'https://acme.atlassian.net', true).permissions).toEqual({
+      visibility: 'restricted',
+      scopeIds: ['confluence:space:98'],
+    })
+  })
+})

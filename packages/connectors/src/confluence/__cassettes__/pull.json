@@ -2,7 +2,7 @@
   "description": "Confluence REST: one page of content (ADF body) and a current-user health check. Hand-authored from the published schema; not recorded against a live site.",
   "interactions": [
     {
-      "request": { "method": "GET", "url": "https://conf.test/api/wiki/rest/api/content/search?cql=type%20in%20(page%2C%20blogpost)%20order%20by%20lastmodified%20asc&limit=25&start=0&expand=space,version,history.createdBy,body.atlas_doc_format" },
+      "request": { "method": "GET", "url": "https://conf.test/api/wiki/rest/api/content/search?cql=type%20in%20(page%2C%20blogpost)%20order%20by%20lastmodified%20asc&limit=25&start=0&expand=space,version,history.createdBy,body.atlas_doc_format,restrictions.read.restrictions.user,restrictions.read.restrictions.group" },
       "response": {
         "status": 200,
         "body": {

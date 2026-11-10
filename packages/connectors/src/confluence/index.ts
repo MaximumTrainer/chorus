@@ -51,7 +51,7 @@ export interface ConfluenceOptions {
 }
 
 const PAGE_SIZE = 25
-const EXPAND = 'space,version,history.createdBy,body.atlas_doc_format'
+const EXPAND = 'space,version,history.createdBy,body.atlas_doc_format,restrictions.read.restrictions.user,restrictions.read.restrictions.group'
 
 interface Cursor {
   readonly start: number
