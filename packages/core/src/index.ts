@@ -42,6 +42,7 @@ export {
 } from './envelope.js'
 export type { MasterKey, Keyring } from './envelope.js'
 export { CONNECTOR_KINDS, SignalSchema, SignalPermissionsSchema, parseSignal } from './signals.js'
+export { isVisibleTo } from './content-visibility.js'
 export { ENTITY_KINDS, EDGE_KINDS, EntityCandidateSchema, EdgeCandidateSchema, parseEntityCandidate } from './entities.js'
 export type { EntityKind, EntityCandidate, EdgeKind, EdgeCandidate } from './entities.js'
 export type { ConnectorKind, Signal, SignalPermissions } from './signals.js'
