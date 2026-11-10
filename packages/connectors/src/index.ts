@@ -40,10 +40,13 @@ export { adfToMarkdown, markdownToAdf } from './jira/adf.js'
 export type { AdfNode, AdfMark } from './jira/adf.js'
 export { createJiraConnector, jiraWebhooks } from './jira/index.js'
 export type {
+  JiraConnector,
   JiraOptions,
   JiraCreateIssueInput,
   JiraUpdateIssueInput,
   JiraTransitionInput,
 } from './jira/index.js'
+export { detectHierarchyScheme, hierarchyFields } from './jira/hierarchy.js'
+export type { HierarchyScheme, HierarchyConfig } from './jira/hierarchy.js'
 export { validateStatusMap, requireMapping, requireTransition } from './jira/status-map.js'
 export type { StatusMap, StatusMapProblem, JiraTransition } from './jira/status-map.js'
