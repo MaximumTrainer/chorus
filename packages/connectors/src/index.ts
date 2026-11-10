@@ -48,5 +48,8 @@ export type {
 } from './jira/index.js'
 export { detectHierarchyScheme, hierarchyFields } from './jira/hierarchy.js'
 export type { HierarchyScheme, HierarchyConfig } from './jira/hierarchy.js'
+export { createConfluenceConnector } from './confluence/index.js'
+export type { ConfluenceOptions } from './confluence/index.js'
+export { confluenceToMarkdown, markdownToConfluence } from './confluence/body.js'
 export { validateStatusMap, requireMapping, requireTransition } from './jira/status-map.js'
 export type { StatusMap, StatusMapProblem, JiraTransition } from './jira/status-map.js'

@@ -1,0 +1,8 @@
+{
+  "description": "INT-9: an expired access token is refreshed (Atlassian rotates the refresh token), then the search is retried and succeeds.",
+  "interactions": [
+    { "request": { "method": "GET", "url": "https://conf.test/api/wiki/rest/api/content/search?cql=type%20in%20(page%2C%20blogpost)%20order%20by%20lastmodified%20asc&limit=25&start=0&expand=space,version,history.createdBy,body.atlas_doc_format" }, "response": { "status": 401, "body": { "message": "token expired" } } },
+    { "request": { "method": "POST", "url": "https://auth.atlassian.com/oauth/token" }, "response": { "status": 200, "body": { "access_token": "conf-access-new", "refresh_token": "conf-refresh-rotated" } } },
+    { "request": { "method": "GET", "url": "https://conf.test/api/wiki/rest/api/content/search?cql=type%20in%20(page%2C%20blogpost)%20order%20by%20lastmodified%20asc&limit=25&start=0&expand=space,version,history.createdBy,body.atlas_doc_format" }, "response": { "status": 200, "body": { "start": 0, "limit": 25, "size": 1, "results": [ { "id": "12345", "type": "page", "title": "Deploy runbook", "space": { "id": 98, "key": "ENG", "name": "Engineering" }, "version": { "number": 3, "when": "2026-09-01T10:00:00.000Z", "by": { "accountId": "u2", "displayName": "Grace Hopper" } }, "body": { "atlas_doc_format": { "value": "{\"type\":\"doc\",\"version\":1,\"content\":[]}" } }, "_links": { "webui": "/spaces/ENG/pages/12345/Deploy+runbook" } } ] } } }
+  ]
+}
