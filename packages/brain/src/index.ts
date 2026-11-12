@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { ulid } from '@chorus/core'
 import { withTenant, type DbConfig, type TenantTx } from '@chorus/db'
 import type { ModelProvider, ModelRef } from '@chorus/llm'
-import type { ArtefactFragment, CodeFragment, Fragment, Retriever } from '@chorus/core'
+import type { ArtefactFragment, CodeFragment, EntityFragment, Fragment, Retriever } from '@chorus/core'
 import { DEFAULT_RETRIEVAL_KINDS } from '@chorus/core'
 import { RRF_K, fuse, type FusedItem } from './fusion.js'
 
@@ -29,6 +29,7 @@ export { RETRIEVABLE_KINDS } from '@chorus/core'
 export type {
   ArtefactFragment,
   CodeFragment,
+  EntityFragment,
   ContextBundle,
   Fragment,
   RetrievableKind,
@@ -260,6 +261,145 @@ interface ArtefactRow {
 /** How much of an artefact's text a fragment carries. A fragment is evidence, not the document. */
 const ARTEFACT_EXCERPT_CHARS = 2000
 
+/**
+ * The entity half (BRAIN-4, graph expansion).
+ *
+ * Entities are matched by name — the graph has no body to full-text, and a name
+ * is what a question names. `to_tsvector` over the name ORs the query's terms
+ * the same way the code half does, so "the checkout service" reaches the
+ * `checkout` entity. The permission predicate for an entity is the workspace's
+ * own row-level security, applied by the tenant transaction this runs inside: a
+ * workspace member sees the workspace's entities. Narrowing an entity to the
+ * per-signal scopes of the evidence behind it is the enforcement half tracked
+ * as the NFR-4/#242 follow-up, and lands as its own slice.
+ *
+ * `$1` tsquery, `$2` candidate limit.
+ */
+export const ENTITY_SEARCH_SQL = `SELECT e.id, e.kind, e.name, e.authority, e.external_uri
+   FROM entities e
+  WHERE to_tsvector('simple', e.name) @@ to_tsquery('simple', $1)
+  ORDER BY ts_rank(to_tsvector('simple', e.name), to_tsquery('simple', $1)) DESC, e.id
+  LIMIT $2`
+
+/**
+ * One hop out from a frontier of entities (BRAIN-4 AC3).
+ *
+ * Returns each neighbour once, with the matched endpoint it was reached from
+ * (`from_id`) and the edge kind it was reached along (`edge_kind`). A neighbour
+ * already in the result — matched directly, or reached on an earlier hop — is
+ * excluded, so expansion neither duplicates a direct hit nor walks back the way
+ * it came.
+ *
+ * `$1` frontier entity ids, `$2` ids already included.
+ */
+export const ENTITY_EXPAND_SQL = `SELECT g.kind AS edge_kind,
+       CASE WHEN g.from_entity_id = ANY($1) THEN g.from_entity_id ELSE g.to_entity_id END AS from_id,
+       o.id, o.kind, o.name, o.authority, o.external_uri
+   FROM entity_edges g
+   JOIN entities o
+     ON o.id = CASE WHEN g.from_entity_id = ANY($1) THEN g.to_entity_id ELSE g.from_entity_id END
+  WHERE (g.from_entity_id = ANY($1) OR g.to_entity_id = ANY($1))
+    AND NOT (o.id = ANY($2))
+  ORDER BY g.created_at`
+
+interface EntityRow {
+  id: string
+  kind: string
+  name: string
+  authority: string
+  external_uri: string | null
+}
+
+interface EntityNeighbourRow extends EntityRow {
+  edge_kind: string
+  from_id: string
+}
+
+/** The summary an entity fragment carries — what the thing is, since the graph stores no prose. */
+function entitySummary(row: EntityRow): string {
+  const base = `${row.name} is a ${row.kind.replace(/_/g, ' ')} in this workspace.`
+  return row.authority === 'external' && row.external_uri
+    ? `${base} Authoritative in its source (${row.external_uri}).`
+    : base
+}
+
+/**
+ * An entity fragment's citation id — derived from the entity and its summary,
+ * so it is stable across retrievals and changes if the summary changes. (The
+ * external-authority citation id of BRAIN-11 AC5 — `externalUri` plus the
+ * source's provenance hash — refines this in its own slice.)
+ */
+function entityCitation(row: EntityRow, text: string): string {
+  return createHash('sha256').update(`entity ${row.id} `).update(text).digest('hex').slice(0, 16)
+}
+
+function directEntityFragment(
+  row: EntityRow,
+  score: number,
+  confidence: number,
+  sources: readonly string[],
+): EntityFragment {
+  const text = entitySummary(row)
+  return {
+    citationId: entityCitation(row, text),
+    kind: 'entity',
+    entityId: row.id,
+    entityKind: row.kind,
+    name: row.name,
+    authority: row.authority === 'external' ? 'external' : 'brain',
+    externalUri: row.external_uri,
+    text,
+    score,
+    confidence,
+    sources,
+  }
+}
+
+/**
+ * Walk the entity graph `hops` hops out from a set of seed entities, returning
+ * each neighbour once as an expansion fragment (BRAIN-4 AC3). Bounded to the
+ * contract's two hops because expansion is exponential in the hop count; a
+ * neighbour already seen — a seed, or reached on an earlier hop — is skipped,
+ * so the frontier shrinks to nothing rather than cycling.
+ */
+async function expandFromEntities(
+  t: TenantTx,
+  seedIds: readonly string[],
+  hops: number,
+): Promise<EntityFragment[]> {
+  if (seedIds.length === 0 || hops <= 0) return []
+  const included = new Set<string>(seedIds)
+  let frontier = [...seedIds]
+  const out: EntityFragment[] = []
+  for (let hop = 0; hop < hops && frontier.length > 0; hop += 1) {
+    const rows = await t.query<EntityNeighbourRow>(ENTITY_EXPAND_SQL, [frontier, [...included]])
+    const next: string[] = []
+    for (const row of rows) {
+      if (included.has(row.id)) continue // two edges reached it on this hop
+      included.add(row.id)
+      next.push(row.id)
+      const text = entitySummary(row)
+      out.push({
+        citationId: entityCitation(row, text),
+        kind: 'entity',
+        entityId: row.id,
+        entityKind: row.kind,
+        name: row.name,
+        authority: row.authority === 'external' ? 'external' : 'brain',
+        externalUri: row.external_uri,
+        text,
+        // Context, not a search hit: no score, and marked as expansion.
+        score: 0,
+        confidence: 0,
+        sources: [],
+        viaExpansion: { fromId: row.from_id, reason: row.edge_kind },
+      })
+    }
+    frontier = next
+  }
+  return out
+}
+
 async function visibleRepositories(t: TenantTx, userId: string): Promise<string[]> {
   const rows = await t.query<{ id: string }>(
     `SELECT r.id
@@ -319,6 +459,13 @@ export function createRetriever(config: DbConfig, options: RetrieverOptions): Re
             )
           : []
 
+      // Entities. Matched by name; the seeds for graph expansion below.
+      const entities = kinds.includes('entity')
+        ? await tx(query.workspaceId, (t) =>
+            t.query<EntityRow>(ENTITY_SEARCH_SQL, [anyTermQuery(query.query), candidates]),
+          )
+        : []
+
       const [lexical, vector] = !kinds.includes('code')
         ? ([[], []] as const)
         : await tx(query.workspaceId, async (t) => {
@@ -357,11 +504,12 @@ export function createRetriever(config: DbConfig, options: RetrieverOptions): Re
       const byId = new Map<string, ChunkRow>()
       for (const row of [...lexical, ...vector]) byId.set(row.id, row)
       const artefactById = new Map(artefacts.map((row) => [`${row.kind}:${row.id}`, row]))
+      const entityById = new Map(entities.map((row) => [row.id, row]))
 
-      // Code is fused across its two searches. Artefacts come from one, ranked
-      // on their own. Both are on the same reciprocal-rank scale, so they are
-      // merged by score and cut to k together, with agreement between
-      // searches still breaking ties first.
+      // Code is fused across its two searches. Artefacts and entities each come
+      // from one search, ranked on their own. All are on the same reciprocal-rank
+      // scale, so they are merged by score and cut to k together, with agreement
+      // between searches still breaking ties first.
       const codeFused = fuse(
         { lexical: lexical.map((r) => ({ id: r.id })), vector: vector.map((r) => ({ id: r.id })) },
         { limit: k },
@@ -370,9 +518,11 @@ export function createRetriever(config: DbConfig, options: RetrieverOptions): Re
         { lexical: artefacts.map((r) => ({ id: `${r.kind}:${r.id}` })) },
         { limit: k },
       )
+      const entityFused = fuse({ lexical: entities.map((r) => ({ id: r.id })) }, { limit: k })
       const ranked = [
         ...codeFused.map((entry) => ({ entry, kind: 'code' as const })),
         ...artefactFused.map((entry) => ({ entry, kind: 'artefact' as const })),
+        ...entityFused.map((entry) => ({ entry, kind: 'entity' as const })),
       ]
         .sort((a, b) => compareFused(a.entry, b.entry))
         .slice(0, k)
@@ -404,6 +554,10 @@ export function createRetriever(config: DbConfig, options: RetrieverOptions): Re
           }
           return fragment
         }
+        if (kind === 'entity') {
+          const row = entityById.get(entry.item.id)!
+          return directEntityFragment(row, entry.score, confidence, entry.sources)
+        }
         const row = byId.get(entry.item.id)!
         const fragment: CodeFragment = {
           citationId: citationOf(row),
@@ -422,13 +576,27 @@ export function createRetriever(config: DbConfig, options: RetrieverOptions): Re
         return fragment
       })
 
+      // Graph expansion (AC3): from the entities that were matched and survived
+      // into the top k, walk the entity graph `expand` hops. Each neighbour is
+      // context, not a hit, so it carries `viaExpansion` and no search score.
+      const expansion =
+        (query.expand ?? 0) > 0
+          ? await tx(query.workspaceId, (t) =>
+              expandFromEntities(
+                t,
+                fragments.filter((f): f is EntityFragment => f.kind === 'entity').map((f) => f.entityId),
+                Math.min(query.expand ?? 0, 2),
+              ),
+            )
+          : []
+
       return {
         id: ulid(),
         query: query.query,
         userId: query.userId,
         teamId: query.teamId,
-        fragments,
-        considered: byId.size + artefactById.size,
+        fragments: [...fragments, ...expansion],
+        considered: byId.size + artefactById.size + entityById.size,
       }
     },
 

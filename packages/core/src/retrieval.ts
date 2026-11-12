@@ -11,8 +11,21 @@ import { z } from 'zod'
  * point of having the rule.
  */
 
-export const RETRIEVABLE_KINDS = ['code', 'task', 'document'] as const
+export const RETRIEVABLE_KINDS = ['code', 'task', 'document', 'entity'] as const
 export type RetrievableKind = (typeof RETRIEVABLE_KINDS)[number]
+
+/**
+ * What the public search surface (the API route and the MCP tool) exposes.
+ *
+ * A subset of what the retriever understands: `entity` is a retriever capability
+ * used internally — the seed for graph expansion (BRAIN-4 AC3) — but surfacing
+ * entity fragments to search and MCP callers is MCP-2/NAV-1 work and out of
+ * BRAIN-4's scope ("what callers do with a bundle"). Keeping the search schema
+ * to these three leaves that surface unchanged until a caller requirement asks
+ * for it.
+ */
+export const SEARCHABLE_KINDS = ['code', 'task', 'document'] as const
+export type SearchableKind = (typeof SEARCHABLE_KINDS)[number]
 
 /**
  * What a query searches when it names no kinds: code.
@@ -70,9 +83,11 @@ interface FragmentBase {
    *
    * AC3 requires expansion results to be *marked as expansion*. An expanded
    * fragment is context, not evidence, and a model told otherwise will cite it
-   * as though the query had found it.
+   * as though the query had found it. `fromId` is the id of the matched fragment
+   * it was reached from (an entity id for a one-hop graph expansion), and
+   * `reason` is the edge kind it was reached along.
    */
-  readonly viaExpansion?: { readonly fromChunkId: string; readonly reason: string }
+  readonly viaExpansion?: { readonly fromId: string; readonly reason: string }
 }
 
 /** A cited span of indexed code. */
@@ -102,7 +117,29 @@ export interface ArtefactFragment extends FragmentBase {
   readonly key: string | null
 }
 
-export type Fragment = CodeFragment | ArtefactFragment
+/**
+ * A cited entity from the brain graph.
+ *
+ * Entities are matched by name and carried as summaries — what the thing is,
+ * not a span of source text. The real value is expansion: a matched entity's
+ * graph neighbours arrive as `EntityFragment`s marked `viaExpansion`, so a
+ * query about one thing surfaces the services, environments and decisions one
+ * hop away (AC3). An external-authority entity carries its `externalUri`, so a
+ * reader — or a later citation-id derivation (BRAIN-11 AC5) — can address the
+ * owning system.
+ */
+export interface EntityFragment extends FragmentBase {
+  readonly kind: 'entity'
+  readonly entityId: string
+  /** The entity's own kind — `service`, `repo`, `feature`, … */
+  readonly entityKind: string
+  readonly name: string
+  readonly authority: 'brain' | 'external'
+  /** The owning system's address for an external-authority entity, else null. */
+  readonly externalUri: string | null
+}
+
+export type Fragment = CodeFragment | ArtefactFragment | EntityFragment
 
 export interface ContextBundle {
   readonly id: string
@@ -147,7 +184,7 @@ export const SearchRequestSchema = z
     k: z.number().int().min(1).max(50).optional(),
     repositoryIds: z.array(z.string().min(1)).max(50).optional(),
     kinds: z
-      .array(z.enum(RETRIEVABLE_KINDS))
+      .array(z.enum(SEARCHABLE_KINDS))
       .min(1)
       .optional()
       .describe('What to search: code, task, document. All of them by default.'),
