@@ -5,6 +5,7 @@ import type { ModelProvider, ModelRef } from '@chorus/llm'
 import type { ArtefactFragment, CodeFragment, EntityFragment, Fragment, Retriever } from '@chorus/core'
 import { DEFAULT_RETRIEVAL_KINDS } from '@chorus/core'
 import { RRF_K, fuse, type FusedItem } from './fusion.js'
+import { entityCitationId } from './citation-id.js'
 
 export interface RetrieverOptions {
   readonly models: ModelProvider
@@ -24,6 +25,8 @@ export interface RetrieverOptions {
 }
 
 export { fuse, RRF_K } from './fusion.js'
+export { entityCitationId, provenanceHash } from './citation-id.js'
+export type { EntityCitationInput } from './citation-id.js'
 export type { FusedItem, RankedItem } from './fusion.js'
 export { RETRIEVABLE_KINDS } from '@chorus/core'
 export type {
@@ -275,7 +278,7 @@ const ARTEFACT_EXCERPT_CHARS = 2000
  *
  * `$1` tsquery, `$2` candidate limit.
  */
-export const ENTITY_SEARCH_SQL = `SELECT e.id, e.kind, e.name, e.authority, e.external_uri
+export const ENTITY_SEARCH_SQL = `SELECT e.id, e.kind, e.name, e.authority, e.external_uri, e.attributes
    FROM entities e
   WHERE to_tsvector('simple', e.name) @@ to_tsquery('simple', $1)
   ORDER BY ts_rank(to_tsvector('simple', e.name), to_tsquery('simple', $1)) DESC, e.id
@@ -294,7 +297,7 @@ export const ENTITY_SEARCH_SQL = `SELECT e.id, e.kind, e.name, e.authority, e.ex
  */
 export const ENTITY_EXPAND_SQL = `SELECT g.kind AS edge_kind,
        CASE WHEN g.from_entity_id = ANY($1) THEN g.from_entity_id ELSE g.to_entity_id END AS from_id,
-       o.id, o.kind, o.name, o.authority, o.external_uri
+       o.id, o.kind, o.name, o.authority, o.external_uri, o.attributes
    FROM entity_edges g
    JOIN entities o
      ON o.id = CASE WHEN g.from_entity_id = ANY($1) THEN g.to_entity_id ELSE g.from_entity_id END
@@ -308,6 +311,7 @@ interface EntityRow {
   name: string
   authority: string
   external_uri: string | null
+  attributes: Record<string, unknown>
 }
 
 interface EntityNeighbourRow extends EntityRow {
@@ -324,13 +328,23 @@ function entitySummary(row: EntityRow): string {
 }
 
 /**
- * An entity fragment's citation id — derived from the entity and its summary,
- * so it is stable across retrievals and changes if the summary changes. (The
- * external-authority citation id of BRAIN-11 AC5 — `externalUri` plus the
- * source's provenance hash — refines this in its own slice.)
+ * An entity fragment's citation id. Delegated to `citation-id.ts`, which keys
+ * it on authority: a brain entity's id comes from its identity and summary; an
+ * external entity's from its `externalUri` plus a provenance hash of the source
+ * facts, so a changed fact yields a changed id (BRAIN-11 AC5).
  */
-function entityCitation(row: EntityRow, text: string): string {
-  return createHash('sha256').update(`entity ${row.id} `).update(text).digest('hex').slice(0, 16)
+function citationFor(row: EntityRow, text: string): string {
+  return entityCitationId(
+    {
+      entityId: row.id,
+      kind: row.kind,
+      name: row.name,
+      authority: row.authority,
+      externalUri: row.external_uri,
+      attributes: row.attributes,
+    },
+    text,
+  )
 }
 
 function directEntityFragment(
@@ -341,7 +355,7 @@ function directEntityFragment(
 ): EntityFragment {
   const text = entitySummary(row)
   return {
-    citationId: entityCitation(row, text),
+    citationId: citationFor(row, text),
     kind: 'entity',
     entityId: row.id,
     entityKind: row.kind,
@@ -380,7 +394,7 @@ async function expandFromEntities(
       next.push(row.id)
       const text = entitySummary(row)
       out.push({
-        citationId: entityCitation(row, text),
+        citationId: citationFor(row, text),
         kind: 'entity',
         entityId: row.id,
         entityKind: row.kind,
