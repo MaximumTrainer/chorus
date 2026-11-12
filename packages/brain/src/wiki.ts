@@ -41,6 +41,19 @@ interface SalientRow {
   readonly entity_id: string
   readonly kind: string
   readonly name: string
+  readonly authority: string
+  readonly external_uri: string | null
+}
+
+interface RelatedRow {
+  /** The relationship (edge) kind, e.g. `depends_on`. */
+  readonly edge_kind: string
+  /** The related entity's own kind, e.g. `service`. */
+  readonly entity_kind: string
+  readonly name: string
+  readonly authority: string
+  readonly external_uri: string | null
+  readonly owner: string | null
 }
 
 function slugify(name: string): string {
@@ -66,7 +79,7 @@ export function createWikiCompiler(
         // Salient entities: those whose edges and evidence together clear the
         // threshold. An entity nobody links to or cites does not earn a page.
         const salient = await t.query<SalientRow>(
-          `SELECT e.id AS entity_id, e.kind, e.name
+          `SELECT e.id AS entity_id, e.kind, e.name, e.authority, e.external_uri
              FROM entities e
             WHERE (
               (SELECT count(*) FROM entity_edges g WHERE g.from_entity_id = e.id OR g.to_entity_id = e.id)
@@ -79,8 +92,17 @@ export function createWikiCompiler(
         let compiled = 0
         let skipped = 0
         for (const entity of salient) {
-          const related = await t.query<{ kind: string; name: string }>(
-            `SELECT g.kind, o.name
+          // An external-authority entity is a reference the owning graph holds —
+          // it earns a link block on the pages that relate to it, but no page of
+          // its own (BRAIN-11 AC6). Skip generating one.
+          if (entity.authority === 'external') {
+            skipped += 1
+            continue
+          }
+
+          const related = await t.query<RelatedRow>(
+            `SELECT g.kind AS edge_kind, o.kind AS entity_kind, o.name,
+                    o.authority, o.external_uri, o.attributes->>'owner' AS owner
                FROM entity_edges g
                JOIN entities o ON o.id = CASE WHEN g.from_entity_id = $1 THEN g.to_entity_id ELSE g.from_entity_id END
               WHERE g.from_entity_id = $1 OR g.to_entity_id = $1
@@ -179,7 +201,7 @@ export function createWikiCompiler(
 
 function renderPage(
   entity: SalientRow,
-  related: readonly { kind: string; name: string }[],
+  related: readonly RelatedRow[],
   evidence: readonly { external_id: string; url: string | null }[],
 ): string {
   const lines = [
@@ -197,8 +219,16 @@ function renderPage(
     '',
     '## Related',
     '',
+    // An external-authority related entity is rendered as a link block — its
+    // name links to the owning system's URI, with its kind and owner — and the
+    // owning graph, not Chorus, is the source of truth for it (BRAIN-11 AC6).
     ...(related.length > 0
-      ? related.map((r) => `- ${r.kind.replace(/_/g, ' ')} **${r.name}**`)
+      ? related.map((r) =>
+          r.authority === 'external' && r.external_uri
+            ? `- ${r.edge_kind.replace(/_/g, ' ')} [**${r.name}**](${r.external_uri}) — ${r.entity_kind}` +
+              `${r.owner ? `, owned by ${r.owner}` : ''} _(external)_`
+            : `- ${r.edge_kind.replace(/_/g, ' ')} **${r.name}**`,
+        )
       : ['_No related entities yet._']),
     '',
     '## Evidence',
