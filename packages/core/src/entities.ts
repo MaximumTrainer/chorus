@@ -74,6 +74,10 @@ export const EDGE_KINDS = [
   'duplicates',
   'blocks',
   'relates_to',
+  // Operational edges an external graph supplies between external entities
+  // (BRAIN-11 AC4): their provenance is the source event's, never re-scored.
+  'deployed_to',
+  'runs_on',
 ] as const
 
 export type EdgeKind = (typeof EDGE_KINDS)[number]
