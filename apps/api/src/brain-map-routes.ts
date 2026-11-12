@@ -1,5 +1,5 @@
 import type { BrainMap, BrainMapFilters } from '@chorus/brain'
-import { ValidationError } from '@chorus/core'
+import { NotFoundError, ValidationError } from '@chorus/core'
 import { route, type RouteDefinition } from './routes.js'
 import { caller } from './authorisation.js'
 
@@ -57,6 +57,25 @@ export function brainMapRoutes(brainMap: BrainMap): RouteDefinition[] {
             filters: parseFilters(c.req.queries('kind'), c.req.queries('source'), c.req.query('since')),
           }),
         ),
+    }),
+
+    route({
+      method: 'GET',
+      path: '/workspaces/:workspaceId/brain/map/entities/:entityId',
+      summary: "One entity's drawer: its page or source, evidence and linked artefacts, each resolving.",
+      auth: { kind: 'workspace', role: 'member', scopes: ['read:brain'] },
+      handler: async (c) => {
+        const entityId = c.req.param('entityId')
+        const detail = await brainMap.drawer({
+          workspaceId: c.req.param('workspaceId'),
+          userId: caller(c).userId,
+          entityId,
+        })
+        // Composed from the caller's own id, so an entity whose evidence the
+        // caller cannot see reads exactly like one that never existed (AC6).
+        if (!detail) throw new NotFoundError('No such entity', { entityId })
+        return c.json(detail)
+      },
     }),
   ]
 }

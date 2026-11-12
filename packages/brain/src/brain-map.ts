@@ -64,6 +64,39 @@ export interface BrainMapFilters {
   readonly since?: Date
 }
 
+/** A piece of evidence shown in the drawer — a signal the caller may see. */
+export interface BrainMapEvidence {
+  readonly signalId: string
+  readonly source: string
+  readonly url: string | null
+  readonly excerpt: string
+}
+
+/** An artefact the entity links to, for the drawer to resolve. */
+export interface BrainMapRelatedArtefact {
+  readonly type: string
+  readonly id: string
+  readonly relation: string
+}
+
+/**
+ * The entity drawer (AC4). For a brain entity, its compiled `page`; for an
+ * external-authority entity, the source it is `authoritativeIn` and its
+ * `externalUri`, and no page (BRAIN-11 AC7). Plus the evidence behind it and
+ * the artefacts it links to, each resolving.
+ */
+export interface BrainMapEntityDetail {
+  readonly id: string
+  readonly kind: string
+  readonly name: string
+  readonly authority: 'brain' | 'external'
+  readonly externalUri: string | null
+  readonly page: string | null
+  readonly authoritativeIn: string | null
+  readonly evidence: readonly BrainMapEvidence[]
+  readonly relatedArtefacts: readonly BrainMapRelatedArtefact[]
+}
+
 export interface BrainMap {
   read(input: {
     readonly workspaceId: string
@@ -71,7 +104,24 @@ export interface BrainMap {
     readonly viewerScopeIds?: readonly string[]
     readonly filters?: BrainMapFilters
   }): Promise<BrainMapView>
+  /**
+   * One entity's drawer, or null when the caller may not see it — composed into
+   * a not-found by the route, so an entity whose evidence the caller cannot see
+   * reads exactly like one that does not exist (AC6).
+   */
+  drawer(input: {
+    readonly workspaceId: string
+    readonly userId: string
+    readonly viewerScopeIds?: readonly string[]
+    readonly entityId: string
+  }): Promise<BrainMapEntityDetail | null>
 }
+
+/** How much of a signal's prose the drawer carries. The signal itself is a click away. */
+const EVIDENCE_EXCERPT_CHARS = 500
+
+/** A signal visible to the caller — public, or scoped to a group they are in. `$1` scopes. */
+const SIGNAL_VISIBLE = `(s.permissions->>'visibility' = 'public' OR s.permissions->'scopeIds' ?| $1::text[])`
 
 /**
  * A piece of evidence that counts: its signal is visible to the caller (public,
@@ -166,6 +216,71 @@ export function createBrainMap(config: DbConfig): BrainMap {
           confidence: e.confidence,
         }))
         return { nodes, edges }
+      })
+    },
+
+    async drawer({ workspaceId, viewerScopeIds, entityId }) {
+      const scopes = viewerScopeIds ? [...viewerScopeIds] : []
+      return tx(workspaceId, async (t) => {
+        // Visible iff it has at least one piece of evidence the caller may see;
+        // otherwise null, and the route composes a not-found (AC6).
+        const [ent] = await t.query<{
+          id: string
+          kind: string
+          name: string
+          authority: string
+          external_uri: string | null
+        }>(
+          `SELECT e.id, e.kind, e.name, e.authority, e.external_uri
+             FROM entities e
+            WHERE e.id = $2
+              AND EXISTS (SELECT 1 FROM entity_evidence v JOIN signals s ON s.id = v.signal_id
+                           WHERE v.entity_id = e.id AND ${SIGNAL_VISIBLE})`,
+          [scopes, entityId],
+        )
+        if (!ent) return null
+
+        const evidenceRows = await t.query<{ id: string; source: string; url: string | null; text: string | null }>(
+          `SELECT s.id, s.source, s.url, s.text
+             FROM entity_evidence v JOIN signals s ON s.id = v.signal_id
+            WHERE v.entity_id = $2 AND ${SIGNAL_VISIBLE}
+            ORDER BY s.occurred_at DESC, s.id`,
+          [scopes, entityId],
+        )
+        const related = await t.query<{ type: string; id: string; relation: string }>(
+          `SELECT CASE WHEN from_type = 'entity' AND from_id = $1 THEN to_type ELSE from_type END AS type,
+                  CASE WHEN from_type = 'entity' AND from_id = $1 THEN to_id ELSE from_id END AS id,
+                  relation
+             FROM artefact_links
+            WHERE ((from_type = 'entity' AND from_id = $1) OR (to_type = 'entity' AND to_id = $1))
+              AND state <> 'dangling'
+            ORDER BY created_at`,
+          [entityId],
+        )
+        const external = ent.authority === 'external'
+        const page = external
+          ? null
+          : ((await t.query<{ markdown: string }>(`SELECT markdown FROM wiki_pages WHERE entity_id = $1`, [entityId]))[0]
+              ?.markdown ?? null)
+
+        return {
+          id: ent.id,
+          kind: ent.kind,
+          name: ent.name,
+          authority: external ? 'external' : 'brain',
+          externalUri: ent.external_uri,
+          page,
+          // The source the external entity is authoritative in — the newest
+          // visible evidence's source names the owning system.
+          authoritativeIn: external ? (evidenceRows[0]?.source ?? null) : null,
+          evidence: evidenceRows.map((e) => ({
+            signalId: e.id,
+            source: e.source,
+            url: e.url,
+            excerpt: (e.text ?? '').slice(0, EVIDENCE_EXCERPT_CHARS),
+          })),
+          relatedArtefacts: related.map((r) => ({ type: r.type, id: r.id, relation: r.relation })),
+        }
       })
     },
   }

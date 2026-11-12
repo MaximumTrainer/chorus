@@ -769,6 +769,15 @@ export type { WikiCompiler } from './wiki.js'
 export { createWikiPublisher } from './wiki-publish.js'
 export type { WikiPublisher, WikiPublishResult, WikiPublisherDeps } from './wiki-publish.js'
 export { createBrainMap } from './brain-map.js'
-export type { BrainMap, BrainMapView, BrainMapNode, BrainMapEdge, BrainMapFilters } from './brain-map.js'
+export type {
+  BrainMap,
+  BrainMapView,
+  BrainMapNode,
+  BrainMapEdge,
+  BrainMapFilters,
+  BrainMapEntityDetail,
+  BrainMapEvidence,
+  BrainMapRelatedArtefact,
+} from './brain-map.js'
 export { createWikiMirror } from './wiki-mirror.js'
 export type { WikiMirror, WikiMirrorTarget, WikiMirrorPage, WikiMirrorResult } from './wiki-mirror.js'
