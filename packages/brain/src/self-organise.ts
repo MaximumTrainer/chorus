@@ -41,10 +41,14 @@ export function createMergeDetector(
       // extraction's resolution, so the two agree on what "similar" means.
       const pairs = await tx(workspaceId, (t) =>
         t.query<{ a: string; a_name: string; b: string; b_name: string; score: number }>(
+          // External-authority entities are excluded from both sides (BRAIN-11
+          // AC3): the owning graph decides what they are, and a merge proposed
+          // against one is exactly the nightly noise BRAIN-11 exists to stop.
           `SELECT x.id AS a, x.name AS a_name, y.id AS b, y.name AS b_name, similarity(x.name, y.name) AS score
              FROM entities x
              JOIN entities y ON x.kind = y.kind AND x.id < y.id
             WHERE similarity(x.name, y.name) >= $1
+              AND x.authority = 'brain' AND y.authority = 'brain'
             ORDER BY score DESC`,
           [threshold],
         ),
@@ -94,26 +98,38 @@ export interface StaleDetector {
 
 export function createStaleDetector(
   config: DbConfig,
-  options: { readonly staleAfterDays?: number; readonly referenceWithinDays?: number } = {},
+  options: {
+    readonly staleAfterDays?: number
+    readonly referenceWithinDays?: number
+    /** How long an external entity may go unsynced before it is stale (BRAIN-11 AC3). */
+    readonly externalStaleAfterDays?: number
+  } = {},
 ): StaleDetector {
   const staleDays = options.staleAfterDays ?? STALE_AFTER_DAYS
   const referenceDays = options.referenceWithinDays ?? REFERENCE_WITHIN_DAYS
+  const externalStaleDays = options.externalStaleAfterDays ?? staleDays
   const store = createEntityStore(config)
   const tx = <T>(workspaceId: string, fn: (t: TenantTx) => Promise<T>) =>
     withTenant(workspaceId, fn, { config })
 
   return {
     async detect(workspaceId) {
-      // Stale precisely: the newest evidence is older than the staleness window
+      // Two freshness rules, by authority (BRAIN-11 AC3).
+      //
+      // Brain entities: the newest evidence is older than the staleness window
       // *and* a recent signal still mentions the entity by name. The second
-      // clause is the whole of AC4's precision — an entity that is simply old
-      // and unreferenced is not flagged, because nobody is relying on it, and
-      // flagging it would make the inbox noise nobody clears.
-      const stale = await tx(workspaceId, (t) =>
-        t.query<{ id: string; name: string }>(
-          `SELECT e.id, e.name
+      // clause is AC4's precision — an entity simply old and unreferenced is not
+      // flagged, because nobody relies on it.
+      //
+      // External entities: an evidence age means nothing (the owning graph feeds
+      // them), so the only staleness is the source's own — `last_synced_at`
+      // older than the integration's expected cadence.
+      const stale = await tx(workspaceId, async (t) => {
+        const brain = await t.query<{ id: string; name: string; reason: string }>(
+          `SELECT e.id, e.name, 'unfed' AS reason
              FROM entities e
-            WHERE COALESCE(
+            WHERE e.authority = 'brain'
+              AND COALESCE(
                     (SELECT max(ev.created_at) FROM entity_evidence ev WHERE ev.entity_id = e.id),
                     e.created_at
                   ) < now() - ($1 || ' days')::interval
@@ -123,8 +139,17 @@ export function createStaleDetector(
                    AND s.text ILIKE '%' || e.name || '%'
               )`,
           [String(staleDays), String(referenceDays)],
-        ),
-      )
+        )
+        const external = await t.query<{ id: string; name: string; reason: string }>(
+          `SELECT e.id, e.name, 'unsynced' AS reason
+             FROM entities e
+            WHERE e.authority = 'external'
+              AND e.last_synced_at IS NOT NULL
+              AND e.last_synced_at < now() - ($1 || ' days')::interval`,
+          [String(externalStaleDays)],
+        )
+        return [...brain, ...external]
+      })
 
       const open = await store.allReviewItems(workspaceId)
       const already = new Set(
@@ -139,7 +164,10 @@ export function createStaleDetector(
         await store.openReviewItem({
           workspaceId,
           kind: 'stale',
-          subject: { entity: { entityId: entity.id, name: entity.name }, detector: 'stale' },
+          subject: {
+            entity: { entityId: entity.id, name: entity.name },
+            detector: entity.reason === 'unsynced' ? 'external-freshness' : 'stale',
+          },
         })
         proposed += 1
       }
@@ -194,10 +222,13 @@ export function createContradictionDetector(deps: {
       // precision rather than run over the whole corpus.
       const rows = await tx(workspaceId, (t) =>
         t.query<ClaimRow>(
+          // Only brain-authored entities (BRAIN-11 AC3): a contradiction between
+          // the external graph's claims is the graph's to resolve, not ours.
           `SELECT e.id AS entity_id, e.name, s.external_id AS signal_external_id, s.text, s.url
              FROM entities e
              JOIN entity_evidence ev ON ev.entity_id = e.id
              JOIN signals s ON s.id = ev.signal_id AND s.text IS NOT NULL AND s.text <> ''
+            WHERE e.authority = 'brain'
             ORDER BY e.id, s.external_id`,
         ),
       )
@@ -314,10 +345,13 @@ export function createSplitDetector(deps: {
     async detect(workspaceId) {
       const rows = await tx(workspaceId, (t) =>
         t.query<ClaimRow>(
+          // Only brain-authored entities (BRAIN-11 AC3): splitting an external
+          // entity would contradict the owning graph's identity for it.
           `SELECT e.id AS entity_id, e.name, s.external_id AS signal_external_id, s.text, s.url
              FROM entities e
              JOIN entity_evidence ev ON ev.entity_id = e.id
              JOIN signals s ON s.id = ev.signal_id AND s.text IS NOT NULL AND s.text <> ''
+            WHERE e.authority = 'brain'
             ORDER BY e.id, s.external_id`,
         ),
       )
