@@ -131,6 +131,21 @@ export interface EntityStore {
   /** The entity with this external id, or null. */
   findByExternalId(workspaceId: string, externalId: string): Promise<string | null>
   /**
+   * Removes an external-authority entity because its owning source emitted a
+   * tombstone (BRAIN-11 AC8). The entity and its edges — and its evidence and
+   * aliases, by cascade — are deleted; an `artefact_links` row pointing at it
+   * from either end is marked `dangling` rather than deleted, so a task or
+   * document that referenced it keeps its pointer and a reader sees the
+   * reference went away rather than it silently vanishing. A tombstone for an
+   * entity already gone is a no-op (idempotent, for a duplicate feed delivery);
+   * one aimed at a brain-authored entity is refused, because a source feed owns
+   * only what it authored.
+   */
+  tombstoneExternal(input: {
+    readonly workspaceId: string
+    readonly externalId: string
+  }): Promise<{ readonly removed: boolean; readonly danglingLinks: number }>
+  /**
    * Attaches a candidate's aliases and evidence to an existing entity — the
    * automatic-merge path, when resolution is confident the two are the same
    * thing (BRAIN-3 AC3). Idempotent.
@@ -335,6 +350,40 @@ export function createEntityStore(config: DbConfig): EntityStore {
           [externalId],
         )
         return row?.id ?? null
+      })
+    },
+
+    async tombstoneExternal({ workspaceId, externalId }) {
+      return tx(workspaceId, async (t) => {
+        const [found] = await t.query<{ id: string; authority: string }>(
+          `SELECT id, authority FROM entities WHERE external_id = $1`,
+          [externalId],
+        )
+        // A tombstone for something already gone is a no-op — a feed may deliver
+        // the same event twice, and the second delivery must not error.
+        if (!found) return { removed: false, danglingLinks: 0 }
+        // A source feed owns only what it authored; it may not remove a
+        // brain-authored entity by claiming it was tombstoned upstream.
+        if (found.authority !== 'external') {
+          throw new ValidationError(
+            `entity ${externalId} is brain-authored; a source feed may not tombstone it`,
+          )
+        }
+
+        // Links pointing at it, from either end, are kept but marked dangling —
+        // the referencing task or document keeps its pointer (AC8).
+        const dangled = await t.query<{ id: string }>(
+          `UPDATE artefact_links
+              SET state = 'dangling'
+            WHERE ((to_type = 'entity' AND to_id = $1) OR (from_type = 'entity' AND from_id = $1))
+              AND state <> 'dangling'
+            RETURNING id`,
+          [found.id],
+        )
+
+        // The entity goes, and its edges, evidence and aliases with it (cascade).
+        await t.execute(`DELETE FROM entities WHERE id = $1`, [found.id])
+        return { removed: true, danglingLinks: dangled.length }
       })
     },
 
