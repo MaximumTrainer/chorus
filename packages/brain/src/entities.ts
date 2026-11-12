@@ -1,4 +1,10 @@
-import { ulid, type EntityCandidate } from '@chorus/core'
+import {
+  ulid,
+  ValidationError,
+  isExternalAuthorityKind,
+  parseExternalUri,
+  type EntityCandidate,
+} from '@chorus/core'
 import { withTenant, type DbConfig, type TenantTx } from '@chorus/db'
 
 /**
@@ -214,17 +220,40 @@ export function createEntityStore(config: DbConfig): EntityStore {
 
   return {
     async upsertCandidate({ workspaceId, candidate, signalId, extractorVersion }) {
+      // An operational kind is a reference to an external system, so it must
+      // declare external authority and a parseable uri; refuse a brain-authored
+      // one here with a typed error rather than letting the database reject it
+      // with a message nobody can read (BRAIN-11 AC1).
+      if (isExternalAuthorityKind(candidate.kind) && candidate.authority !== 'external') {
+        throw new ValidationError(`a ${candidate.kind} is a reference to an external system and must declare external authority`, {
+          kind: candidate.kind,
+        })
+      }
+      const external = candidate.authority === 'external'
+      if (external && (!candidate.externalUri || parseExternalUri(candidate.externalUri) === null)) {
+        throw new ValidationError('an external-authority entity needs a parseable externalUri', {
+          kind: candidate.kind,
+          externalUri: candidate.externalUri ?? null,
+        })
+      }
+      const authority = external ? 'external' : 'brain'
+      const externalUri = external ? candidate.externalUri! : null
+
       return tx(workspaceId, async (t) => {
         // `xmax = 0` is true only for the row this statement inserted, so one
         // round trip tells us whether the entity is new or was already there —
         // which is what distinguishes a first extraction from a re-run.
         const [row] = await t.query<{ id: string; created: boolean }>(
-          `INSERT INTO entities (id, workspace_id, kind, external_id, name, attributes, extractor_version)
-           VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+          `INSERT INTO entities
+             (id, workspace_id, kind, external_id, name, attributes, extractor_version, authority, external_uri, last_synced_at)
+           VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, CASE WHEN $8 = 'external' THEN now() ELSE NULL END)
            ON CONFLICT (workspace_id, external_id) DO UPDATE
              SET name = EXCLUDED.name,
                  attributes = EXCLUDED.attributes,
                  extractor_version = EXCLUDED.extractor_version,
+                 authority = EXCLUDED.authority,
+                 external_uri = EXCLUDED.external_uri,
+                 last_synced_at = CASE WHEN EXCLUDED.authority = 'external' THEN now() ELSE entities.last_synced_at END,
                  updated_at = now()
            RETURNING id, (xmax = 0) AS created`,
           [
@@ -235,6 +264,8 @@ export function createEntityStore(config: DbConfig): EntityStore {
             candidate.name,
             JSON.stringify(candidate.attributes ?? {}),
             extractorVersion,
+            authority,
+            externalUri,
           ],
         )
         const entityId = row!.id
