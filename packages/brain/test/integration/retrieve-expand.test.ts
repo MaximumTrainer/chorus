@@ -174,4 +174,65 @@ describe('BRAIN-4 graph expansion (AC3)', () => {
     expect(bundle.fragments.every((f) => !f.viaExpansion)).toBe(true)
     expect(bundle.fragments.filter((f) => f.kind === 'entity')).toHaveLength(1)
   })
+
+  it('BRAIN-11 AC5: an external neighbour cites its source, and a changed source fact changes its id', async () => {
+    const w = await world()
+    const store = createEntityStore(db.config)
+    const checkout = await store.upsertCandidate({
+      workspaceId: w.workspaceId,
+      candidate: candidate({ externalId: 'e:checkout', name: 'checkout' }),
+      signalId: w.signalId,
+      extractorVersion: 1,
+    })
+    const payments = await store.upsertCandidate({
+      workspaceId: w.workspaceId,
+      candidate: candidate({
+        kind: 'service',
+        externalId: 'sdlckg:Service:payments',
+        name: 'payments',
+        authority: 'external',
+        externalUri: 'sdlckg://Service/payments',
+        attributes: { owner: 'Team Pay' },
+      }),
+      signalId: w.signalId,
+      extractorVersion: 1,
+    })
+    await store.addEdge({
+      workspaceId: w.workspaceId,
+      fromEntityId: checkout.entityId,
+      toEntityId: payments.entityId,
+      kind: 'depends_on',
+      confidence: 1,
+      extractorVersion: 1,
+    })
+
+    const query = {
+      workspaceId: w.workspaceId,
+      teamId: w.teamId,
+      userId: w.userId,
+      query: 'checkout',
+      kinds: ['entity'] as const,
+      expand: 1 as const,
+    }
+    const before = await retriever.retrieve(query)
+    const beforeId = before.fragments.find((f) => f.kind === 'entity' && f.viaExpansion)!.citationId
+    const checkoutId = before.fragments.find((f) => f.kind === 'entity' && !f.viaExpansion)!.citationId
+
+    // A re-retrieval with nothing changed cites the same thing.
+    const unchanged = await retriever.retrieve(query)
+    expect(unchanged.fragments.find((f) => f.kind === 'entity' && f.viaExpansion)!.citationId).toBe(beforeId)
+
+    // The source changes a fact it owns.
+    await db.admin.execute(
+      `UPDATE entities SET attributes = '{"owner":"Team Money"}'::jsonb WHERE external_id = $1`,
+      ['sdlckg:Service:payments'],
+    )
+
+    const after = await retriever.retrieve(query)
+    const afterId = after.fragments.find((f) => f.kind === 'entity' && f.viaExpansion)!.citationId
+    // A changed source fact yields a changed id (AC5)…
+    expect(afterId).not.toBe(beforeId)
+    // …while the brain entity, whose facts did not change, keeps its citation.
+    expect(after.fragments.find((f) => f.kind === 'entity' && !f.viaExpansion)!.citationId).toBe(checkoutId)
+  })
 })
