@@ -1,4 +1,5 @@
-import type { BrainMap } from '@chorus/brain'
+import type { BrainMap, BrainMapFilters } from '@chorus/brain'
+import { ValidationError } from '@chorus/core'
 import { route, type RouteDefinition } from './routes.js'
 import { caller } from './authorisation.js'
 
@@ -18,6 +19,29 @@ import { caller } from './authorisation.js'
  * memberships (identity-linking), so none are passed: a caller sees the
  * publicly-evidenced graph, the safe default, until that lands.
  */
+/**
+ * The map's filters (AC2), from repeatable `kind`/`source` query params and a
+ * single `since` instant. An unparseable `since` is refused by name rather than
+ * silently ignored, which would quietly widen the window.
+ */
+function parseFilters(
+  kinds: string[] | undefined,
+  sources: string[] | undefined,
+  since: string | undefined,
+): BrainMapFilters {
+  const filters: { kinds?: string[]; sources?: string[]; since?: Date } = {}
+  if (kinds && kinds.length > 0) filters.kinds = kinds
+  if (sources && sources.length > 0) filters.sources = sources
+  if (since !== undefined) {
+    const at = new Date(since)
+    if (Number.isNaN(at.getTime())) {
+      throw new ValidationError('since must be an ISO 8601 instant', { field: 'since' })
+    }
+    filters.since = at
+  }
+  return filters
+}
+
 export function brainMapRoutes(brainMap: BrainMap): RouteDefinition[] {
   return [
     route({
@@ -30,6 +54,7 @@ export function brainMapRoutes(brainMap: BrainMap): RouteDefinition[] {
           await brainMap.read({
             workspaceId: c.req.param('workspaceId'),
             userId: caller(c).userId,
+            filters: parseFilters(c.req.queries('kind'), c.req.queries('source'), c.req.query('since')),
           }),
         ),
     }),

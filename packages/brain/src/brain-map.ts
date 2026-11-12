@@ -49,38 +49,58 @@ export interface BrainMapView {
   readonly edges: readonly BrainMapEdge[]
 }
 
+/**
+ * Narrowing the map (AC2). Each filter is optional and absent means "all". A
+ * `source` or `since` narrows which *evidence* counts, so it also reshapes
+ * `salience` and `lastActivityAt` — a node kept for evidence outside the window
+ * would show numbers that do not match what is displayed.
+ */
+export interface BrainMapFilters {
+  /** Keep only entities of these kinds. */
+  readonly kinds?: readonly string[]
+  /** Keep only entities with visible evidence from one of these sources. */
+  readonly sources?: readonly string[]
+  /** Keep only entities with visible evidence at or after this instant. */
+  readonly since?: Date
+}
+
 export interface BrainMap {
   read(input: {
     readonly workspaceId: string
     readonly userId: string
     readonly viewerScopeIds?: readonly string[]
+    readonly filters?: BrainMapFilters
   }): Promise<BrainMapView>
 }
 
 /**
- * Nodes the caller may see: an entity with at least one piece of evidence whose
- * signal is public, or scoped to a group the caller is in. Carries the visible
- * evidence count and newest visible evidence time; edge degree is added to the
- * salience in TS, over the visible edge set, so neither number counts a source
- * the caller cannot see.
- *
- * `$1` the caller's scope ids.
+ * A piece of evidence that counts: its signal is visible to the caller (public,
+ * or scoped to a group the caller is in) and passes the source and time
+ * filters. One fragment, reused in the EXISTS, the count and the max, so all
+ * three agree — `$1` scopes, `$3` sources (or null), `$4` since (or null).
+ */
+const EVIDENCE_COUNTS = `(s.permissions->>'visibility' = 'public' OR s.permissions->'scopeIds' ?| $1::text[])
+      AND ($3::text[] IS NULL OR s.source = ANY($3))
+      AND ($4::timestamptz IS NULL OR s.occurred_at >= $4)`
+
+/**
+ * Nodes the caller may see, after filters: an entity of a kept kind (`$2`, or
+ * null for all) with at least one piece of evidence that counts. Carries the
+ * counting-evidence count and newest counting-evidence time; edge degree is
+ * added to the salience in TS, over the visible edge set, so neither number
+ * counts a source the caller cannot see or a filter excluded.
  */
 const NODES_SQL = `SELECT e.id, e.kind, e.name, e.authority, e.external_uri,
        (SELECT count(*) FROM entity_evidence v JOIN signals s ON s.id = v.signal_id
-         WHERE v.entity_id = e.id
-           AND (s.permissions->>'visibility' = 'public' OR s.permissions->'scopeIds' ?| $1::text[]))
-         AS visible_evidence,
+         WHERE v.entity_id = e.id AND ${EVIDENCE_COUNTS}) AS visible_evidence,
        (SELECT max(s.occurred_at) FROM entity_evidence v JOIN signals s ON s.id = v.signal_id
-         WHERE v.entity_id = e.id
-           AND (s.permissions->>'visibility' = 'public' OR s.permissions->'scopeIds' ?| $1::text[]))
-         AS last_activity_at
+         WHERE v.entity_id = e.id AND ${EVIDENCE_COUNTS}) AS last_activity_at
    FROM entities e
-  WHERE EXISTS (
-    SELECT 1 FROM entity_evidence v JOIN signals s ON s.id = v.signal_id
-     WHERE v.entity_id = e.id
-       AND (s.permissions->>'visibility' = 'public' OR s.permissions->'scopeIds' ?| $1::text[])
-  )
+  WHERE ($2::text[] IS NULL OR e.kind = ANY($2))
+    AND EXISTS (
+      SELECT 1 FROM entity_evidence v JOIN signals s ON s.id = v.signal_id
+       WHERE v.entity_id = e.id AND ${EVIDENCE_COUNTS}
+    )
   ORDER BY e.created_at`
 
 /** Edges between two visible nodes. `$1` the visible node ids. */
@@ -111,10 +131,14 @@ export function createBrainMap(config: DbConfig): BrainMap {
     withTenant(workspaceId, fn, { config })
 
   return {
-    async read({ workspaceId, viewerScopeIds }) {
+    async read({ workspaceId, viewerScopeIds, filters }) {
       const scopes = viewerScopeIds ? [...viewerScopeIds] : []
+      // Empty or absent → null, so the query's `IS NULL` branch keeps all.
+      const kinds = filters?.kinds && filters.kinds.length > 0 ? [...filters.kinds] : null
+      const sources = filters?.sources && filters.sources.length > 0 ? [...filters.sources] : null
+      const since = filters?.since ?? null
       return tx(workspaceId, async (t) => {
-        const nodeRows = await t.query<NodeRow>(NODES_SQL, [scopes])
+        const nodeRows = await t.query<NodeRow>(NODES_SQL, [scopes, kinds, sources, since])
         const ids = nodeRows.map((r) => r.id)
         const edgeRows = ids.length > 0 ? await t.query<EdgeRow>(EDGES_SQL, [ids]) : []
 
