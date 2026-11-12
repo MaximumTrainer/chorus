@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { ulid } from '@chorus/core'
 import { withTenant, type DbConfig, type TenantTx } from '@chorus/db'
 import type { ModelProvider, ModelRef } from '@chorus/llm'
-import type { ArtefactFragment, CodeFragment, EntityFragment, Fragment, Retriever } from '@chorus/core'
+import type { ArtefactFragment, CodeFragment, EntityFragment, SignalFragment, Fragment, Retriever } from '@chorus/core'
 import { DEFAULT_RETRIEVAL_KINDS } from '@chorus/core'
 import { RRF_K, fuse, type FusedItem } from './fusion.js'
 import { entityCitationId } from './citation-id.js'
@@ -33,6 +33,7 @@ export type {
   ArtefactFragment,
   CodeFragment,
   EntityFragment,
+  SignalFragment,
   ContextBundle,
   Fragment,
   RetrievableKind,
@@ -319,6 +320,35 @@ interface EntityNeighbourRow extends EntityRow {
   from_id: string
 }
 
+/**
+ * The signal half (BRAIN-4, retrieval widened to signals).
+ *
+ * Lexical over the generated `search` tsvector (migration 0053). The permission
+ * scope is **in the query** (AC2): a signal is a candidate when it is `public`,
+ * or when one of the caller's scope ids (`$2`) matches one of its own
+ * (`permissions->'scopeIds' ?| $2`). With no caller scopes the overlap is
+ * empty, so a restricted signal is never a candidate — fail closed — and
+ * `considered` cannot count what the caller may not see. There is no vector
+ * half: signals are not embedded on write, so, like artefacts, a signal arrives
+ * through one search.
+ *
+ * `$1` tsquery, `$2` the caller's scope ids, `$3` candidate limit.
+ */
+export const SIGNAL_SEARCH_SQL = `SELECT s.id, s.source, s.kind, s.text, s.url
+   FROM signals s
+  WHERE s.search @@ to_tsquery('simple', $1)
+    AND (s.permissions->>'visibility' = 'public' OR s.permissions->'scopeIds' ?| $2::text[])
+  ORDER BY ts_rank(s.search, to_tsquery('simple', $1)) DESC, s.id
+  LIMIT $3`
+
+interface SignalRow {
+  id: string
+  source: string
+  kind: string
+  text: string | null
+  url: string | null
+}
+
 /** The summary an entity fragment carries — what the thing is, since the graph stores no prose. */
 function entitySummary(row: EntityRow): string {
   const base = `${row.name} is a ${row.kind.replace(/_/g, ' ')} in this workspace.`
@@ -480,6 +510,17 @@ export function createRetriever(config: DbConfig, options: RetrieverOptions): Re
           )
         : []
 
+      // Signals. Lexical over the signal's prose, with the per-signal permission
+      // scope applied in the query (AC2): a restricted signal is a candidate
+      // only when one of the caller's scopes matches one of its own, so one the
+      // caller may not see is never a candidate and cannot leak through a count.
+      const viewerScopes = query.viewerScopeIds ? [...query.viewerScopeIds] : []
+      const signals = kinds.includes('signal')
+        ? await tx(query.workspaceId, (t) =>
+            t.query<SignalRow>(SIGNAL_SEARCH_SQL, [anyTermQuery(query.query), viewerScopes, candidates]),
+          )
+        : []
+
       const [lexical, vector] = !kinds.includes('code')
         ? ([[], []] as const)
         : await tx(query.workspaceId, async (t) => {
@@ -519,6 +560,7 @@ export function createRetriever(config: DbConfig, options: RetrieverOptions): Re
       for (const row of [...lexical, ...vector]) byId.set(row.id, row)
       const artefactById = new Map(artefacts.map((row) => [`${row.kind}:${row.id}`, row]))
       const entityById = new Map(entities.map((row) => [row.id, row]))
+      const signalById = new Map(signals.map((row) => [row.id, row]))
 
       // Code is fused across its two searches. Artefacts and entities each come
       // from one search, ranked on their own. All are on the same reciprocal-rank
@@ -533,10 +575,12 @@ export function createRetriever(config: DbConfig, options: RetrieverOptions): Re
         { limit: k },
       )
       const entityFused = fuse({ lexical: entities.map((r) => ({ id: r.id })) }, { limit: k })
+      const signalFused = fuse({ lexical: signals.map((r) => ({ id: r.id })) }, { limit: k })
       const ranked = [
         ...codeFused.map((entry) => ({ entry, kind: 'code' as const })),
         ...artefactFused.map((entry) => ({ entry, kind: 'artefact' as const })),
         ...entityFused.map((entry) => ({ entry, kind: 'entity' as const })),
+        ...signalFused.map((entry) => ({ entry, kind: 'signal' as const })),
       ]
         .sort((a, b) => compareFused(a.entry, b.entry))
         .slice(0, k)
@@ -571,6 +615,23 @@ export function createRetriever(config: DbConfig, options: RetrieverOptions): Re
         if (kind === 'entity') {
           const row = entityById.get(entry.item.id)!
           return directEntityFragment(row, entry.score, confidence, entry.sources)
+        }
+        if (kind === 'signal') {
+          const row = signalById.get(entry.item.id)!
+          const text = (row.text ?? '').slice(0, ARTEFACT_EXCERPT_CHARS)
+          const fragment: SignalFragment = {
+            citationId: createHash('sha256').update(`signal ${row.id} `).update(text).digest('hex').slice(0, 16),
+            kind: 'signal',
+            signalId: row.id,
+            source: row.source,
+            signalKind: row.kind,
+            url: row.url,
+            text,
+            score: entry.score,
+            confidence,
+            sources: entry.sources,
+          }
+          return fragment
         }
         const row = byId.get(entry.item.id)!
         const fragment: CodeFragment = {
@@ -610,7 +671,7 @@ export function createRetriever(config: DbConfig, options: RetrieverOptions): Re
         userId: query.userId,
         teamId: query.teamId,
         fragments: [...fragments, ...expansion],
-        considered: byId.size + artefactById.size + entityById.size,
+        considered: byId.size + artefactById.size + entityById.size + signalById.size,
       }
     },
 

@@ -11,7 +11,7 @@ import { z } from 'zod'
  * point of having the rule.
  */
 
-export const RETRIEVABLE_KINDS = ['code', 'task', 'document', 'entity'] as const
+export const RETRIEVABLE_KINDS = ['code', 'task', 'document', 'entity', 'signal'] as const
 export type RetrievableKind = (typeof RETRIEVABLE_KINDS)[number]
 
 /**
@@ -47,6 +47,15 @@ export interface RetrieveQuery {
   /** Graph hops. Bounded because expansion is exponential in the hop count. */
   readonly expand?: 0 | 1 | 2
   readonly filters?: { readonly repoIds?: readonly string[] }
+  /**
+   * The permission scope ids the caller holds, for the per-signal visibility
+   * predicate: a `restricted` signal is a candidate only when one of these
+   * matches one of its scopes. Absent or empty means the caller holds none, so
+   * restricted content fails closed. Resolving these from a caller's
+   * memberships (identity-linking) is a separate concern; retrieval takes them
+   * so the predicate is complete and callers wire in as that lands.
+   */
+  readonly viewerScopeIds?: readonly string[]
 }
 
 /** What every fragment carries, whatever it cites. */
@@ -139,7 +148,24 @@ export interface EntityFragment extends FragmentBase {
   readonly externalUri: string | null
 }
 
-export type Fragment = CodeFragment | ArtefactFragment | EntityFragment
+/**
+ * A cited signal — a raw inbound item from a source (a page, an issue, a chat
+ * message). Its text is the signal's own prose, cut to a bounded excerpt. A
+ * signal carries a permission scope captured at ingest, and retrieval honours
+ * it in the query, so a `SignalFragment` only ever cites something the caller
+ * was permitted to see.
+ */
+export interface SignalFragment extends FragmentBase {
+  readonly kind: 'signal'
+  readonly signalId: string
+  /** The source the signal came from — `confluence`, `jira`, `slack`, … */
+  readonly source: string
+  /** The signal's own kind — `page`, `issue`, `comment`, … */
+  readonly signalKind: string
+  readonly url: string | null
+}
+
+export type Fragment = CodeFragment | ArtefactFragment | EntityFragment | SignalFragment
 
 export interface ContextBundle {
   readonly id: string

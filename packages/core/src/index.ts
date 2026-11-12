@@ -137,6 +137,7 @@ export type {
   CodeFragment,
   ArtefactFragment,
   EntityFragment,
+  SignalFragment,
   ContextBundle,
   Retriever,
 } from './retrieval.js'
