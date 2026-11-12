@@ -60,6 +60,16 @@ export interface EntityStore {
     /** The candidate's own external id, excluded so a re-extraction is not its own match. */
     readonly excludeExternalId?: string
   }): Promise<{ readonly entityId: string; readonly name: string; readonly score: number } | null>
+  /**
+   * An external-authority entity whose name or an alias matches, or null
+   * (BRAIN-11 AC2). Exact, case-insensitive: the extractor links to the owning
+   * graph's entity only when it is clearly the same thing, never on a fuzzy
+   * match that could point a reference at the wrong service.
+   */
+  findExternalByName(
+    workspaceId: string,
+    name: string,
+  ): Promise<{ readonly entityId: string; readonly externalUri: string } | null>
   /** Records an edge between two entities, idempotent per (from, to, kind). */
   addEdge(input: {
     readonly workspaceId: string
@@ -362,6 +372,23 @@ export function createEntityStore(config: DbConfig): EntityStore {
         )
         if (!row || row.score <= 0) return null
         return { entityId: row.id, name: row.name, score: Number(row.score) }
+      })
+    },
+
+    async findExternalByName(workspaceId, name) {
+      return tx(workspaceId, async (t) => {
+        const [row] = await t.query<{ id: string; external_uri: string }>(
+          `SELECT e.id, e.external_uri
+             FROM entities e
+            WHERE e.authority = 'external'
+              AND (lower(e.name) = lower($1)
+                   OR EXISTS (SELECT 1 FROM entity_aliases a
+                               WHERE a.entity_id = e.id AND lower(a.alias) = lower($1)))
+            ORDER BY e.created_at
+            LIMIT 1`,
+          [name],
+        )
+        return row ? { entityId: row.id, externalUri: row.external_uri } : null
       })
     },
 
