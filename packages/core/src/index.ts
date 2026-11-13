@@ -307,4 +307,6 @@ export type {
 export { resolveArtefactReference } from './artefact-reference.js'
 export type { ArtefactCandidate, ReferenceResolution } from './artefact-reference.js'
 export { ChatActionSchema } from './chat-actions.js'
+export { LINKABLE_PROVIDERS, PROVIDER_SCOPE_SOURCES, isLinkableProvider } from './identity.js'
+export type { ExternalIdentityProvider, LinkableProvider } from './identity.js'
 export type { ChatAction } from './chat-actions.js'

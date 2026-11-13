@@ -55,6 +55,8 @@ export const TENANT_TABLES = [
   'document_versions',
   'document_external_links',
   'source_scope_memberships',
+  'linked_accounts',
+  'account_link_requests',
   'structure_proposals',
   'structure_proposal_tasks',
   'comment_threads',
