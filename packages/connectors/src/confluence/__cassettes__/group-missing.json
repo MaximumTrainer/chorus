@@ -1,0 +1,9 @@
+{
+  "description": "NFR-4 AND1: a group deleted upstream answers 404; nobody is in it any more.",
+  "interactions": [
+    {
+      "request": { "method": "GET", "url": "https://confluence.test/api/wiki/rest/api/group/member?name=disbanded&start=0&limit=200" },
+      "response": { "status": 404, "body": { "statusCode": 404, "message": "No group found with name: disbanded" } }
+    }
+  ]
+}

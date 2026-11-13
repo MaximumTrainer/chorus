@@ -1,0 +1,37 @@
+{
+  "description": "NFR-4 AC1: a Confluence group's members across two pages; one hides their email, one is an app account.",
+  "interactions": [
+    {
+      "request": { "method": "GET", "url": "https://confluence.test/api/wiki/rest/api/group/member?name=finance&start=0&limit=200" },
+      "response": {
+        "status": 200,
+        "body": {
+          "results": [
+            { "accountId": "5b10ac8d82e05b22cc7d4ef5", "accountType": "atlassian", "displayName": "Ada Lovelace", "email": "ada@acme.test" },
+            { "accountId": "5b10a2844c20165700ede21g", "accountType": "atlassian", "displayName": "Grace Hopper", "email": "" }
+          ],
+          "start": 0,
+          "limit": 200,
+          "size": 2,
+          "_links": { "next": "/rest/api/group/member?name=finance&start=2&limit=200" }
+        }
+      }
+    },
+    {
+      "request": { "method": "GET", "url": "https://confluence.test/api/wiki/rest/api/group/member?name=finance&start=2&limit=200" },
+      "response": {
+        "status": 200,
+        "body": {
+          "results": [
+            { "accountId": "557058:automation-bot", "accountType": "app", "displayName": "Automation for Confluence" },
+            { "accountId": "5b109f2e9729b51b54dc274d", "accountType": "atlassian", "displayName": "Alan Turing", "email": "alan@acme.test" }
+          ],
+          "start": 2,
+          "limit": 200,
+          "size": 2,
+          "_links": {}
+        }
+      }
+    }
+  ]
+}
