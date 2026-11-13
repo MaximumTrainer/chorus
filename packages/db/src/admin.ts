@@ -372,6 +372,11 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
          VALUES ($1, $2, $3, 'confluence:page', $4)`,
         [ulid(), workspaceId, documentId, `seed-page-${workspaceId}`],
       )
+      await owner.query(
+        `INSERT INTO source_scope_memberships (id, workspace_id, user_id, source, scope_id)
+         VALUES ($1, $2, $3, 'confluence', $4)`,
+        [ulid(), workspaceId, userId, `seed-scope-${workspaceId}`],
+      )
       const proposalId = ulid()
       await owner.query(
         `INSERT INTO structure_proposals (id, workspace_id, team_id, session_id, tree, status)
@@ -909,6 +914,14 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
                (id, workspace_id, document_id, external_kind, external_id)
              VALUES ($1, $2, $3, 'confluence:page', $4)`,
             [id, workspaceId, document?.id ?? id, `ext-${id}`],
+          )
+          return
+        }
+        case 'source_scope_memberships': {
+          await tx.execute(
+            `INSERT INTO source_scope_memberships (id, workspace_id, user_id, source, scope_id)
+             VALUES ($1, $2, $3, 'confluence', $4)`,
+            [id, workspaceId, userId, `scope-${id}`],
           )
           return
         }
