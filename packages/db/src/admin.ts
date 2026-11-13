@@ -377,6 +377,17 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
          VALUES ($1, $2, $3, 'confluence', $4)`,
         [ulid(), workspaceId, userId, `seed-scope-${workspaceId}`],
       )
+      await owner.query(
+        `INSERT INTO linked_accounts (id, workspace_id, user_id, provider, account_id)
+         VALUES ($1, $2, $3, 'atlassian', $4)`,
+        [ulid(), workspaceId, userId, `seed-account-${workspaceId}`],
+      )
+      await owner.query(
+        `INSERT INTO account_link_requests
+           (id, workspace_id, user_id, provider, state_hash, code_verifier, expires_at)
+         VALUES ($1, $2, $3, 'atlassian', $4, 'seed-verifier', now() + interval '10 minutes')`,
+        [ulid(), workspaceId, userId, `seed-state-${workspaceId}`],
+      )
       const proposalId = ulid()
       await owner.query(
         `INSERT INTO structure_proposals (id, workspace_id, team_id, session_id, tree, status)
@@ -914,6 +925,23 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
                (id, workspace_id, document_id, external_kind, external_id)
              VALUES ($1, $2, $3, 'confluence:page', $4)`,
             [id, workspaceId, document?.id ?? id, `ext-${id}`],
+          )
+          return
+        }
+        case 'linked_accounts': {
+          await tx.execute(
+            `INSERT INTO linked_accounts (id, workspace_id, user_id, provider, account_id)
+             VALUES ($1, $2, $3, 'atlassian', $4)`,
+            [id, workspaceId, userId, `account-${id}`],
+          )
+          return
+        }
+        case 'account_link_requests': {
+          await tx.execute(
+            `INSERT INTO account_link_requests
+               (id, workspace_id, user_id, provider, state_hash, code_verifier, expires_at)
+             VALUES ($1, $2, $3, 'atlassian', $4, 'verifier', now() + interval '10 minutes')`,
+            [id, workspaceId, userId, `state-${id}`],
           )
           return
         }

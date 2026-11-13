@@ -76,10 +76,18 @@ describe('WS-4 AC4 route authorisation is declared, not remembered', () => {
     // said which workspace they mean would be circular. What stops that being
     // a hole is that `approve` re-checks membership in the chosen workspace
     // before issuing anything, asserted in oauth-server.test.ts.
+    //
+    // The account-link callback (NFR-4) is here because the source redirects the
+    // browser to it, so no workspace can be in its path. What stops that being a
+    // hole is that the state names the workspace and only the person who started
+    // the link can complete it — the request is consumed, its starter compared to
+    // the session, and their membership re-checked — asserted in
+    // linked-accounts.test.ts.
     const membershipFree = ROUTES.filter((r) => r.auth.kind === 'authenticated').map(
       (r) => `${r.method} ${r.path}`,
     )
     expect(membershipFree.sort()).toEqual([
+      'GET /oauth/:provider/callback',
       'GET /oauth/authorize',
       'GET /workspaces',
       'POST /invitations/accept',

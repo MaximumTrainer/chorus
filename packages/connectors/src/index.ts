@@ -49,6 +49,8 @@ export type {
 } from './jira/index.js'
 export { detectHierarchyScheme, hierarchyFields } from './jira/hierarchy.js'
 export type { HierarchyScheme, HierarchyConfig } from './jira/hierarchy.js'
+export { createAtlassianIdentity } from './atlassian/identity.js'
+export type { AtlassianIdentityOptions } from './atlassian/identity.js'
 export { createConfluenceConnector } from './confluence/index.js'
 export type { ConfluenceOptions, ConfluencePublishInput } from './confluence/index.js'
 export { confluenceToMarkdown, markdownToConfluence } from './confluence/body.js'

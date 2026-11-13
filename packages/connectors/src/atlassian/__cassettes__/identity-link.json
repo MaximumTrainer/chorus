@@ -1,0 +1,19 @@
+{
+  "description": "NFR-4 AC1: an Atlassian sign-in code is exchanged, and /me names the account that signed in.",
+  "interactions": [
+    {
+      "request": { "method": "POST", "url": "https://auth.atlassian.com/oauth/token" },
+      "response": {
+        "status": 200,
+        "body": { "access_token": "at-redacted", "token_type": "Bearer", "expires_in": 3600, "scope": "read:me" }
+      }
+    },
+    {
+      "request": { "method": "GET", "url": "https://api.atlassian.com/me" },
+      "response": {
+        "status": 200,
+        "body": { "account_id": "5b10ac8d82e05b22cc7d4ef5", "account_type": "atlassian", "name": "Ada Lovelace" }
+      }
+    }
+  ]
+}
