@@ -68,7 +68,7 @@ import { createTaskSyncService, type TaskSyncService } from './task-sync.js'
 import { pushRoutes } from './push-routes.js'
 import { webhookRoutes } from './webhook-routes.js'
 import type { TrackerWebhook } from './tracker-webhook.js'
-import { createRetriever, createEntityStore, createBrainMap } from '@chorus/brain'
+import { createRetriever, createEntityStore, createBrainMap, type BrainMap } from '@chorus/brain'
 import { createInboxService } from './inbox.js'
 import { inboxRoutes } from './inbox-routes.js'
 import { brainMapRoutes } from './brain-map-routes.js'
@@ -183,6 +183,12 @@ export interface AppOptions {
    * model, and the panel only ever *loads* what a run already persisted.
    */
   retriever?: Retriever
+  /**
+   * The brain map's read model (BRAIN-6). Injected so a test can freeze its
+   * clock and decide "stale" against a fixed instant; built from `dbConfig`
+   * otherwise.
+   */
+  brainMap?: BrainMap
   /**
    * The model provider. Injected so a test never reaches a real one
    * (CLAUDE.md §4).
@@ -358,6 +364,7 @@ function buildRoutes(
   dispatch: (request: Request) => Promise<Response> = () => {
     throw new Error('MCP requests need the app to dispatch through; this table was built without one')
   },
+  brainMap?: BrainMap,
 ): {
   table: readonly RouteDefinition[]
   deps: AuthorisationDeps
@@ -416,7 +423,7 @@ function buildRoutes(
       ...sessionRoutes(createSessionService(config), turn, retriever),
       ...homeRoutes(createHomeService(config)),
       ...inboxRoutes(createInboxService(config, { entities: createEntityStore(config) })),
-      ...brainMapRoutes(createBrainMap(config)),
+      ...brainMapRoutes(brainMap ?? createBrainMap(config)),
       // Mounted unconditionally so the permission suite covers it; it refuses
       // when no tracker push is wired (TASK-4).
       ...pushRoutes(
@@ -698,6 +705,7 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
           options.trackerWebhook,
           options.mcp,
           (request) => Promise.resolve(app.fetch(request)),
+          options.brainMap,
         )
       : undefined
 

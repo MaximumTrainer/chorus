@@ -1,4 +1,5 @@
 import { withTenant, type DbConfig, type TenantTx } from '@chorus/db'
+import { STALE_AFTER_DAYS } from './self-organise.js'
 
 /**
  * The brain map's read model (BRAIN-6).
@@ -33,6 +34,8 @@ export interface BrainMapNode {
   readonly salience: number
   /** The newest visible evidence timestamp, for the client's freshness view. ISO, or null. */
   readonly lastActivityAt: string | null
+  /** The freshness class the client styles (AC3) — see `BrainMapView.freshness` for its definition. */
+  readonly freshness: Freshness
   readonly authority: 'brain' | 'external'
   readonly externalUri: string | null
 }
@@ -47,6 +50,58 @@ export interface BrainMapEdge {
 export interface BrainMapView {
   readonly nodes: readonly BrainMapNode[]
   readonly edges: readonly BrainMapEdge[]
+  /**
+   * The definition every node's `freshness` was classified against, carried
+   * with the data so the UI documents what "stale" means rather than leaving
+   * the distinction implicit (AC3).
+   */
+  readonly freshness: { readonly staleAfterDays: number; readonly definition: string }
+}
+
+/** How current the map believes an entity is. `unknown` when there is nothing to judge by. */
+export type Freshness = 'fresh' | 'stale' | 'unknown'
+
+/**
+ * Classify one entity's freshness (BRAIN-6 AC3).
+ *
+ * One definition of stale, shared with the review inbox's stale detector
+ * (`STALE_AFTER_DAYS`), so the map and the inbox never disagree about the same
+ * entity. A brain entity is judged by its newest visible evidence. An
+ * external-authority entity is judged by its owning source's own last sync
+ * (BRAIN-11 AC3): Chorus holds no evidence that could make it fresher than the
+ * source says it is, nor any that should make a freshly-synced one look stale.
+ * Exactly at the threshold is still fresh. With no timestamp to judge by, the
+ * answer is `unknown` rather than a guess.
+ */
+export function classifyFreshness(
+  entity: {
+    readonly authority: 'brain' | 'external'
+    readonly lastActivityAt: Date | null
+    readonly lastSyncedAt: Date | null
+  },
+  now: Date,
+  staleAfterDays: number = STALE_AFTER_DAYS,
+): Freshness {
+  const at = entity.authority === 'external' ? entity.lastSyncedAt : entity.lastActivityAt
+  if (!at) return 'unknown'
+  const ageDays = (now.getTime() - at.getTime()) / (24 * 60 * 60 * 1000)
+  return ageDays > staleAfterDays ? 'stale' : 'fresh'
+}
+
+/** The human-readable definition of stale the map was classified against. */
+function freshnessDefinition(staleAfterDays: number): string {
+  return (
+    `Stale means nothing has been heard about it for more than ${staleAfterDays} days: ` +
+    `for an entity Chorus extracted, its newest evidence you can see is older than that; ` +
+    `for one an external source owns, that source last synced it longer ago than that.`
+  )
+}
+
+export interface BrainMapOptions {
+  /** The clock, injected so a test decides "stale" against a fixed instant. */
+  readonly now?: () => Date
+  /** Defaults to the stale detector's own threshold, so the two agree. */
+  readonly staleAfterDays?: number
 }
 
 /**
@@ -140,7 +195,7 @@ const EVIDENCE_COUNTS = `(s.permissions->>'visibility' = 'public' OR s.permissio
  * added to the salience in TS, over the visible edge set, so neither number
  * counts a source the caller cannot see or a filter excluded.
  */
-const NODES_SQL = `SELECT e.id, e.kind, e.name, e.authority, e.external_uri,
+const NODES_SQL = `SELECT e.id, e.kind, e.name, e.authority, e.external_uri, e.last_synced_at,
        (SELECT count(*) FROM entity_evidence v JOIN signals s ON s.id = v.signal_id
          WHERE v.entity_id = e.id AND ${EVIDENCE_COUNTS}) AS visible_evidence,
        (SELECT max(s.occurred_at) FROM entity_evidence v JOIN signals s ON s.id = v.signal_id
@@ -167,6 +222,7 @@ interface NodeRow {
   external_uri: string | null
   visible_evidence: string | number
   last_activity_at: Date | null
+  last_synced_at: Date | null
 }
 
 interface EdgeRow {
@@ -176,9 +232,11 @@ interface EdgeRow {
   confidence: number
 }
 
-export function createBrainMap(config: DbConfig): BrainMap {
+export function createBrainMap(config: DbConfig, options: BrainMapOptions = {}): BrainMap {
   const tx = <T>(workspaceId: string, fn: (t: TenantTx) => Promise<T>): Promise<T> =>
     withTenant(workspaceId, fn, { config })
+  const now = options.now ?? (() => new Date())
+  const staleAfterDays = options.staleAfterDays ?? STALE_AFTER_DAYS
 
   return {
     async read({ workspaceId, viewerScopeIds, filters }) {
@@ -200,22 +258,37 @@ export function createBrainMap(config: DbConfig): BrainMap {
           degree.set(e.to_id, (degree.get(e.to_id) ?? 0) + 1)
         }
 
-        const nodes: BrainMapNode[] = nodeRows.map((r) => ({
-          id: r.id,
-          kind: r.kind,
-          name: r.name,
-          salience: Number(r.visible_evidence) + (degree.get(r.id) ?? 0),
-          lastActivityAt: r.last_activity_at ? r.last_activity_at.toISOString() : null,
-          authority: r.authority === 'external' ? 'external' : 'brain',
-          externalUri: r.external_uri,
-        }))
+        // One instant for the whole map, so two nodes of the same age can never
+        // straddle the threshold because the clock moved between them.
+        const at = now()
+        const nodes: BrainMapNode[] = nodeRows.map((r) => {
+          const authority = r.authority === 'external' ? 'external' : 'brain'
+          return {
+            id: r.id,
+            kind: r.kind,
+            name: r.name,
+            salience: Number(r.visible_evidence) + (degree.get(r.id) ?? 0),
+            lastActivityAt: r.last_activity_at ? r.last_activity_at.toISOString() : null,
+            freshness: classifyFreshness(
+              { authority, lastActivityAt: r.last_activity_at, lastSyncedAt: r.last_synced_at },
+              at,
+              staleAfterDays,
+            ),
+            authority,
+            externalUri: r.external_uri,
+          }
+        })
         const edges: BrainMapEdge[] = edgeRows.map((e) => ({
           from: e.from_id,
           to: e.to_id,
           relation: e.relation,
           confidence: e.confidence,
         }))
-        return { nodes, edges }
+        return {
+          nodes,
+          edges,
+          freshness: { staleAfterDays, definition: freshnessDefinition(staleAfterDays) },
+        }
       })
     },
 
