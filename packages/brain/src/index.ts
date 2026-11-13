@@ -6,6 +6,7 @@ import type { ArtefactFragment, CodeFragment, EntityFragment, SignalFragment, Fr
 import { DEFAULT_RETRIEVAL_KINDS } from '@chorus/core'
 import { RRF_K, fuse, type FusedItem } from './fusion.js'
 import { entityCitationId } from './citation-id.js'
+import { viewerScopes as resolveViewerScopes } from './scope-memberships.js'
 
 export interface RetrieverOptions {
   readonly models: ModelProvider
@@ -514,10 +515,16 @@ export function createRetriever(config: DbConfig, options: RetrieverOptions): Re
       // scope applied in the query (AC2): a restricted signal is a candidate
       // only when one of the caller's scopes matches one of its own, so one the
       // caller may not see is never a candidate and cannot leak through a count.
-      const viewerScopes = query.viewerScopeIds ? [...query.viewerScopeIds] : []
+      // The caller's scopes are the ones they hold (NFR-4), resolved here from
+      // their user id in the same transaction — so chat, search, MCP and any
+      // workflow get the same answer without having to pass them.
       const signals = kinds.includes('signal')
-        ? await tx(query.workspaceId, (t) =>
-            t.query<SignalRow>(SIGNAL_SEARCH_SQL, [anyTermQuery(query.query), viewerScopes, candidates]),
+        ? await tx(query.workspaceId, async (t) =>
+            t.query<SignalRow>(SIGNAL_SEARCH_SQL, [
+              anyTermQuery(query.query),
+              await resolveViewerScopes(t, query.userId, query.viewerScopeIds),
+              candidates,
+            ]),
           )
         : []
 
@@ -781,5 +788,7 @@ export type {
   BrainMapOptions,
   Freshness,
 } from './brain-map.js'
+export { createScopeMemberships, heldScopes } from './scope-memberships.js'
+export type { ScopeMemberships } from './scope-memberships.js'
 export { createWikiMirror } from './wiki-mirror.js'
 export type { WikiMirror, WikiMirrorTarget, WikiMirrorPage, WikiMirrorResult } from './wiki-mirror.js'

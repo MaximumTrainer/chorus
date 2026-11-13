@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { ulid, type EntityCandidate } from '@chorus/core'
 import { createIsolatedDatabase, type IsolatedDatabase } from '@chorus/db'
-import { createEntityStore } from '@chorus/brain'
+import { createEntityStore, createScopeMemberships } from '@chorus/brain'
 import { createApp } from '../../src/app.js'
 import { createRecordingMailer, createTestClient, type SignedInUser, type TestClient } from '@chorus/testing'
 
@@ -156,5 +156,35 @@ describe('BRAIN-6 the brain map route', () => {
     const response = await map(w.ada, w.workspaceId)
     const body = (await response.json()) as BrainMap
     expect(body.nodes.map((n) => n.name)).toEqual(['openthing'])
+  })
+
+  it('NFR-4 AC1 / AND1: a user who holds the source scope sees the restricted entity, until they lose it', async () => {
+    const w = await world()
+    const store = createEntityStore(db.config)
+    const restricted = await signal(w, { visibility: 'restricted', scopeIds: ['confluence:group:finance'] })
+    await store.upsertCandidate({
+      workspaceId: w.workspaceId,
+      candidate: candidate({ externalId: 'e:secret', name: 'secretthing' }),
+      signalId: restricted,
+      extractorVersion: 1,
+    })
+    const memberships = createScopeMemberships(db.config)
+    const sync = (scopeIds: string[]) =>
+      memberships.replace({
+        workspaceId: w.workspaceId,
+        userId: w.ada.userId,
+        source: 'confluence',
+        scopeIds,
+        actor: { type: 'integration', id: w.integrationId },
+      })
+    const names = async () => ((await (await map(w.ada, w.workspaceId)).json()) as BrainMap).nodes.map((n) => n.name)
+
+    // The connector's membership sync says Ada is in the finance group.
+    await sync(['confluence:group:finance'])
+    expect(await names()).toEqual(['secretthing'])
+
+    // She leaves it upstream; the next sync drops the scope, and so does the map.
+    await sync([])
+    expect(await names()).toEqual([])
   })
 })

@@ -1,5 +1,6 @@
 import { withTenant, type DbConfig, type TenantTx } from '@chorus/db'
 import { STALE_AFTER_DAYS } from './self-organise.js'
+import { viewerScopes as resolveViewerScopes } from './scope-memberships.js'
 
 /**
  * The brain map's read model (BRAIN-6).
@@ -239,13 +240,14 @@ export function createBrainMap(config: DbConfig, options: BrainMapOptions = {}):
   const staleAfterDays = options.staleAfterDays ?? STALE_AFTER_DAYS
 
   return {
-    async read({ workspaceId, viewerScopeIds, filters }) {
-      const scopes = viewerScopeIds ? [...viewerScopeIds] : []
+    async read({ workspaceId, userId, viewerScopeIds, filters }) {
       // Empty or absent → null, so the query's `IS NULL` branch keeps all.
       const kinds = filters?.kinds && filters.kinds.length > 0 ? [...filters.kinds] : null
       const sources = filters?.sources && filters.sources.length > 0 ? [...filters.sources] : null
       const since = filters?.since ?? null
       return tx(workspaceId, async (t) => {
+        // The scopes the caller holds (NFR-4), so the map shows a group exactly what retrieval would.
+        const scopes = await resolveViewerScopes(t, userId, viewerScopeIds)
         const nodeRows = await t.query<NodeRow>(NODES_SQL, [scopes, kinds, sources, since])
         const ids = nodeRows.map((r) => r.id)
         const edgeRows = ids.length > 0 ? await t.query<EdgeRow>(EDGES_SQL, [ids]) : []
@@ -292,9 +294,9 @@ export function createBrainMap(config: DbConfig, options: BrainMapOptions = {}):
       })
     },
 
-    async drawer({ workspaceId, viewerScopeIds, entityId }) {
-      const scopes = viewerScopeIds ? [...viewerScopeIds] : []
+    async drawer({ workspaceId, userId, viewerScopeIds, entityId }) {
       return tx(workspaceId, async (t) => {
+        const scopes = await resolveViewerScopes(t, userId, viewerScopeIds)
         // Visible iff it has at least one piece of evidence the caller may see;
         // otherwise null, and the route composes a not-found (AC6).
         const [ent] = await t.query<{
