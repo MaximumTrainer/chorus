@@ -72,6 +72,8 @@ import { createRetriever, createEntityStore, createBrainMap, type BrainMap } fro
 import { createInboxService } from './inbox.js'
 import { inboxRoutes } from './inbox-routes.js'
 import { brainMapRoutes } from './brain-map-routes.js'
+import { workspaceExportRoutes } from './workspace-export-routes.js'
+import { createWorkspaceExport } from './workspace-export.js'
 import { linkedAccountRoutes, type IdentityProviders } from './linked-account-routes.js'
 import { createLinkedAccountService } from './linked-accounts.js'
 import { createNotifier } from '@chorus/notifications'
@@ -407,6 +409,7 @@ function buildRoutes(
     table: [
       ...ROUTES,
       ...workspaceRoutes(workspaces),
+      ...workspaceExportRoutes(config, createWorkspaceExport(config), workspaces),
       ...teamRoutes(teams),
       ...apiTokenRoutes(tokens),
       ...repositoryRoutes(repositories),
