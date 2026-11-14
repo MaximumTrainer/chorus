@@ -73,7 +73,31 @@ export interface ConfluenceConnector extends Connector {
    * the sync revokes the scope, rather than failing and leaving access in place.
    */
   groupMembers(groupName: string, ctx: ConnectorContext): Promise<readonly ConfluenceGroupMember[]>
+  /** The same, for a group named by id — which is how space permissions name groups. */
+  groupMembersById(groupId: string, ctx: ConnectorContext): Promise<readonly ConfluenceGroupMember[]>
+  /**
+   * Who may read a space: the users and groups granted `read` on it, across
+   * every page of its permissions. Any other operation is not reading. A
+   * principal that cannot be resolved to people (a role) grants nobody here and
+   * is counted in `unresolvedPrincipals`, so the gap is visible. A space deleted
+   * upstream has no readers, so the sync revokes its scope.
+   */
+  spaceReaders(spaceId: string, ctx: ConnectorContext): Promise<ConfluenceSpaceReaders>
 }
+
+export interface ConfluenceSpaceReaders {
+  readonly accountIds: readonly string[]
+  readonly groupIds: readonly string[]
+  readonly unresolvedPrincipals: number
+}
+
+interface RawSpacePermission {
+  principal?: { type?: unknown; id?: unknown }
+  operation?: { key?: unknown; targetType?: unknown }
+}
+
+/** Space permissions per request — the API's maximum. */
+const SPACE_PERMISSION_PAGE_SIZE = 250
 
 interface RawGroupMember {
   accountId?: unknown
@@ -117,7 +141,15 @@ export function createConfluenceConnector(options: ConfluenceOptions = {}): Conf
     tokenUrl: ATLASSIAN_OAUTH,
     // Group membership is read so a page restricted to a group reaches exactly
     // that group (NFR-4 AC1).
-    scopes: ['read:confluence-content.all', 'read:confluence-space.summary', 'read:confluence-groups', 'offline_access'],
+    // Space permissions are read so a page scoped to its space reaches the
+    // space's readers (NFR-4 AC1).
+    scopes: [
+      'read:confluence-content.all',
+      'read:confluence-space.summary',
+      'read:confluence-groups',
+      'read:space:confluence',
+      'offline_access',
+    ],
   }
   const capabilities: Capabilities = { source: true, sink: true }
 
@@ -131,6 +163,38 @@ export function createConfluenceConnector(options: ConfluenceOptions = {}): Conf
   })
   const get = client.get
   const request = client.request
+
+  /** Walk a paged member listing, keeping people only, with a hidden email as null. */
+  async function readMembers(
+    pathAt: (start: number) => string,
+    ctx: ConnectorContext,
+  ): Promise<ConfluenceGroupMember[]> {
+    const members: ConfluenceGroupMember[] = []
+    let start = 0
+    for (;;) {
+      let data: Record<string, unknown>
+      try {
+        data = await get(pathAt(start), ctx)
+      } catch (error) {
+        // A group that no longer exists has no members; anything else is a real failure.
+        if (error instanceof UpstreamError && error.details?.status === 404) return members
+        throw error
+      }
+      const results = Array.isArray(data.results) ? (data.results as RawGroupMember[]) : []
+      for (const raw of results) {
+        if (typeof raw.accountId !== 'string' || raw.accountId === '') continue
+        if (raw.accountType === 'app') continue
+        members.push({
+          accountId: raw.accountId,
+          displayName: typeof raw.displayName === 'string' ? raw.displayName : raw.accountId,
+          email: typeof raw.email === 'string' && raw.email.trim() !== '' ? raw.email.trim() : null,
+        })
+      }
+      const links = (data._links ?? {}) as { next?: unknown }
+      if (typeof links.next !== 'string' || results.length === 0) return members
+      start += results.length
+    }
+  }
 
   const siteUrl = (ctx: ConnectorContext): string =>
     typeof ctx.config.siteUrl === 'string' ? ctx.config.siteUrl : 'https://example.atlassian.net'
@@ -264,34 +328,51 @@ export function createConfluenceConnector(options: ConfluenceOptions = {}): Conf
     },
 
     async groupMembers(groupName: string, ctx: ConnectorContext): Promise<readonly ConfluenceGroupMember[]> {
-      const members: ConfluenceGroupMember[] = []
-      let start = 0
-      for (;;) {
+      return readMembers(
+        (start) =>
+          `/wiki/rest/api/group/member?name=${encodeURIComponent(groupName)}&start=${start}&limit=${GROUP_PAGE_SIZE}`,
+        ctx,
+      )
+    },
+
+    async groupMembersById(groupId: string, ctx: ConnectorContext): Promise<readonly ConfluenceGroupMember[]> {
+      return readMembers(
+        (start) =>
+          `/wiki/rest/api/group/${encodeURIComponent(groupId)}/membersByGroupId?start=${start}&limit=${GROUP_PAGE_SIZE}`,
+        ctx,
+      )
+    },
+
+    async spaceReaders(spaceId: string, ctx: ConnectorContext): Promise<ConfluenceSpaceReaders> {
+      const accountIds = new Set<string>()
+      const groupIds = new Set<string>()
+      let unresolvedPrincipals = 0
+      let path: string | null =
+        `/wiki/api/v2/spaces/${encodeURIComponent(spaceId)}/permissions?limit=${SPACE_PERMISSION_PAGE_SIZE}`
+      while (path) {
         let data: Record<string, unknown>
         try {
-          data = await get(
-            `/wiki/rest/api/group/member?name=${encodeURIComponent(groupName)}&start=${start}&limit=${GROUP_PAGE_SIZE}`,
-            ctx,
-          )
+          data = await get(path, ctx)
         } catch (error) {
-          // A group that no longer exists has no members; anything else is a real failure.
-          if (error instanceof UpstreamError && error.details?.status === 404) return members
+          // A space that no longer exists has no readers; anything else is a real failure.
+          if (error instanceof UpstreamError && error.details?.status === 404) {
+            return { accountIds: [], groupIds: [], unresolvedPrincipals: 0 }
+          }
           throw error
         }
-        const results = Array.isArray(data.results) ? (data.results as RawGroupMember[]) : []
+        const results = Array.isArray(data.results) ? (data.results as RawSpacePermission[]) : []
         for (const raw of results) {
-          if (typeof raw.accountId !== 'string' || raw.accountId === '') continue
-          if (raw.accountType === 'app') continue
-          members.push({
-            accountId: raw.accountId,
-            displayName: typeof raw.displayName === 'string' ? raw.displayName : raw.accountId,
-            email: typeof raw.email === 'string' && raw.email.trim() !== '' ? raw.email.trim() : null,
-          })
+          if (raw.operation?.key !== 'read' || raw.operation?.targetType !== 'space') continue
+          const id = raw.principal?.id
+          if (typeof id !== 'string' || id === '') continue
+          if (raw.principal?.type === 'user') accountIds.add(id)
+          else if (raw.principal?.type === 'group') groupIds.add(id)
+          else unresolvedPrincipals += 1
         }
-        const links = (data._links ?? {}) as { next?: unknown }
-        if (typeof links.next !== 'string' || results.length === 0) return members
-        start += results.length
+        const next = ((data._links ?? {}) as { next?: unknown }).next
+        path = typeof next === 'string' && next !== '' && results.length > 0 ? next : null
       }
+      return { accountIds: [...accountIds], groupIds: [...groupIds], unresolvedPrincipals }
     },
 
     async health(ctx: ConnectorContext): Promise<HealthStatus> {

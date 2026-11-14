@@ -57,6 +57,7 @@ export type {
   ConfluencePublishInput,
   ConfluenceConnector,
   ConfluenceGroupMember,
+  ConfluenceSpaceReaders,
 } from './confluence/index.js'
 export { confluenceToMarkdown, markdownToConfluence } from './confluence/body.js'
 export { validateStatusMap, requireMapping, requireTransition } from './jira/status-map.js'
