@@ -177,7 +177,8 @@ export interface BrainMap {
 const EVIDENCE_EXCERPT_CHARS = 500
 
 /** A signal visible to the caller — public, or scoped to a group they are in. `$1` scopes. */
-const SIGNAL_VISIBLE = `(s.permissions->>'visibility' = 'public' OR s.permissions->'scopeIds' ?| $1::text[])`
+const SIGNAL_VISIBLE = `(s.permissions->>'visibility' = 'public' OR s.permissions->'scopeIds' ?| $1::text[])
+  AND NOT EXISTS (SELECT 1 FROM signals newer WHERE newer.supersedes_id = s.id)`
 
 /**
  * A piece of evidence that counts: its signal is visible to the caller (public,
@@ -186,6 +187,7 @@ const SIGNAL_VISIBLE = `(s.permissions->>'visibility' = 'public' OR s.permission
  * three agree — `$1` scopes, `$3` sources (or null), `$4` since (or null).
  */
 const EVIDENCE_COUNTS = `(s.permissions->>'visibility' = 'public' OR s.permissions->'scopeIds' ?| $1::text[])
+      AND NOT EXISTS (SELECT 1 FROM signals newer WHERE newer.supersedes_id = s.id)
       AND ($3::text[] IS NULL OR s.source = ANY($3))
       AND ($4::timestamptz IS NULL OR s.occurred_at >= $4)`
 

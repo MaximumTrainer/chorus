@@ -228,6 +228,9 @@ export function createContradictionDetector(deps: {
              FROM entities e
              JOIN entity_evidence ev ON ev.entity_id = e.id
              JOIN signals s ON s.id = ev.signal_id AND s.text IS NOT NULL AND s.text <> ''
+              -- Current versions only (BRAIN-1 AC3): two drafts of one page are not a
+              -- contradiction, nor two clusters.
+              AND NOT EXISTS (SELECT 1 FROM signals newer WHERE newer.supersedes_id = s.id)
             WHERE e.authority = 'brain'
             ORDER BY e.id, s.external_id`,
         ),
@@ -351,6 +354,9 @@ export function createSplitDetector(deps: {
              FROM entities e
              JOIN entity_evidence ev ON ev.entity_id = e.id
              JOIN signals s ON s.id = ev.signal_id AND s.text IS NOT NULL AND s.text <> ''
+              -- Current versions only (BRAIN-1 AC3): two drafts of one page are not a
+              -- contradiction, nor two clusters.
+              AND NOT EXISTS (SELECT 1 FROM signals newer WHERE newer.supersedes_id = s.id)
             WHERE e.authority = 'brain'
             ORDER BY e.id, s.external_id`,
         ),

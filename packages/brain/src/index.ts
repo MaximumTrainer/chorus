@@ -339,6 +339,9 @@ export const SIGNAL_SEARCH_SQL = `SELECT s.id, s.source, s.kind, s.text, s.url
    FROM signals s
   WHERE s.search @@ to_tsquery('simple', $1)
     AND (s.permissions->>'visibility' = 'public' OR s.permissions->'scopeIds' ?| $2::text[])
+    -- Only an item's current version (BRAIN-1 AC3): a superseded row must not
+    -- keep a since-restricted page visible, or surface an old draft.
+    AND NOT EXISTS (SELECT 1 FROM signals newer WHERE newer.supersedes_id = s.id)
   ORDER BY ts_rank(s.search, to_tsquery('simple', $1)) DESC, s.id
   LIMIT $3`
 
