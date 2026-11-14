@@ -1,0 +1,49 @@
+{
+  "description": "NFR-4 AND1: Ada has left finance upstream; eng unchanged.",
+  "interactions": [
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://confluence.test/api/wiki/rest/api/group/member?name=eng&start=0&limit=200"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "results": [
+            {
+              "accountId": "acc-grace",
+              "accountType": "atlassian",
+              "displayName": "Grace Hopper"
+            }
+          ],
+          "start": 0,
+          "limit": 200,
+          "size": 1,
+          "_links": {}
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://confluence.test/api/wiki/rest/api/group/member?name=finance&start=0&limit=200"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "results": [
+            {
+              "accountId": "acc-bob",
+              "accountType": "atlassian",
+              "displayName": "Bob"
+            }
+          ],
+          "start": 0,
+          "limit": 200,
+          "size": 1,
+          "_links": {}
+        }
+      }
+    }
+  ]
+}
