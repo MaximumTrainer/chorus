@@ -1,0 +1,54 @@
+{
+  "description": "NFR-4: groups referenced by restricted pages \u2014 eng has Grace; finance has Ada and Bob (Bob never linked).",
+  "interactions": [
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://confluence.test/api/wiki/rest/api/group/member?name=eng&start=0&limit=200"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "results": [
+            {
+              "accountId": "acc-grace",
+              "accountType": "atlassian",
+              "displayName": "Grace Hopper"
+            }
+          ],
+          "start": 0,
+          "limit": 200,
+          "size": 1,
+          "_links": {}
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://confluence.test/api/wiki/rest/api/group/member?name=finance&start=0&limit=200"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "results": [
+            {
+              "accountId": "acc-ada",
+              "accountType": "atlassian",
+              "displayName": "Ada Lovelace"
+            },
+            {
+              "accountId": "acc-bob",
+              "accountType": "atlassian",
+              "displayName": "Bob"
+            }
+          ],
+          "start": 0,
+          "limit": 200,
+          "size": 2,
+          "_links": {}
+        }
+      }
+    }
+  ]
+}
