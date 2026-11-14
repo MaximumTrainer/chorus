@@ -38,8 +38,13 @@ function safeIdentifier(name: string): string {
 }
 
 export class ErasureIncompleteError extends Error {
-  constructor(readonly residue: readonly string[]) {
+  // A declared field, not a constructor parameter property: strip-only
+  // TypeScript (NFR-12 AC4) cannot run parameter properties.
+  readonly residue: readonly string[]
+
+  constructor(residue: readonly string[]) {
     super(`Erasure left rows behind in: ${residue.join(', ')}`)
+    this.residue = residue
   }
 }
 
