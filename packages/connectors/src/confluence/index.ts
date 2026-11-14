@@ -51,6 +51,36 @@ export interface ConfluenceOptions {
 }
 
 const PAGE_SIZE = 25
+/** Group members per request — Confluence's own maximum for this endpoint. */
+const GROUP_PAGE_SIZE = 200
+
+/**
+ * One person in a Confluence group (NFR-4 AC1). `email` is null when the user
+ * has hidden it — never an empty string a matcher could mistake for a value.
+ */
+export interface ConfluenceGroupMember {
+  readonly accountId: string
+  readonly displayName: string
+  readonly email: string | null
+}
+
+/** The Confluence connector, plus what the membership sync needs beyond the contract. */
+export interface ConfluenceConnector extends Connector {
+  /**
+   * Everyone in a group, across every page. App accounts (automation, bots)
+   * are left out: they are not people a restricted page could be shown to. A
+   * group deleted upstream has nobody in it, so this answers an empty list and
+   * the sync revokes the scope, rather than failing and leaving access in place.
+   */
+  groupMembers(groupName: string, ctx: ConnectorContext): Promise<readonly ConfluenceGroupMember[]>
+}
+
+interface RawGroupMember {
+  accountId?: unknown
+  accountType?: unknown
+  displayName?: unknown
+  email?: unknown
+}
 const EXPAND = 'space,version,history.createdBy,body.atlas_doc_format,restrictions.read.restrictions.user,restrictions.read.restrictions.group'
 
 interface Cursor {
@@ -78,14 +108,16 @@ function confluenceReason(raw: string): string {
   return raw.slice(0, 200) || 'no body'
 }
 
-export function createConfluenceConnector(options: ConfluenceOptions = {}): Connector {
+export function createConfluenceConnector(options: ConfluenceOptions = {}): ConfluenceConnector {
   const api = (options.apiUrl ?? 'https://api.atlassian.com/ex/confluence/cloud').replace(/\/$/, '')
 
   const auth: AuthSpec = {
     kind: 'oauth2',
     authorizationUrl: 'https://auth.atlassian.com/authorize',
     tokenUrl: ATLASSIAN_OAUTH,
-    scopes: ['read:confluence-content.all', 'read:confluence-space.summary', 'offline_access'],
+    // Group membership is read so a page restricted to a group reaches exactly
+    // that group (NFR-4 AC1).
+    scopes: ['read:confluence-content.all', 'read:confluence-space.summary', 'read:confluence-groups', 'offline_access'],
   }
   const capabilities: Capabilities = { source: true, sink: true }
 
@@ -229,6 +261,37 @@ export function createConfluenceConnector(options: ConfluenceOptions = {}): Conn
 
     mapExternal(signal: Signal): readonly EntityCandidate[] {
       return candidatesFor(signal)
+    },
+
+    async groupMembers(groupName: string, ctx: ConnectorContext): Promise<readonly ConfluenceGroupMember[]> {
+      const members: ConfluenceGroupMember[] = []
+      let start = 0
+      for (;;) {
+        let data: Record<string, unknown>
+        try {
+          data = await get(
+            `/wiki/rest/api/group/member?name=${encodeURIComponent(groupName)}&start=${start}&limit=${GROUP_PAGE_SIZE}`,
+            ctx,
+          )
+        } catch (error) {
+          // A group that no longer exists has no members; anything else is a real failure.
+          if (error instanceof UpstreamError && error.details?.status === 404) return members
+          throw error
+        }
+        const results = Array.isArray(data.results) ? (data.results as RawGroupMember[]) : []
+        for (const raw of results) {
+          if (typeof raw.accountId !== 'string' || raw.accountId === '') continue
+          if (raw.accountType === 'app') continue
+          members.push({
+            accountId: raw.accountId,
+            displayName: typeof raw.displayName === 'string' ? raw.displayName : raw.accountId,
+            email: typeof raw.email === 'string' && raw.email.trim() !== '' ? raw.email.trim() : null,
+          })
+        }
+        const links = (data._links ?? {}) as { next?: unknown }
+        if (typeof links.next !== 'string' || results.length === 0) return members
+        start += results.length
+      }
     },
 
     async health(ctx: ConnectorContext): Promise<HealthStatus> {
