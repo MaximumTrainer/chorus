@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
-import { RateLimitedError, type ConnectorKind, type Signal } from '@chorus/core'
+import { RateLimitedError, type ConnectorKind, type EntityCandidate, type Signal } from '@chorus/core'
 import type {
   Capabilities,
   Connector,
@@ -179,6 +179,26 @@ export function createReferenceConnector(initial: ReferenceScript = {}): Referen
 
     get cursorsSeen() {
       return cursorsSeen
+    },
+
+    /**
+     * The deterministic pass, as a real source does it: the signal's author is
+     * a `person` the source itself defines. Present so the contract kit's entity
+     * checks, and extraction downstream of a sync, run against this connector
+     * too rather than being skipped for it.
+     */
+    mapExternal(signal: Signal): readonly EntityCandidate[] {
+      if (!signal.author) return []
+      return [
+        {
+          kind: 'person',
+          externalId: `reference:person:${signal.author.externalId}`,
+          name: signal.author.display,
+          aliases: [],
+          attributes: {},
+          evidence: { signalExternalId: signal.externalId, source: 'reference' },
+        },
+      ]
     },
 
     async pull(cursor: string | null, _ctx: ConnectorContext): Promise<PullResult> {

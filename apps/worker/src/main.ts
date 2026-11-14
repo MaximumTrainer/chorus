@@ -1,6 +1,14 @@
 import { writeFileSync } from 'node:fs'
 import { ConfigurationError, createKeyring, parseMasterKey } from '@chorus/core'
-import { createCredentialStore } from '@chorus/connectors'
+import {
+  createConfluenceConnector,
+  createCredentialStore,
+  createJiraConnector,
+  createLinearConnector,
+  type Connector,
+  type IntegrationRecord,
+} from '@chorus/connectors'
+import { createEntityStore, createScopeMemberships } from '@chorus/brain'
 import { configFromEnv } from '@chorus/db'
 import { builtInWorkflows } from '@chorus/agent'
 import { createIndexer } from '@chorus/indexer'
@@ -9,6 +17,7 @@ import { createQueue, redisConfigFromEnv } from '@chorus/queue'
 import { initTelemetry, shutdownTelemetry } from '@chorus/telemetry'
 import { createGitRepositoryAccess } from './access.js'
 import { createWorker } from './worker.js'
+import { createSyncScheduler } from './sync-scheduler.js'
 
 /**
  * The worker process entrypoint (architecture.md §6).
@@ -44,6 +53,32 @@ function masterKeys() {
   return previousId && previous
     ? [current, parseMasterKey(previousId, previous)]
     : [current]
+}
+
+/** A positive whole number from the environment, or the default. */
+function positiveInt(name: string, fallback: number): number {
+  const raw = process.env[name]
+  if (raw === undefined || raw.trim() === '') return fallback
+  const value = Number(raw)
+  if (!Number.isInteger(value) || value <= 0) throw new Error(`${name} must be a positive whole number`)
+  return value
+}
+
+/**
+ * An Atlassian integration's API base (BRAIN-1). Each Atlassian site has its own
+ * cloud id, carried on the integration's config; without it the site is unknown
+ * and the sync fails naming what is missing, rather than calling the wrong one.
+ * Called without an integration (pure mapping), no base is needed.
+ */
+function atlassianApi(product: 'confluence' | 'jira', integration?: IntegrationRecord): { apiUrl?: string } {
+  if (!integration) return {}
+  const cloudId = integration.config.cloudId
+  if (typeof cloudId !== 'string' || cloudId.trim() === '') {
+    throw new ConfigurationError(
+      `The ${product} integration ${integration.id} has no config.cloudId, so its Atlassian site is unknown.`,
+    )
+  }
+  return { apiUrl: `https://api.atlassian.com/ex/${product}/${cloudId}` }
 }
 
 async function main(): Promise<void> {
@@ -114,12 +149,49 @@ async function main(): Promise<void> {
     masterKeys()[0]!,
   )
 
+  // The Atlassian OAuth app refreshes Atlassian integrations' tokens.
+  const atlassianApp = {
+    ...(process.env.CHORUS_ATLASSIAN_CLIENT_ID ? { clientId: process.env.CHORUS_ATLASSIAN_CLIENT_ID } : {}),
+    ...(process.env.CHORUS_ATLASSIAN_CLIENT_SECRET ? { clientSecret: process.env.CHORUS_ATLASSIAN_CLIENT_SECRET } : {}),
+  }
+  // The sources this worker ingests from on a schedule (BRAIN-1), by integration kind.
+  const sources: Record<string, (integration?: IntegrationRecord) => Connector> = {
+    confluence: (integration) => createConfluenceConnector({ ...atlassianApp, ...atlassianApi('confluence', integration) }),
+    jira: (integration) => createJiraConnector({ ...atlassianApp, ...atlassianApi('jira', integration) }),
+    linear: () => createLinearConnector(),
+  }
+
   const worker = await createWorker({
     queue,
     dbConfig,
     indexer,
     access: createGitRepositoryAccess({ credentials }),
+    sync: {
+      credentials,
+      connectors: sources,
+      entities: createEntityStore(dbConfig),
+      memberships: createScopeMemberships(dbConfig),
+    },
   })
+
+  // Ticks are frequent and cheap; the interval is what bounds how often each
+  // source is asked, because every tick within one interval collapses into a
+  // single sync per integration.
+  const scheduler = createSyncScheduler({
+    dbConfig,
+    queue,
+    kinds: Object.keys(sources),
+    intervalMs: positiveInt('CHORUS_SYNC_INTERVAL_MINUTES', 15) * 60_000,
+  })
+  const tick = (): void => {
+    scheduler.tick(new Date()).catch((error: unknown) => {
+      console.warn(
+        JSON.stringify({ level: 'error', message: 'sync schedule tick failed', error: (error as Error).message }),
+      )
+    })
+  }
+  const ticker = setInterval(tick, positiveInt('CHORUS_SYNC_TICK_SECONDS', 60) * 1_000)
+  tick()
 
   const beat = setInterval(() => {
     writeFileSync(HEARTBEAT, new Date().toISOString(), 'utf8')
@@ -138,6 +210,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     console.warn(JSON.stringify({ level: 'info', message: 'worker stopping', signal }))
     clearInterval(beat)
+    clearInterval(ticker)
     // Flushed before exit: a batch of spans still in memory when the process
     // ends is a trace that stops mid-run for no visible reason.
     await shutdownTelemetry()

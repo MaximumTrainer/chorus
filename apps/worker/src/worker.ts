@@ -12,6 +12,11 @@ import {
   DELIVER_NOTIFICATION_QUEUE,
   deliverNotificationConsumer,
 } from './consumers/deliver-notification.js'
+import {
+  SYNC_INTEGRATION_QUEUE,
+  syncIntegrationConsumer,
+  type SyncIntegrationDeps,
+} from './consumers/sync-integration.js'
 
 /**
  * The worker process (architecture.md §6).
@@ -38,6 +43,13 @@ export interface WorkerDeps {
    * worker that looks busier than it is.
    */
   readonly notifier?: Notifier
+  /**
+   * Connector ingestion (BRAIN-1): the credentials and source connectors to
+   * sync with, and the entity store extraction writes to. Optional for the
+   * same reason as `notifier` — a worker with no sources configured consumes
+   * no sync queue.
+   */
+  readonly sync?: Omit<SyncIntegrationDeps, 'dbConfig' | 'queue'>
 }
 
 export interface RunningWorker {
@@ -102,10 +114,26 @@ export async function createWorker(deps: WorkerDeps): Promise<RunningWorker> {
     )
   }
 
+  if (deps.sync) {
+    await deps.queue.consume(
+      SYNC_INTEGRATION_QUEUE,
+      traced(
+        SYNC_INTEGRATION_QUEUE,
+        syncIntegrationConsumer({ ...deps.sync, dbConfig: deps.dbConfig, queue: deps.queue }),
+      ),
+      // One attempt: the runner records a failure in the integration's health
+      // and the next scheduled tick is the retry. Retrying here as well would
+      // ask a failing source twice as often as the schedule intends.
+      { attempts: 1, concurrency: 2 },
+    )
+  }
+
   return {
-    queues: deps.notifier
-      ? [INDEX_REPOSITORY_QUEUE, DELIVER_NOTIFICATION_QUEUE]
-      : [INDEX_REPOSITORY_QUEUE],
+    queues: [
+      INDEX_REPOSITORY_QUEUE,
+      ...(deps.notifier ? [DELIVER_NOTIFICATION_QUEUE] : []),
+      ...(deps.sync ? [SYNC_INTEGRATION_QUEUE] : []),
+    ],
     async stop() {
       await deps.queue.close()
     },
