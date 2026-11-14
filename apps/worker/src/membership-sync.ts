@@ -62,8 +62,10 @@ export function createConfluenceMembershipSync(deps: {
           const scopesLike = (prefix: string) =>
             t.query<{ scope: string }>(
               `SELECT DISTINCT scope
-                 FROM signals, jsonb_array_elements_text(permissions->'scopeIds') AS scope
-                WHERE integration_id = $1 AND scope LIKE $2
+                 FROM signals s, jsonb_array_elements_text(s.permissions->'scopeIds') AS scope
+                WHERE s.integration_id = $1 AND scope LIKE $2
+                  -- Only what current versions are restricted to (BRAIN-1 AC3).
+                  AND NOT EXISTS (SELECT 1 FROM signals newer WHERE newer.supersedes_id = s.id)
                 ORDER BY scope`,
               [ctx.integrationId, `${prefix}%`],
             )

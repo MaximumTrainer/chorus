@@ -1,5 +1,6 @@
 import { NotFoundError, ValidationError, parseSignal, ulid, type Signal } from '@chorus/core'
 import { withTenant, type DbConfig, type TenantTx } from '@chorus/db'
+import { writeSignal } from './signal-store.js'
 import type { Connector, ConnectorContext, WebhookRequest } from './contract.js'
 import type { CredentialStore } from './credentials.js'
 
@@ -103,29 +104,7 @@ export function createWebhookReceiver(
     return tx(workspaceId, async (t) => {
       let ingested = 0
       for (const signal of signals) {
-        ingested += await t.execute(
-          `INSERT INTO signals
-             (id, workspace_id, integration_id, source, external_id, kind, text, structured,
-              author, author_display, occurred_at, url, permissions, raw)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-           ON CONFLICT (integration_id, external_id, kind) DO NOTHING`,
-          [
-            ulid(),
-            workspaceId,
-            integrationId,
-            source,
-            signal.externalId,
-            signal.kind,
-            signal.text,
-            JSON.stringify(signal.structured ?? null),
-            signal.author?.externalId ?? null,
-            signal.author?.display ?? null,
-            signal.occurredAt,
-            signal.url,
-            JSON.stringify(signal.permissions),
-            JSON.stringify(signal.raw ?? null),
-          ],
-        )
+        ingested += (await writeSignal(t, { workspaceId, integrationId, source, signal })) === 'written' ? 1 : 0
       }
 
       await t.execute(
