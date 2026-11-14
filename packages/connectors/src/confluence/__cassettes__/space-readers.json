@@ -1,0 +1,93 @@
+{
+  "description": "NFR-4: who may read a space \u2014 direct users and groups with read on the space, across two pages. A create permission and a role principal do not make a reader.",
+  "interactions": [
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://confluence.test/api/wiki/api/v2/spaces/98304/permissions?limit=250"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "results": [
+            {
+              "id": "1",
+              "principal": {
+                "type": "user",
+                "id": "acc-ada"
+              },
+              "operation": {
+                "key": "read",
+                "targetType": "space"
+              }
+            },
+            {
+              "id": "2",
+              "principal": {
+                "type": "group",
+                "id": "grp-eng-id"
+              },
+              "operation": {
+                "key": "read",
+                "targetType": "space"
+              }
+            },
+            {
+              "id": "3",
+              "principal": {
+                "type": "user",
+                "id": "acc-zed"
+              },
+              "operation": {
+                "key": "create",
+                "targetType": "page"
+              }
+            },
+            {
+              "id": "4",
+              "principal": {
+                "type": "role",
+                "id": "role-anonymous"
+              },
+              "operation": {
+                "key": "read",
+                "targetType": "space"
+              }
+            }
+          ],
+          "_links": {
+            "next": "/wiki/api/v2/spaces/98304/permissions?limit=250&cursor=page-2",
+            "base": "https://acme.atlassian.net/wiki"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://confluence.test/api/wiki/api/v2/spaces/98304/permissions?limit=250&cursor=page-2"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "results": [
+            {
+              "id": "5",
+              "principal": {
+                "type": "user",
+                "id": "acc-bob"
+              },
+              "operation": {
+                "key": "read",
+                "targetType": "space"
+              }
+            }
+          ],
+          "_links": {
+            "base": "https://acme.atlassian.net/wiki"
+          }
+        }
+      }
+    }
+  ]
+}

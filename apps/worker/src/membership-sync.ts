@@ -13,7 +13,13 @@ import type { ScopeMemberships } from '@chorus/brain'
  * `confluence:user:<accountId>` for pages restricted to them by name. A group
  * member who never linked gains nothing: there is no email fallback.
  *
- * Every group is read *before* anything is written. A sync that cannot read one
+ * A page with no restriction of its own is scoped to its space
+ * (`confluence:space:<id>`); its readers are the space's — users granted `read`
+ * on the space directly, and the members of groups granted it. A principal that
+ * cannot be resolved to people (a role) grants nobody, and is counted so the gap
+ * is visible rather than guessed at.
+ *
+ * Every group and space is read *before* anything is written. A sync that cannot read one
  * group has half a picture, and acting on it would revoke access people still
  * have or keep access they lost; so it throws and changes nothing, and the next
  * sync tries again.
@@ -25,6 +31,10 @@ import type { ScopeMemberships } from '@chorus/brain'
 export interface MembershipSyncOutcome {
   /** Groups named by restricted pages, and read from Confluence. */
   readonly groups: number
+  /** Spaces that space-scoped pages belong to, and whose readers were read. */
+  readonly spaces: number
+  /** Space read grants to principals that resolve to nobody here (e.g. roles). */
+  readonly unresolvedPrincipals: number
   /** People with a linked Atlassian account whose Confluence scopes were set. */
   readonly linkedPeople: number
   /** People who held Confluence scopes without a linked account, and lost them. */
@@ -36,25 +46,29 @@ export interface MembershipSync {
 }
 
 const GROUP_PREFIX = 'confluence:group:'
+const SPACE_PREFIX = 'confluence:space:'
 const USER_PREFIX = 'confluence:user:'
 
 export function createConfluenceMembershipSync(deps: {
   readonly config: DbConfig
-  readonly connector: Pick<ConfluenceConnector, 'groupMembers'>
+  readonly connector: Pick<ConfluenceConnector, 'groupMembers' | 'groupMembersById' | 'spaceReaders'>
   readonly memberships: ScopeMemberships
 }): MembershipSync {
   return {
     async sync(ctx) {
-      const { groups, linked, holders } = await withTenant(
+      const { groups, spaces, linked, holders } = await withTenant(
         ctx.workspaceId,
         async (t) => {
-          const groupRows = await t.query<{ scope: string }>(
-            `SELECT DISTINCT scope
-               FROM signals, jsonb_array_elements_text(permissions->'scopeIds') AS scope
-              WHERE integration_id = $1 AND scope LIKE $2
-              ORDER BY scope`,
-            [ctx.integrationId, `${GROUP_PREFIX}%`],
-          )
+          const scopesLike = (prefix: string) =>
+            t.query<{ scope: string }>(
+              `SELECT DISTINCT scope
+                 FROM signals, jsonb_array_elements_text(permissions->'scopeIds') AS scope
+                WHERE integration_id = $1 AND scope LIKE $2
+                ORDER BY scope`,
+              [ctx.integrationId, `${prefix}%`],
+            )
+          const groupRows = await scopesLike(GROUP_PREFIX)
+          const spaceRows = await scopesLike(SPACE_PREFIX)
           const linkedRows = await t.query<{ user_id: string; account_id: string }>(
             `SELECT user_id, account_id FROM linked_accounts WHERE provider = 'atlassian' ORDER BY user_id`,
           )
@@ -63,6 +77,7 @@ export function createConfluenceMembershipSync(deps: {
           )
           return {
             groups: groupRows.map((r) => r.scope.slice(GROUP_PREFIX.length)),
+            spaces: spaceRows.map((r) => r.scope.slice(SPACE_PREFIX.length)),
             linked: linkedRows,
             holders: holderRows.map((r) => r.user_id),
           }
@@ -70,17 +85,34 @@ export function createConfluenceMembershipSync(deps: {
         { config: deps.config },
       )
 
-      // Read every group first. Any failure throws here, before a single write.
+      // Read every group and space first. Any failure throws here, before a single write.
       const membersOf = new Map<string, Set<string>>()
       for (const group of groups) {
         const members = await deps.connector.groupMembers(group, ctx)
         membersOf.set(group, new Set(members.map((m) => m.accountId)))
+      }
+      const readersOf = new Map<string, Set<string>>()
+      const membersById = new Map<string, Set<string>>()
+      let unresolvedPrincipals = 0
+      for (const space of spaces) {
+        const readers = await deps.connector.spaceReaders(space, ctx)
+        unresolvedPrincipals += readers.unresolvedPrincipals
+        const accounts = new Set(readers.accountIds)
+        for (const groupId of [...readers.groupIds].sort()) {
+          if (!membersById.has(groupId)) {
+            const members = await deps.connector.groupMembersById(groupId, ctx)
+            membersById.set(groupId, new Set(members.map((m) => m.accountId)))
+          }
+          for (const accountId of membersById.get(groupId)!) accounts.add(accountId)
+        }
+        readersOf.set(space, accounts)
       }
 
       const actor = { type: 'integration' as const, id: ctx.integrationId }
       for (const { user_id: userId, account_id: accountId } of linked) {
         const scopeIds = [
           ...groups.filter((group) => membersOf.get(group)?.has(accountId)).map((group) => `${GROUP_PREFIX}${group}`),
+          ...spaces.filter((space) => readersOf.get(space)?.has(accountId)).map((space) => `${SPACE_PREFIX}${space}`),
           `${USER_PREFIX}${accountId}`,
         ]
         await deps.memberships.replace({
@@ -100,7 +132,13 @@ export function createConfluenceMembershipSync(deps: {
         await deps.memberships.replace({ workspaceId: ctx.workspaceId, userId, source: 'confluence', scopeIds: [], actor })
       }
 
-      return { groups: groups.length, linkedPeople: linked.length, unlinkedRevoked: orphaned.length }
+      return {
+        groups: groups.length,
+        spaces: spaces.length,
+        unresolvedPrincipals,
+        linkedPeople: linked.length,
+        unlinkedRevoked: orphaned.length,
+      }
     },
   }
 }

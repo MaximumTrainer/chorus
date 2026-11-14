@@ -31,7 +31,7 @@ describe('NFR-4 Confluence membership sync', () => {
     await db?.drop()
   })
 
-  async function world() {
+  async function world(options: { spacePage?: boolean } = {}) {
     const workspaceId = ulid()
     await db.admin.seedWorkspace(workspaceId)
     for (const table of ['source_scope_memberships', 'linked_accounts', 'signals']) {
@@ -78,6 +78,10 @@ describe('NFR-4 Confluence membership sync', () => {
     await page('the finance forecast is confidential', ['confluence:group:finance'])
     await page('the eng roadmap is internal', ['confluence:group:eng'])
     await page('a note only grace may read', ['confluence:user:acc-grace'])
+    if (options.spacePage) {
+      // No restriction of its own, so it is scoped to its space.
+      await page('the space handbook is for space readers', ['confluence:space:98304'])
+    }
 
     return { workspaceId, teamId: team!.id, integrationId, ada, grace, bob }
   }
@@ -156,5 +160,42 @@ describe('NFR-4 Confluence membership sync', () => {
     // Half a picture must not grant or revoke: everyone keeps what they had.
     expect(await scopesOf(w, w.ada)).toEqual(['confluence:group:finance', 'confluence:user:acc-ada'])
     expect(await scopesOf(w, w.grace)).toEqual(['confluence:group:eng', 'confluence:user:acc-grace'])
+  })
+
+  it('NFR-4 AC1: a page scoped to its space reaches the space’s readers — directly or through a group', async () => {
+    const w = await world({ spacePage: true })
+    const outcome = await runSync(w, 'confluence/membership-sync-space.json')
+
+    // The role principal reads the space but resolves to nobody; it is counted, not guessed at.
+    expect(outcome).toMatchObject({ groups: 2, spaces: 1, unresolvedPrincipals: 1 })
+    expect(await scopesOf(w, w.ada)).toEqual([
+      'confluence:group:finance',
+      'confluence:space:98304',
+      'confluence:user:acc-ada',
+    ])
+    expect(await scopesOf(w, w.grace)).toEqual([
+      'confluence:group:eng',
+      'confluence:space:98304',
+      'confluence:user:acc-grace',
+    ])
+    expect(await scopesOf(w, w.bob)).toEqual([])
+
+    const retriever = createRetriever(db.config, {
+      models: createFakeModelProvider(),
+      embeddingModel: { provider: 'fake', model: 'fake-embed' },
+    })
+    const sees = async (userId: string) =>
+      (
+        await retriever.retrieve({
+          workspaceId: w.workspaceId,
+          teamId: w.teamId,
+          userId,
+          query: 'space handbook',
+          kinds: ['signal'],
+        })
+      ).fragments.length
+    expect(await sees(w.ada)).toBe(1)
+    expect(await sees(w.grace)).toBe(1)
+    expect(await sees(w.bob)).toBe(0)
   })
 })
