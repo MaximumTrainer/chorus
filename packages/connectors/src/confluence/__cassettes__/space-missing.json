@@ -1,0 +1,23 @@
+{
+  "description": "NFR-4 AND1: a space deleted upstream answers 404; nobody may read it any more.",
+  "interactions": [
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://confluence.test/api/wiki/api/v2/spaces/404404/permissions?limit=250"
+      },
+      "response": {
+        "status": 404,
+        "body": {
+          "errors": [
+            {
+              "status": 404,
+              "code": "NOT_FOUND",
+              "title": "Not Found"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

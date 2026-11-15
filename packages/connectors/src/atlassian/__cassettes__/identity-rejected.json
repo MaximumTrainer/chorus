@@ -1,0 +1,9 @@
+{
+  "description": "NFR-4 AC1: a code Atlassian does not accept is refused, and no account is named.",
+  "interactions": [
+    {
+      "request": { "method": "POST", "url": "https://auth.atlassian.com/oauth/token" },
+      "response": { "status": 403, "body": { "error": "invalid_grant", "error_description": "Invalid authorization code" } }
+    }
+  ]
+}

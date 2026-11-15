@@ -1,4 +1,10 @@
-import { ulid, type EntityCandidate } from '@chorus/core'
+import {
+  ulid,
+  ValidationError,
+  isExternalAuthorityKind,
+  parseExternalUri,
+  type EntityCandidate,
+} from '@chorus/core'
 import { withTenant, type DbConfig, type TenantTx } from '@chorus/db'
 
 /**
@@ -54,6 +60,16 @@ export interface EntityStore {
     /** The candidate's own external id, excluded so a re-extraction is not its own match. */
     readonly excludeExternalId?: string
   }): Promise<{ readonly entityId: string; readonly name: string; readonly score: number } | null>
+  /**
+   * An external-authority entity whose name or an alias matches, or null
+   * (BRAIN-11 AC2). Exact, case-insensitive: the extractor links to the owning
+   * graph's entity only when it is clearly the same thing, never on a fuzzy
+   * match that could point a reference at the wrong service.
+   */
+  findExternalByName(
+    workspaceId: string,
+    name: string,
+  ): Promise<{ readonly entityId: string; readonly externalUri: string } | null>
   /** Records an edge between two entities, idempotent per (from, to, kind). */
   addEdge(input: {
     readonly workspaceId: string
@@ -114,6 +130,21 @@ export interface EntityStore {
   }): Promise<{ readonly applied: boolean; readonly decided: boolean }>
   /** The entity with this external id, or null. */
   findByExternalId(workspaceId: string, externalId: string): Promise<string | null>
+  /**
+   * Removes an external-authority entity because its owning source emitted a
+   * tombstone (BRAIN-11 AC8). The entity and its edges — and its evidence and
+   * aliases, by cascade — are deleted; an `artefact_links` row pointing at it
+   * from either end is marked `dangling` rather than deleted, so a task or
+   * document that referenced it keeps its pointer and a reader sees the
+   * reference went away rather than it silently vanishing. A tombstone for an
+   * entity already gone is a no-op (idempotent, for a duplicate feed delivery);
+   * one aimed at a brain-authored entity is refused, because a source feed owns
+   * only what it authored.
+   */
+  tombstoneExternal(input: {
+    readonly workspaceId: string
+    readonly externalId: string
+  }): Promise<{ readonly removed: boolean; readonly danglingLinks: number }>
   /**
    * Attaches a candidate's aliases and evidence to an existing entity — the
    * automatic-merge path, when resolution is confident the two are the same
@@ -214,17 +245,40 @@ export function createEntityStore(config: DbConfig): EntityStore {
 
   return {
     async upsertCandidate({ workspaceId, candidate, signalId, extractorVersion }) {
+      // An operational kind is a reference to an external system, so it must
+      // declare external authority and a parseable uri; refuse a brain-authored
+      // one here with a typed error rather than letting the database reject it
+      // with a message nobody can read (BRAIN-11 AC1).
+      if (isExternalAuthorityKind(candidate.kind) && candidate.authority !== 'external') {
+        throw new ValidationError(`a ${candidate.kind} is a reference to an external system and must declare external authority`, {
+          kind: candidate.kind,
+        })
+      }
+      const external = candidate.authority === 'external'
+      if (external && (!candidate.externalUri || parseExternalUri(candidate.externalUri) === null)) {
+        throw new ValidationError('an external-authority entity needs a parseable externalUri', {
+          kind: candidate.kind,
+          externalUri: candidate.externalUri ?? null,
+        })
+      }
+      const authority = external ? 'external' : 'brain'
+      const externalUri = external ? candidate.externalUri! : null
+
       return tx(workspaceId, async (t) => {
         // `xmax = 0` is true only for the row this statement inserted, so one
         // round trip tells us whether the entity is new or was already there —
         // which is what distinguishes a first extraction from a re-run.
         const [row] = await t.query<{ id: string; created: boolean }>(
-          `INSERT INTO entities (id, workspace_id, kind, external_id, name, attributes, extractor_version)
-           VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+          `INSERT INTO entities
+             (id, workspace_id, kind, external_id, name, attributes, extractor_version, authority, external_uri, last_synced_at)
+           VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, CASE WHEN $8 = 'external' THEN now() ELSE NULL END)
            ON CONFLICT (workspace_id, external_id) DO UPDATE
              SET name = EXCLUDED.name,
                  attributes = EXCLUDED.attributes,
                  extractor_version = EXCLUDED.extractor_version,
+                 authority = EXCLUDED.authority,
+                 external_uri = EXCLUDED.external_uri,
+                 last_synced_at = CASE WHEN EXCLUDED.authority = 'external' THEN now() ELSE entities.last_synced_at END,
                  updated_at = now()
            RETURNING id, (xmax = 0) AS created`,
           [
@@ -235,6 +289,8 @@ export function createEntityStore(config: DbConfig): EntityStore {
             candidate.name,
             JSON.stringify(candidate.attributes ?? {}),
             extractorVersion,
+            authority,
+            externalUri,
           ],
         )
         const entityId = row!.id
@@ -297,6 +353,40 @@ export function createEntityStore(config: DbConfig): EntityStore {
       })
     },
 
+    async tombstoneExternal({ workspaceId, externalId }) {
+      return tx(workspaceId, async (t) => {
+        const [found] = await t.query<{ id: string; authority: string }>(
+          `SELECT id, authority FROM entities WHERE external_id = $1`,
+          [externalId],
+        )
+        // A tombstone for something already gone is a no-op — a feed may deliver
+        // the same event twice, and the second delivery must not error.
+        if (!found) return { removed: false, danglingLinks: 0 }
+        // A source feed owns only what it authored; it may not remove a
+        // brain-authored entity by claiming it was tombstoned upstream.
+        if (found.authority !== 'external') {
+          throw new ValidationError(
+            `entity ${externalId} is brain-authored; a source feed may not tombstone it`,
+          )
+        }
+
+        // Links pointing at it, from either end, are kept but marked dangling —
+        // the referencing task or document keeps its pointer (AC8).
+        const dangled = await t.query<{ id: string }>(
+          `UPDATE artefact_links
+              SET state = 'dangling'
+            WHERE ((to_type = 'entity' AND to_id = $1) OR (from_type = 'entity' AND from_id = $1))
+              AND state <> 'dangling'
+            RETURNING id`,
+          [found.id],
+        )
+
+        // The entity goes, and its edges, evidence and aliases with it (cascade).
+        await t.execute(`DELETE FROM entities WHERE id = $1`, [found.id])
+        return { removed: true, danglingLinks: dangled.length }
+      })
+    },
+
     async attach({ workspaceId, entityId, aliases, signalId, extractorVersion }) {
       await tx(workspaceId, async (t) => {
         for (const alias of aliases) {
@@ -331,6 +421,23 @@ export function createEntityStore(config: DbConfig): EntityStore {
         )
         if (!row || row.score <= 0) return null
         return { entityId: row.id, name: row.name, score: Number(row.score) }
+      })
+    },
+
+    async findExternalByName(workspaceId, name) {
+      return tx(workspaceId, async (t) => {
+        const [row] = await t.query<{ id: string; external_uri: string }>(
+          `SELECT e.id, e.external_uri
+             FROM entities e
+            WHERE e.authority = 'external'
+              AND (lower(e.name) = lower($1)
+                   OR EXISTS (SELECT 1 FROM entity_aliases a
+                               WHERE a.entity_id = e.id AND lower(a.alias) = lower($1)))
+            ORDER BY e.created_at
+            LIMIT 1`,
+          [name],
+        )
+        return row ? { entityId: row.id, externalUri: row.external_uri } : null
       })
     },
 

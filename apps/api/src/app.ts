@@ -68,9 +68,14 @@ import { createTaskSyncService, type TaskSyncService } from './task-sync.js'
 import { pushRoutes } from './push-routes.js'
 import { webhookRoutes } from './webhook-routes.js'
 import type { TrackerWebhook } from './tracker-webhook.js'
-import { createRetriever, createEntityStore } from '@chorus/brain'
+import { createRetriever, createEntityStore, createBrainMap, type BrainMap } from '@chorus/brain'
 import { createInboxService } from './inbox.js'
 import { inboxRoutes } from './inbox-routes.js'
+import { brainMapRoutes } from './brain-map-routes.js'
+import { workspaceExportRoutes } from './workspace-export-routes.js'
+import { createWorkspaceExport } from './workspace-export.js'
+import { linkedAccountRoutes, type IdentityProviders } from './linked-account-routes.js'
+import { createLinkedAccountService } from './linked-accounts.js'
 import { createNotifier } from '@chorus/notifications'
 import { createDecisionLinks } from '@chorus/agent'
 // WALKING SKELETON — delete in Phase 1. See src/walking-skeleton/README.md.
@@ -182,6 +187,18 @@ export interface AppOptions {
    * model, and the panel only ever *loads* what a run already persisted.
    */
   retriever?: Retriever
+  /**
+   * The brain map's read model (BRAIN-6). Injected so a test can freeze its
+   * clock and decide "stale" against a fixed instant; built from `dbConfig`
+   * otherwise.
+   */
+  brainMap?: BrainMap
+  /**
+   * The sources a person can link their own account at (NFR-4). A provider
+   * left out answers a configuration error when a link is started, rather than
+   * the routes being absent — so the permission suite always covers them.
+   */
+  identityProviders?: IdentityProviders
   /**
    * The model provider. Injected so a test never reaches a real one
    * (CLAUDE.md §4).
@@ -357,6 +374,8 @@ function buildRoutes(
   dispatch: (request: Request) => Promise<Response> = () => {
     throw new Error('MCP requests need the app to dispatch through; this table was built without one')
   },
+  brainMap?: BrainMap,
+  identityProviders?: IdentityProviders,
 ): {
   table: readonly RouteDefinition[]
   deps: AuthorisationDeps
@@ -390,6 +409,7 @@ function buildRoutes(
     table: [
       ...ROUTES,
       ...workspaceRoutes(workspaces),
+      ...workspaceExportRoutes(config, createWorkspaceExport(config), workspaces),
       ...teamRoutes(teams),
       ...apiTokenRoutes(tokens),
       ...repositoryRoutes(repositories),
@@ -415,6 +435,8 @@ function buildRoutes(
       ...sessionRoutes(createSessionService(config), turn, retriever),
       ...homeRoutes(createHomeService(config)),
       ...inboxRoutes(createInboxService(config, { entities: createEntityStore(config) })),
+      ...brainMapRoutes(brainMap ?? createBrainMap(config)),
+      ...linkedAccountRoutes(createLinkedAccountService(config), identityProviders ?? {}),
       // Mounted unconditionally so the permission suite covers it; it refuses
       // when no tracker push is wired (TASK-4).
       ...pushRoutes(
@@ -696,6 +718,8 @@ export function createApp(options: AppOptions = {}): Hono<AppEnv> {
           options.trackerWebhook,
           options.mcp,
           (request) => Promise.resolve(app.fetch(request)),
+          options.brainMap,
+          options.identityProviders,
         )
       : undefined
 

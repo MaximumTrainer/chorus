@@ -230,9 +230,19 @@ describe('INT-2 Linear connector', () => {
     expect(updated.state).toBe('processed')
     expect(created.deliveryId).not.toBe(updated.deliveryId)
 
-    // Both describe the same issue, so they deduplicate to one signal — which
-    // is correct, and different from the deliveries being deduplicated.
-    expect(await signalsIn(workspaceId)).toHaveLength(1)
+    // Both describe the same issue, and the update changed its title. Signals
+    // are append-only (BRAIN-1 AC3): the update is a new signal superseding the
+    // create, so the edit is kept rather than discarded as a duplicate, and the
+    // issue still has exactly one current version.
+    const versions = await db.admin.query<{ id: string; text: string; supersedes_id: string | null }>(
+      `SELECT id, text, supersedes_id FROM signals WHERE workspace_id = $1 ORDER BY ingested_at, id`,
+      [workspaceId],
+    )
+    expect(versions).toHaveLength(2)
+    expect(versions[1]!.supersedes_id).toBe(versions[0]!.id)
+    expect(versions[1]!.text).toContain('(again)')
+    const current = versions.filter((v) => !versions.some((newer) => newer.supersedes_id === v.id))
+    expect(current).toHaveLength(1)
   })
 
   it('INT-2: the same delivery twice is still one delivery', async () => {

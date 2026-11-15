@@ -116,6 +116,9 @@ importers:
       '@chorus/coding':
         specifier: workspace:*
         version: link:../../packages/coding
+      '@chorus/connectors':
+        specifier: workspace:*
+        version: link:../../packages/connectors
       '@chorus/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -254,6 +257,9 @@ importers:
       '@chorus/agent':
         specifier: workspace:*
         version: link:../../packages/agent
+      '@chorus/brain':
+        specifier: workspace:*
+        version: link:../../packages/brain
       '@chorus/connectors':
         specifier: workspace:*
         version: link:../../packages/connectors

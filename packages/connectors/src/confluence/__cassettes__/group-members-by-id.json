@@ -1,0 +1,33 @@
+{
+  "description": "NFR-4: a group's members by group id (space permissions name groups by id); the app account is left out.",
+  "interactions": [
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://confluence.test/api/wiki/rest/api/group/grp-eng-id/membersByGroupId?start=0&limit=200"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "results": [
+            {
+              "accountId": "acc-grace",
+              "accountType": "atlassian",
+              "displayName": "Grace Hopper",
+              "email": "grace@acme.test"
+            },
+            {
+              "accountId": "557058:bot",
+              "accountType": "app",
+              "displayName": "Automation"
+            }
+          ],
+          "start": 0,
+          "limit": 200,
+          "size": 2,
+          "_links": {}
+        }
+      }
+    }
+  ]
+}

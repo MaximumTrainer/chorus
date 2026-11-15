@@ -1,0 +1,123 @@
+{
+  "description": "NFR-4: groups named by restricted pages, plus a space a page is scoped to \u2014 readable by Ada directly and by the eng group (by id), which holds Grace.",
+  "interactions": [
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://confluence.test/api/wiki/rest/api/group/member?name=eng&start=0&limit=200"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "results": [
+            {
+              "accountId": "acc-grace",
+              "accountType": "atlassian",
+              "displayName": "Grace Hopper"
+            }
+          ],
+          "start": 0,
+          "limit": 200,
+          "size": 1,
+          "_links": {}
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://confluence.test/api/wiki/rest/api/group/member?name=finance&start=0&limit=200"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "results": [
+            {
+              "accountId": "acc-ada",
+              "accountType": "atlassian",
+              "displayName": "Ada Lovelace"
+            },
+            {
+              "accountId": "acc-bob",
+              "accountType": "atlassian",
+              "displayName": "Bob"
+            }
+          ],
+          "start": 0,
+          "limit": 200,
+          "size": 2,
+          "_links": {}
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://confluence.test/api/wiki/api/v2/spaces/98304/permissions?limit=250"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "results": [
+            {
+              "id": "1",
+              "principal": {
+                "type": "user",
+                "id": "acc-ada"
+              },
+              "operation": {
+                "key": "read",
+                "targetType": "space"
+              }
+            },
+            {
+              "id": "2",
+              "principal": {
+                "type": "group",
+                "id": "grp-eng-id"
+              },
+              "operation": {
+                "key": "read",
+                "targetType": "space"
+              }
+            },
+            {
+              "id": "3",
+              "principal": {
+                "type": "role",
+                "id": "role-x"
+              },
+              "operation": {
+                "key": "read",
+                "targetType": "space"
+              }
+            }
+          ],
+          "_links": {}
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://confluence.test/api/wiki/rest/api/group/grp-eng-id/membersByGroupId?start=0&limit=200"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "results": [
+            {
+              "accountId": "acc-grace",
+              "accountType": "atlassian",
+              "displayName": "Grace Hopper"
+            }
+          ],
+          "start": 0,
+          "limit": 200,
+          "size": 1,
+          "_links": {}
+        }
+      }
+    }
+  ]
+}

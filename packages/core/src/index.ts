@@ -43,8 +43,17 @@ export {
 export type { MasterKey, Keyring } from './envelope.js'
 export { CONNECTOR_KINDS, SignalSchema, SignalPermissionsSchema, parseSignal } from './signals.js'
 export { isVisibleTo } from './content-visibility.js'
-export { ENTITY_KINDS, EDGE_KINDS, EntityCandidateSchema, EdgeCandidateSchema, parseEntityCandidate } from './entities.js'
-export type { EntityKind, EntityCandidate, EdgeKind, EdgeCandidate } from './entities.js'
+export {
+  ENTITY_KINDS,
+  EDGE_KINDS,
+  EXTERNAL_AUTHORITY_KINDS,
+  EntityCandidateSchema,
+  EdgeCandidateSchema,
+  parseEntityCandidate,
+  isExternalAuthorityKind,
+  parseExternalUri,
+} from './entities.js'
+export type { EntityKind, EntityCandidate, EdgeKind, EdgeCandidate, ExternalAuthorityKind } from './entities.js'
 export type { ConnectorKind, Signal, SignalPermissions } from './signals.js'
 export type {
   Tool,
@@ -120,14 +129,16 @@ export type { RedactionLevel, RedactedBody } from './redaction.js'
 // Exported so the pre-commit scanner can share this definition rather than
 // keep a second one that drifts (test/nfr/pre-commit.test.ts pins them equal).
 export { SECRET_PATTERNS, HIGH_CONFIDENCE_SECRET_PATTERNS } from './redaction.js'
-export { RETRIEVABLE_KINDS, DEFAULT_RETRIEVAL_KINDS, SearchRequestSchema } from './retrieval.js'
-export type { SearchRequest } from './retrieval.js'
+export { RETRIEVABLE_KINDS, SEARCHABLE_KINDS, DEFAULT_RETRIEVAL_KINDS, SearchRequestSchema } from './retrieval.js'
+export type { SearchRequest, SearchableKind } from './retrieval.js'
 export type {
   RetrievableKind,
   RetrieveQuery,
   Fragment,
   CodeFragment,
   ArtefactFragment,
+  EntityFragment,
+  SignalFragment,
   ContextBundle,
   Retriever,
 } from './retrieval.js'
@@ -297,4 +308,6 @@ export type {
 export { resolveArtefactReference } from './artefact-reference.js'
 export type { ArtefactCandidate, ReferenceResolution } from './artefact-reference.js'
 export { ChatActionSchema } from './chat-actions.js'
+export { LINKABLE_PROVIDERS, PROVIDER_SCOPE_SOURCES, isLinkableProvider } from './identity.js'
+export type { ExternalIdentityProvider, LinkableProvider } from './identity.js'
 export type { ChatAction } from './chat-actions.js'

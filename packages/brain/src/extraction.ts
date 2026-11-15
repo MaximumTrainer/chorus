@@ -1,4 +1,4 @@
-import type { EdgeCandidate, EntityCandidate } from '@chorus/core'
+import { isExternalAuthorityKind, type EdgeCandidate, type EntityCandidate } from '@chorus/core'
 import type { EntityStore } from './entities.js'
 
 /**
@@ -28,6 +28,10 @@ export interface IngestOutcome {
   readonly created: number
   readonly reviewItems: number
   readonly edges: number
+  /** Candidates that resolved to an existing external-authority entity (BRAIN-11 AC2). */
+  readonly linkedExternal: number
+  /** Operational-kind candidates the extractor invented with no external entity behind them, dropped. */
+  readonly unresolvedExternal: number
 }
 
 export interface ExtractionIngestor {
@@ -41,12 +45,33 @@ export function createExtractionIngestor(store: EntityStore): ExtractionIngestor
       let created = 0
       let reviewItems = 0
       let edges = 0
+      let linkedExternal = 0
+      let unresolvedExternal = 0
 
       // Where each candidate's external id ended up — the existing entity it
       // merged into, or the new one it became — so edges can resolve endpoints.
       const resolved = new Map<string, string>()
 
       for (const candidate of batch.entities) {
+        // BRAIN-11 AC2: the extractor may link to an external-authority entity
+        // but never create, merge or contradict one. A candidate naming an
+        // existing external entity resolves to it — so the batch's edges point
+        // at the owning graph's node rather than a brain-minted duplicate — and
+        // no new entity is made.
+        const external = await store.findExternalByName(workspaceId, candidate.name)
+        if (external) {
+          resolved.set(candidate.externalId, external.entityId)
+          linkedExternal += 1
+          continue
+        }
+        // An operational kind the model invented, with no external graph behind
+        // it, is dropped rather than minted — a brain-authored service is exactly
+        // the duplicate AC2 exists to prevent — and counted so the gap is seen.
+        if (isExternalAuthorityKind(candidate.kind)) {
+          unresolvedExternal += 1
+          continue
+        }
+
         const match = await store.resolveByName({
           workspaceId,
           kind: candidate.kind,
@@ -111,7 +136,7 @@ export function createExtractionIngestor(store: EntityStore): ExtractionIngestor
         edges += 1
       }
 
-      return { merged, created, reviewItems, edges }
+      return { merged, created, reviewItems, edges, linkedExternal, unresolvedExternal }
     },
   }
 }

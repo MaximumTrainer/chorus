@@ -1,0 +1,17 @@
+{
+  "description": "NFR-4: Confluence fails while reading a group; nothing may change.",
+  "interactions": [
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://confluence.test/api/wiki/rest/api/group/member?name=eng&start=0&limit=200"
+      },
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "Internal server error"
+        }
+      }
+    }
+  ]
+}

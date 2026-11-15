@@ -1,10 +1,10 @@
 import {
   RateLimitedError,
   parseSignal,
-  ulid,
   type Signal,
 } from '@chorus/core'
 import { withTenant, type DbConfig, type TenantTx } from '@chorus/db'
+import { writeSignal } from './signal-store.js'
 import type { Connector, ConnectorContext, HealthStatus } from './contract.js'
 import type { CredentialStore } from './credentials.js'
 
@@ -99,9 +99,9 @@ export function createSyncRunner(
   /**
    * Writes one page and its cursor, atomically.
    *
-   * `ON CONFLICT DO NOTHING` makes ingestion idempotent in the database rather
-   * than by a read-then-write in the application, which is a race the moment a
-   * sync and a webhook delivery arrive together.
+   * Each signal goes through `writeSignal`, which stores unchanged content once
+   * and a changed item as a new, superseding version (BRAIN-1 AC2, AC3), with
+   * the item's current version locked while it compares.
    */
   async function commitPage(
     workspaceId: string,
@@ -114,29 +114,8 @@ export function createSyncRunner(
       let ingested = 0
 
       for (const signal of signals) {
-        const written = await t.execute(
-          `INSERT INTO signals
-             (id, workspace_id, integration_id, source, external_id, kind, text, structured,
-              author, author_display, occurred_at, url, permissions, raw)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-           ON CONFLICT (integration_id, external_id, kind) DO NOTHING`,
-          [
-            ulid(),
-            workspaceId,
-            integrationId,
-            source,
-            signal.externalId,
-            signal.kind,
-            signal.text,
-            JSON.stringify(signal.structured ?? null),
-            signal.author?.externalId ?? null,
-            signal.author?.display ?? null,
-            signal.occurredAt,
-            signal.url,
-            JSON.stringify(signal.permissions),
-            JSON.stringify(signal.raw ?? null),
-          ],
-        )
+        const outcome = await writeSignal(t, { workspaceId, integrationId, source, signal })
+        const written = outcome === 'written' ? 1 : 0
         ingested += written
       }
 
