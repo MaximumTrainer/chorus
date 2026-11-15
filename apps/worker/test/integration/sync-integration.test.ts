@@ -38,6 +38,9 @@ describe('BRAIN-1 scheduled ingestion', () => {
   let store: CredentialStore
   let worker: RunningWorker
   const reference = createReferenceConnector()
+  // What the embedding provider was asked, call by call (BRAIN-1 AC6).
+  const fakeModels = createFakeModelProvider()
+  const embedCalls: string[][] = []
 
   const items = (count: number): ReferenceItem[] =>
     Array.from({ length: count }, (_, i) => ({
@@ -67,6 +70,13 @@ describe('BRAIN-1 scheduled ingestion', () => {
         now: () => T0,
         // One page per run, so a five-item backfill takes several jobs (AC5).
         maxPagesPerRun: 1,
+        embedding: {
+          model: 'fake-embed',
+          embed: async (texts) => {
+            embedCalls.push([...texts])
+            return texts.map((t) => fakeModels.embedText(t))
+          },
+        },
       },
     })
   }, 180_000)
@@ -161,6 +171,28 @@ describe('BRAIN-1 scheduled ingestion', () => {
     expect(pulls).toHaveLength(3)
     expect(new Set(pulls.map(String)).size).toBe(3)
     expect((await signalsIn(w.workspaceId)).length).toBe(5)
+  })
+
+  it('BRAIN-1 AC6 / AC2: a sync embeds new content; the next interval, with nothing new, asks the provider for nothing', async () => {
+    reference.script({ items: items(2), pageSize: 2 })
+    const w = await connected()
+    const before = embedCalls.flat().length
+
+    await scheduler().tick(T0)
+    await queue.drain(SYNC_INTEGRATION_QUEUE)
+    const embedded = embedCalls.flat().slice(before)
+    expect(embedded.sort()).toEqual(items(2).map((i) => i.text).sort())
+    const [cached] = await db.admin.query<{ n: string }>(
+      `SELECT count(*) AS n FROM embedding_cache WHERE workspace_id = $1 AND model = 'fake-embed'`,
+      [w.workspaceId],
+    )
+    expect(Number(cached!.n)).toBe(2)
+
+    const afterFirst = embedCalls.flat().length
+    await db.admin.execute(`UPDATE integrations SET sync_cursor = NULL WHERE id = $1`, [w.integrationId])
+    await scheduler().tick(new Date(T0.getTime() + INTERVAL))
+    await queue.drain(SYNC_INTEGRATION_QUEUE)
+    expect(embedCalls.flat().length, 'unchanged content costs no provider call').toBe(afterFirst)
   })
 
   it('BRAIN-1 AC2: a second tick in the same interval runs no second sync; the next interval adds no duplicates', async () => {
