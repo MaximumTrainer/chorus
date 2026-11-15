@@ -77,6 +77,18 @@ Descend one layer only when the current failing test cannot be made to pass by a
 
 If you need a behaviour a fake does not have, extend the fake — do not stub around it in your test file.
 
+### Live verification of external APIs
+
+Fakes and cassettes are only as true as the API they imitate, and a hand-written cassette proves nothing about the real one. So:
+
+> **No issue whose behaviour depends on an external API may be signed off until that behaviour has been verified against the live API, with contract tests replaying what the live API actually returned.**
+
+- **Record, don't write.** The contract test's cassette is captured from the live API with `cassetteRecorder` (`@chorus/connectors/testing`), redacted, and committed. A cassette typed by hand, or edited beyond redaction, does not count.
+- **Contract tests assert the behaviour, not just the shape.** They replay the recorded cassette through the real connector/adapter and assert the outcome the acceptance criteria name (pagination followed, permissions mapped, errors classified), tagged with the requirement id.
+- **The live run is deliberate, not part of the suite.** Recording needs real credentials, so it is an explicit, opt-in run against a test tenant (gated by `CHORUS_LIVE_*` environment variables and skipped otherwise). The normal suite still never calls a real host (above); it replays the recording.
+- **The evidence goes on the issue.** When signing off, state which API and tenant was used, when it was recorded, and which contract tests replay it. Until then the issue stays open, however green the build, and the gap is recorded on it.
+- Where no live tenant is available, the issue cannot be closed: say so on the issue and file the verification as its own issue rather than closing on the strength of a fake.
+
 ---
 
 ## 5. How to write the tests
@@ -167,6 +179,7 @@ A change is done when **all** of the following are true:
 - [ ] Typecheck, lint, dependency-boundary check and the full test suite pass locally.
 - [ ] `architecture.md` and/or an ADR is updated if a recorded decision changed.
 - [ ] The pull request states which test proves the requirement, and lists what was deliberately left out.
+- [ ] If the behaviour depends on an external API, it was verified against the live API and contract tests replay a cassette recorded from it (§4, *Live verification of external APIs*). An issue is not signed off without this.
 - [ ] No test was skipped, weakened or deleted to achieve green.
 
 ---
