@@ -1432,7 +1432,7 @@ These are shipped code in `packages/testing`, not per-test improvisation, becaus
 - **`FakeGitHost`** — an in-process implementation of the subset of the git host used (clone source, branch, PR create, comment, deployments, webhooks) that can emit webhooks back into the API.
 - **`FakeChatSurface`** — implements `ChatSurface`, captures rendered `RichMessage` payloads, and can fire mention, reaction and action events.
 - **`FakeSandbox`** — implements the `Sandbox` contract, applies a scripted diff and emits scripted job events without a container; the real Docker driver is exercised separately in a tagged suite.
-- **Connector cassettes** — recorded HTTP interactions per connector, redacted, checked in under `packages/connectors/<kind>/__cassettes__/`.
+- **Connector cassettes** — recorded HTTP interactions per connector, redacted, checked in under `packages/connectors/<kind>/__cassettes__/`. A cassette must be *recorded* from the live API (`cassetteRecorder`, in a deliberate opt-in run against a test tenant), never written by hand: an issue whose behaviour depends on an external API is not signed off until it has been verified live and its contract tests replay that recording (`CLAUDE.md` §4, §8). The normal suite replays and never calls a real host.
 - **World builder** — `aWorkspace().withTeam().withRepo(fixture).withTasks(…).build()`, giving readable arrange blocks and consistent tenancy setup.
 
 ### 23.4 Determinism rules
