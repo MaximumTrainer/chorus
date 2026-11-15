@@ -74,6 +74,8 @@ import { inboxRoutes } from './inbox-routes.js'
 import { brainMapRoutes } from './brain-map-routes.js'
 import { workspaceExportRoutes } from './workspace-export-routes.js'
 import { createWorkspaceExport } from './workspace-export.js'
+import { workspaceErasureRoutes } from './workspace-erasure-routes.js'
+import { createWorkspaceErasure } from './workspace-erasure.js'
 import { linkedAccountRoutes, type IdentityProviders } from './linked-account-routes.js'
 import { createLinkedAccountService } from './linked-accounts.js'
 import { createNotifier } from '@chorus/notifications'
@@ -410,6 +412,7 @@ function buildRoutes(
       ...ROUTES,
       ...workspaceRoutes(workspaces),
       ...workspaceExportRoutes(config, createWorkspaceExport(config), workspaces),
+      ...workspaceErasureRoutes(createWorkspaceErasure(config), workspaces),
       ...teamRoutes(teams),
       ...apiTokenRoutes(tokens),
       ...repositoryRoutes(repositories),
