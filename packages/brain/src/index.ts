@@ -345,6 +345,37 @@ export const SIGNAL_SEARCH_SQL = `SELECT s.id, s.source, s.kind, s.text, s.url
   ORDER BY ts_rank(s.search, to_tsquery('simple', $1)) DESC, s.id
   LIMIT $3`
 
+/**
+ * The signal vector half (BRAIN-4; vectors from BRAIN-1 AC6).
+ *
+ * Signals are immutable, so their vectors live in the workspace's
+ * `embedding_cache`, one per (model, text hash). The nearest cached vectors are
+ * found through the HNSW index — ordered by distance and limited inside the
+ * subquery, so the index is what does the work — and joined back to signals by
+ * hash. The same two rules as the lexical half are then applied in this query:
+ * the caller may see the signal, and it is its item's current version. The
+ * nearest vectors are taken before the permission filter, so content the
+ * caller cannot see can crowd out what they can (lower recall); it can never be
+ * returned or counted.
+ *
+ * `$1` query vector, `$2` model, `$3` candidate limit, `$4` distance ceiling,
+ * `$5` the caller's scope ids.
+ */
+export const SIGNAL_VECTOR_SQL = `SELECT s.id, s.source, s.kind, s.text, s.url
+   FROM (
+     SELECT c.content_hash, (c.embedding <=> $1::vector) AS distance
+       FROM embedding_cache c
+      WHERE c.model = $2
+      ORDER BY c.embedding <=> $1::vector
+      LIMIT $3
+   ) ranked
+   JOIN signals s ON s.content_hash = ranked.content_hash
+  WHERE ranked.distance < $4
+    AND (s.permissions->>'visibility' = 'public' OR s.permissions->'scopeIds' ?| $5::text[])
+    AND NOT EXISTS (SELECT 1 FROM signals newer WHERE newer.supersedes_id = s.id)
+  ORDER BY ranked.distance, s.id
+  LIMIT $3`
+
 interface SignalRow {
   id: string
   source: string
@@ -521,15 +552,23 @@ export function createRetriever(config: DbConfig, options: RetrieverOptions): Re
       // The caller's scopes are the ones they hold (NFR-4), resolved here from
       // their user id in the same transaction — so chat, search, MCP and any
       // workflow get the same answer without having to pass them.
-      const signals = kinds.includes('signal')
-        ? await tx(query.workspaceId, async (t) =>
-            t.query<SignalRow>(SIGNAL_SEARCH_SQL, [
-              anyTermQuery(query.query),
-              await resolveViewerScopes(t, query.userId, query.viewerScopeIds),
-              candidates,
-            ]),
-          )
-        : []
+      const [signals, signalVectors] = kinds.includes('signal')
+        ? await tx(query.workspaceId, async (t) => {
+            const scopes = await resolveViewerScopes(t, query.userId, query.viewerScopeIds)
+            const lexicalRows = await t.query<SignalRow>(SIGNAL_SEARCH_SQL, [anyTermQuery(query.query), scopes, candidates])
+            const embedding = await embed(query.query)
+            const vectorRows = embedding
+              ? await t.query<SignalRow>(SIGNAL_VECTOR_SQL, [
+                  `[${embedding.join(',')}]`,
+                  options.embeddingModel.model,
+                  candidates,
+                  MAX_COSINE_DISTANCE,
+                  scopes,
+                ])
+              : []
+            return [lexicalRows, vectorRows] as const
+          })
+        : ([[], []] as const)
 
       const [lexical, vector] = !kinds.includes('code')
         ? ([[], []] as const)
@@ -570,7 +609,7 @@ export function createRetriever(config: DbConfig, options: RetrieverOptions): Re
       for (const row of [...lexical, ...vector]) byId.set(row.id, row)
       const artefactById = new Map(artefacts.map((row) => [`${row.kind}:${row.id}`, row]))
       const entityById = new Map(entities.map((row) => [row.id, row]))
-      const signalById = new Map(signals.map((row) => [row.id, row]))
+      const signalById = new Map([...signals, ...signalVectors].map((row) => [row.id, row]))
 
       // Code is fused across its two searches. Artefacts and entities each come
       // from one search, ranked on their own. All are on the same reciprocal-rank
@@ -585,7 +624,13 @@ export function createRetriever(config: DbConfig, options: RetrieverOptions): Re
         { limit: k },
       )
       const entityFused = fuse({ lexical: entities.map((r) => ({ id: r.id })) }, { limit: k })
-      const signalFused = fuse({ lexical: signals.map((r) => ({ id: r.id })) }, { limit: k })
+      const signalFused = fuse(
+        {
+          lexical: signals.map((r) => ({ id: r.id })),
+          vector: signalVectors.map((r) => ({ id: r.id })),
+        },
+        { limit: k },
+      )
       const ranked = [
         ...codeFused.map((entry) => ({ entry, kind: 'code' as const })),
         ...artefactFused.map((entry) => ({ entry, kind: 'artefact' as const })),
@@ -793,5 +838,7 @@ export type {
 } from './brain-map.js'
 export { createScopeMemberships, heldScopes } from './scope-memberships.js'
 export type { ScopeMemberships } from './scope-memberships.js'
+export { createSignalEmbedder } from './signal-embeddings.js'
+export type { SignalEmbedder, SignalEmbed } from './signal-embeddings.js'
 export { createWikiMirror } from './wiki-mirror.js'
 export type { WikiMirror, WikiMirrorTarget, WikiMirrorPage, WikiMirrorResult } from './wiki-mirror.js'

@@ -378,6 +378,11 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
         [ulid(), workspaceId, userId, `seed-scope-${workspaceId}`],
       )
       await owner.query(
+        `INSERT INTO embedding_cache (id, workspace_id, model, content_hash, embedding)
+         VALUES ($1, $2, 'seed-model', $3, ('[' || array_to_string(array_fill(0.01::float8, ARRAY[1536]), ',') || ']')::vector)`,
+        [ulid(), workspaceId, `seed-hash-${workspaceId}`],
+      )
+      await owner.query(
         `INSERT INTO linked_accounts (id, workspace_id, user_id, provider, account_id)
          VALUES ($1, $2, $3, 'atlassian', $4)`,
         [ulid(), workspaceId, userId, `seed-account-${workspaceId}`],
@@ -930,6 +935,14 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
                (id, workspace_id, document_id, external_kind, external_id)
              VALUES ($1, $2, $3, 'confluence:page', $4)`,
             [id, workspaceId, document?.id ?? id, `ext-${id}`],
+          )
+          return
+        }
+        case 'embedding_cache': {
+          await tx.execute(
+            `INSERT INTO embedding_cache (id, workspace_id, model, content_hash, embedding)
+             VALUES ($1, $2, 'model', $3, ('[' || array_to_string(array_fill(0.01::float8, ARRAY[1536]), ',') || ']')::vector)`,
+            [id, workspaceId, `hash-${id}`],
           )
           return
         }
