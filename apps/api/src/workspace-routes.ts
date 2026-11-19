@@ -1,8 +1,11 @@
 import {
   REDACTION_LEVELS,
+  RETENTION_CLASSES,
   ROLES,
   ValidationError,
   isRedactionLevel,
+  isRetentionClass,
+  parseRetentionDays,
   type Role,
 } from '@chorus/core'
 import { route, type RouteDefinition } from './routes.js'
@@ -61,6 +64,39 @@ export function workspaceRoutes(workspaces: WorkspaceService): RouteDefinition[]
         const workspaceId = c.req.param('workspaceId')
         await workspaces.setRedactionLevel(workspaceId, caller(c).userId, body.level)
         return c.json({ level: await workspaces.redactionLevel(workspaceId) })
+      },
+    }),
+
+    route({
+      method: 'GET',
+      path: '/workspaces/:workspaceId/retention',
+      summary: 'Read how many days each data class is kept before it is purged (null keeps it).',
+      auth: { kind: 'workspace', role: 'member', scopes: ['read:artefacts'] },
+      handler: async (c) => c.json(await workspaces.retention(c.req.param('workspaceId'))),
+    }),
+
+    route({
+      method: 'PUT',
+      path: '/workspaces/:workspaceId/retention/:dataClass',
+      summary: 'Set how many days one data class is kept before it is purged, or null to keep it.',
+      // Owner and session-only, like redaction: a period decides what is kept
+      // about everyone's work, and shortening one deletes data at the next
+      // purge with no way back.
+      auth: { kind: 'workspace', role: 'owner', scopes: ['write:artefacts'], sessionOnly: true },
+      handler: async (c) => {
+        const dataClass = c.req.param('dataClass')
+        if (!isRetentionClass(dataClass)) {
+          throw new ValidationError(
+            `dataClass must be one of: ${RETENTION_CLASSES.join(', ')}`,
+            { field: 'dataClass' },
+          )
+        }
+        const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
+        const days = parseRetentionDays(body.days)
+
+        const workspaceId = c.req.param('workspaceId')
+        await workspaces.setRetention(workspaceId, caller(c).userId, dataClass, days)
+        return c.json(await workspaces.retention(workspaceId))
       },
     }),
 

@@ -10,6 +10,8 @@ import {
   ulid,
   type Role,
   type RedactionLevel,
+  type RetentionClass,
+  RETENTION_CLASSES,
 } from '@chorus/core'
 import { mutate, withTenant, type DbConfig, type TenantTx } from '@chorus/db'
 
@@ -50,6 +52,14 @@ export interface WorkspaceService {
   /** How much of a prompt or response body this workspace retains (NFR-11). */
   redactionLevel(workspaceId: string): Promise<RedactionLevel>
   setRedactionLevel(workspaceId: string, actorId: string, level: RedactionLevel): Promise<void>
+  /** Days each data class is kept before the purge removes it; null keeps it (NFR-4 AC3). */
+  retention(workspaceId: string): Promise<Record<RetentionClass, number | null>>
+  setRetention(
+    workspaceId: string,
+    actorId: string,
+    dataClass: RetentionClass,
+    days: number | null,
+  ): Promise<void>
 }
 
 export function createWorkspaceService(config: DbConfig): WorkspaceService {
@@ -358,6 +368,54 @@ export function createWorkspaceService(config: DbConfig): WorkspaceService {
               await t.execute(
                 `UPDATE workspaces SET redaction_level = $1, updated_at = now() WHERE id = $2`,
                 [level, workspaceId],
+              )
+            },
+          }),
+        actorId,
+      )
+    },
+
+    async retention(workspaceId) {
+      const rows = await tx(workspaceId, (t) =>
+        t.query<{ data_class: RetentionClass; days: number }>(
+          `SELECT data_class, days FROM retention_policies`,
+        ),
+      )
+      const periods = Object.fromEntries(RETENTION_CLASSES.map((name) => [name, null])) as Record<
+        RetentionClass,
+        number | null
+      >
+      for (const row of rows) periods[row.data_class] = row.days
+      return periods
+    },
+
+    async setRetention(workspaceId, actorId, dataClass, days) {
+      const before = (await this.retention(workspaceId))[dataClass]
+
+      await tx(
+        workspaceId,
+        async (t) =>
+          mutate(t, {
+            workspaceId,
+            actor: { type: 'user', id: actorId },
+            // Shortening a period is the change that deletes data at the next
+            // purge, so the record names both sides of it.
+            action: 'workspace.retention.set',
+            targetType: 'retention_policy',
+            targetId: dataClass,
+            before: { dataClass, days: before },
+            after: { dataClass, days },
+            apply: async () => {
+              if (days === null) {
+                await t.execute(`DELETE FROM retention_policies WHERE data_class = $1`, [dataClass])
+                return
+              }
+              await t.execute(
+                `INSERT INTO retention_policies (workspace_id, data_class, days, updated_by)
+                 VALUES ($1, $2, $3, $4)
+                 ON CONFLICT (workspace_id, data_class)
+                 DO UPDATE SET days = EXCLUDED.days, updated_by = EXCLUDED.updated_by, updated_at = now()`,
+                [workspaceId, dataClass, days, actorId],
               )
             },
           }),

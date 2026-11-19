@@ -470,6 +470,11 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
         [ulid(), workspaceId, integrationId],
       )
       await owner.query(
+        `INSERT INTO retention_policies (workspace_id, data_class, days, updated_by)
+         VALUES ($1, 'run_traces', 365, $2)`,
+        [workspaceId, userId],
+      )
+      await owner.query(
         `INSERT INTO audit_events (id, workspace_id, actor_type, actor_id, action, target_type, target_id)
          VALUES ($1, $2, 'user', $3, 'seed', 'workspace', $2)`,
         [ulid(), workspaceId, userId],
@@ -1006,6 +1011,14 @@ export async function connectAdmin(config: DbConfig = configFromEnv()): Promise<
             `INSERT INTO idempotency_keys (id, workspace_id, user_id, key, request_hash)
              VALUES ($1, $2, $3, $1, 'seed')`,
             [id, workspaceId, userId],
+          )
+          return
+        case 'retention_policies':
+          await tx.execute(
+            `INSERT INTO retention_policies (workspace_id, data_class, days, updated_by)
+             VALUES ($1, 'prompts', 30, $2)
+             ON CONFLICT (workspace_id, data_class) DO NOTHING`,
+            [workspaceId, userId],
           )
           return
         case 'spend_limits':

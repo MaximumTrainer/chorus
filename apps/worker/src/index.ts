@@ -13,3 +13,5 @@ export type {
 } from './consumers/index-repository.js'
 export { createGitRepositoryAccess } from './access.js'
 export type { GitAccessDeps } from './access.js'
+export { createRetentionPurge } from './retention-purge.js'
+export type { RetentionPurge } from './retention-purge.js'

@@ -129,6 +129,14 @@ export type { RedactionLevel, RedactedBody } from './redaction.js'
 // Exported so the pre-commit scanner can share this definition rather than
 // keep a second one that drifts (test/nfr/pre-commit.test.ts pins them equal).
 export { SECRET_PATTERNS, HIGH_CONFIDENCE_SECRET_PATTERNS } from './redaction.js'
+export {
+  RETENTION_CLASSES,
+  MAX_RETENTION_DAYS,
+  isRetentionClass,
+  parseRetentionDays,
+  retentionCutoff,
+} from './retention.js'
+export type { RetentionClass } from './retention.js'
 export { RETRIEVABLE_KINDS, SEARCHABLE_KINDS, DEFAULT_RETRIEVAL_KINDS, SearchRequestSchema } from './retrieval.js'
 export type { SearchRequest, SearchableKind } from './retrieval.js'
 export type {
