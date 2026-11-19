@@ -466,10 +466,13 @@ function buildRoutes(
             ? {
                 pointers: createPointerService(
                   config,
-                  createRetriever(config, {
-                    models,
-                    embeddingModel: { provider: 'unconfigured', model: 'unconfigured' },
-                  }),
+                  // The deployment's retriever when it has one, so pointers
+                  // embed with the configured embed-tier model.
+                  retriever ??
+                    createRetriever(config, {
+                      models,
+                      embeddingModel: { provider: 'unconfigured', model: 'unconfigured' },
+                    }),
                 ),
               }
             : {}),
@@ -481,10 +484,11 @@ function buildRoutes(
         ? pointerRoutes(
             createPointerService(
               config,
-              createRetriever(config, {
-                models,
-                embeddingModel: { provider: 'unconfigured', model: 'unconfigured' },
-              }),
+              retriever ??
+                createRetriever(config, {
+                  models,
+                  embeddingModel: { provider: 'unconfigured', model: 'unconfigured' },
+                }),
             ),
           )
         : []),
