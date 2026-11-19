@@ -1,8 +1,6 @@
 import { serve } from '@hono/node-server'
-import { createAtlassianIdentity } from '@chorus/connectors'
-import { configFromEnv } from '@chorus/db'
 import { initTelemetry } from '@chorus/telemetry'
-import { createApp } from './app.js'
+import { createAppFromEnvironment } from './compose.js'
 
 /**
  * The API process entrypoint (architecture.md §6).
@@ -17,26 +15,7 @@ initTelemetry({ serviceName: 'chorus-api' })
 
 const port = Number(process.env.CHORUS_PORT ?? 3000)
 
-// Linking a person's own Atlassian account (NFR-4) needs an Atlassian OAuth app.
-// Without one the routes still exist and answer that linking is not configured.
-const atlassianClientId = process.env.CHORUS_ATLASSIAN_CLIENT_ID
-const atlassianClientSecret = process.env.CHORUS_ATLASSIAN_CLIENT_SECRET
-
-const app = createApp({
-  dbConfig: configFromEnv(),
-  baseUrl: process.env.CHORUS_BASE_URL ?? `http://localhost:${port}`,
-  // Empty unless a deployment names them. Behind one reverse proxy the web app
-  // shares this origin and needs none; on separate hosts it does, and guessing
-  // would make every authenticated route callable by any page.
-  webOrigins: (process.env.CHORUS_WEB_ORIGINS ?? '')
-    .split(',')
-    .map((origin) => origin.trim())
-    .filter((origin) => origin !== ''),
-  identityProviders:
-    atlassianClientId && atlassianClientSecret
-      ? { atlassian: createAtlassianIdentity({ clientId: atlassianClientId, clientSecret: atlassianClientSecret }) }
-      : {},
-})
+const app = createAppFromEnvironment(process.env)
 
 const server = serve({ fetch: app.fetch, port }, (info) => {
   console.warn(JSON.stringify({ level: 'info', message: 'api listening', port: info.port }))
