@@ -18,6 +18,7 @@ import { initTelemetry, shutdownTelemetry } from '@chorus/telemetry'
 import { createGitRepositoryAccess } from './access.js'
 import { createWorker } from './worker.js'
 import { createSyncScheduler } from './sync-scheduler.js'
+import { createRetentionPurge } from './retention-purge.js'
 
 /**
  * The worker process entrypoint (architecture.md §6).
@@ -193,6 +194,20 @@ async function main(): Promise<void> {
   const ticker = setInterval(tick, positiveInt('CHORUS_SYNC_TICK_SECONDS', 60) * 1_000)
   tick()
 
+  // Retention (NFR-4 AC3). Periods are in days, so an hourly pass is precise
+  // enough, and the purge is idempotent: a pass that overlaps the next or runs
+  // twice removes nothing twice and records nothing twice.
+  const retention = createRetentionPurge({ dbConfig })
+  const purge = (): void => {
+    retention.run(new Date()).catch((error: unknown) => {
+      console.warn(
+        JSON.stringify({ level: 'error', message: 'retention purge failed', error: (error as Error).message }),
+      )
+    })
+  }
+  const purger = setInterval(purge, positiveInt('CHORUS_RETENTION_PURGE_MINUTES', 60) * 60_000)
+  purge()
+
   const beat = setInterval(() => {
     writeFileSync(HEARTBEAT, new Date().toISOString(), 'utf8')
   }, 5_000)
@@ -211,6 +226,7 @@ async function main(): Promise<void> {
     console.warn(JSON.stringify({ level: 'info', message: 'worker stopping', signal }))
     clearInterval(beat)
     clearInterval(ticker)
+    clearInterval(purger)
     // Flushed before exit: a batch of spans still in memory when the process
     // ends is a trace that stops mid-run for no visible reason.
     await shutdownTelemetry()

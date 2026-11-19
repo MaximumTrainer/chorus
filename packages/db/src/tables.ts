@@ -37,6 +37,7 @@ export const TENANT_TABLES = [
   'coding_jobs',
   'spend_ledger',
   'spend_limits',
+  'retention_policies',
   'idempotency_keys',
   'context_bundles',
   'tasks',
