@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ulid } from '@chorus/core'
 import { createIsolatedDatabase, type DbConfig, type IsolatedDatabase } from '@chorus/db'
+import { startFakeSmtpServer } from '@chorus/testing'
 import { createAppFromEnvironment } from '../../src/compose.js'
 
 /**
@@ -72,6 +73,37 @@ describe('NFR-1 a deployment configured only from its environment', () => {
 
     const workspace = await app.request('/workspaces', json({ name: 'First workspace' }, cookie!))
     expect(workspace.status, await workspace.clone().text()).toBe(201)
+  })
+
+  it('NFR-1 AC1: with CHORUS_SMTP_URL set, sign-up mail is delivered over SMTP and not written to the log', async () => {
+    // Given a deployment configured with an SMTP relay and a sender address
+    const smtp = await startFakeSmtpServer()
+    try {
+      const lines: string[] = []
+      const app = createAppFromEnvironment(
+        { ...environmentFor(db.config), CHORUS_SMTP_URL: smtp.url, CHORUS_MAIL_FROM: 'Chorus <chorus@acme.test>' },
+        { log: (line) => lines.push(line) },
+      )
+
+      // When someone signs up
+      const email = 'mailed@example.test'
+      const signUp = await app.request(
+        '/auth/sign-up/email',
+        json({ email, password: 'correct-horse-battery-staple', name: 'Mailed' }),
+      )
+      expect(signUp.status, await signUp.clone().text()).toBe(200)
+
+      // Then the relay received the verification email, from the configured sender, carrying the link
+      expect(smtp.received).toHaveLength(1)
+      const [mail] = smtp.received
+      expect(mail).toMatchObject({ from: 'chorus@acme.test', to: [email] })
+      expect(mail!.raw.replace(/=\r\n/g, '')).toContain('http://chorus.test/auth/verify-email?token=')
+
+      // and nothing about it was written to the log, where the link does not belong
+      expect(lines.some((line) => line.includes(email))).toBe(false)
+    } finally {
+      await smtp.close()
+    }
   })
 
   /**

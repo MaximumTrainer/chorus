@@ -9,6 +9,9 @@ export type { SourceFile, BoundaryViolation, BoundaryRule } from './boundaries.j
 export { createRecordingMailer } from './fakes/mailer.js'
 export type { Mailer, RecordingMailer, SentMail } from './fakes/mailer.js'
 
+export { startFakeSmtpServer } from './fakes/smtp-server.js'
+export type { FakeSmtpServer, ReceivedMail } from './fakes/smtp-server.js'
+
 export { startStubOidcProvider } from './fakes/oidc-provider.js'
 export type { StubOidcProvider, StubOidcUser } from './fakes/oidc-provider.js'
 
