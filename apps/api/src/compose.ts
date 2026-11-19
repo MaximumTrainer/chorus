@@ -4,6 +4,7 @@ import { configFromEnv } from '@chorus/db'
 import { providersFromEnv, routerConfigFromEnv } from '@chorus/llm'
 import { createApp } from './app.js'
 import { createLogMailer } from './log-mailer.js'
+import { createSmtpMailer } from './smtp-mailer.js'
 
 /**
  * The API as a deployment builds it: from `CHORUS_*` variables and nothing
@@ -42,14 +43,33 @@ export function createAppFromEnvironment(env: NodeJS.ProcessEnv, deps: Compositi
     ? createRetriever(dbConfig, { models: models!, embeddingModel: routerConfigFromEnv(env).embed[0]!.ref })
     : undefined
 
+  // Without a transport `/auth/*` is not mounted, and a fresh install is one
+  // nobody can sign in to. SMTP when configured (ADR-0025); otherwise the log,
+  // which is the transport every deployment has, and the operator is told so
+  // once at boot as well as on every message.
+  const baseUrl = env.CHORUS_BASE_URL ?? `http://localhost:${port}`
+  const smtpUrl = env.CHORUS_SMTP_URL?.trim()
+  const mailer = smtpUrl
+    ? createSmtpMailer({
+        url: smtpUrl,
+        from: env.CHORUS_MAIL_FROM?.trim() || `Chorus <no-reply@${new URL(baseUrl).hostname}>`,
+      })
+    : createLogMailer(log)
+  if (!smtpUrl) {
+    log(
+      JSON.stringify({
+        level: 'warn',
+        message: 'CHORUS_SMTP_URL is not set: email, including sign-up links, is written to this log instead of sent',
+      }),
+    )
+  }
+
   return createApp({
     dbConfig,
     ...(models ? { models } : {}),
     ...(retriever ? { retriever } : {}),
-    // Without a transport `/auth/*` is not mounted, and a fresh install is one
-    // nobody can sign in to. The log is the transport every deployment has.
-    mailer: createLogMailer(log),
-    baseUrl: env.CHORUS_BASE_URL ?? `http://localhost:${port}`,
+    mailer,
+    baseUrl,
     // Empty unless a deployment names them. Behind one reverse proxy the web app
     // shares this origin and needs none; on separate hosts it does, and guessing
     // would make every authenticated route callable by any page.

@@ -150,6 +150,10 @@ services:
       CHORUS_MASTER_KEY_ID: ${CHORUS_MASTER_KEY_ID:-dev}
       CHORUS_MASTER_KEY: ${CHORUS_MASTER_KEY:-Y2hvcnVzLWRldmVsb3BtZW50LW9ubHkta2V5LSEhMzI=}
       CHORUS_PORT: "3000"
+      # Mail (NFR-1 AC1, ADR-0025). Unset, email — sign-up links included — is
+      # written to the api log, so a fresh install can still be signed into.
+      CHORUS_SMTP_URL: ${CHORUS_SMTP_URL:-}
+      CHORUS_MAIL_FROM: ${CHORUS_MAIL_FROM:-}
     ports:
       - "${CHORUS_API_PORT:-3000}:3000"
     depends_on:

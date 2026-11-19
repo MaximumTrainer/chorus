@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "HTTP/SSE API, OAuth 2.1 server, MCP endpoint, webhook receivers. Enqueues everything long-running (architecture.md \u00a76).",
+  "description": "HTTP/SSE API, OAuth 2.1 server, MCP endpoint, webhook receivers. Enqueues everything long-running (architecture.md §6).",
   "exports": {
     ".": {
       "chorus-dist": {
@@ -32,6 +32,7 @@
     "@modelcontextprotocol/sdk": "1.30.0",
     "better-auth": "1.7.2",
     "hono": "4.6.9",
+    "nodemailer": "6.9.16",
     "pg": "8.13.1"
   },
   "devDependencies": {
@@ -39,6 +40,7 @@
     "@chorus/indexer": "workspace:*",
     "@chorus/testing": "workspace:*",
     "@types/node": "22.7.5",
+    "@types/nodemailer": "6.4.17",
     "@types/pg": "8.11.10",
     "typescript": "5.6.3",
     "vitest": "2.1.3"
