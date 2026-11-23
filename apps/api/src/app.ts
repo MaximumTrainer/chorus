@@ -27,6 +27,8 @@ import { proposalRoutes } from './proposal-routes.js'
 import type { Retriever } from '@chorus/core'
 import { createWorkspaceService } from './workspaces.js'
 import { workspaceRoutes } from './workspace-routes.js'
+import { createSpendLimitService } from './spend-limits.js'
+import { spendLimitRoutes } from './spend-limit-routes.js'
 import { createTeamService } from './teams.js'
 import { teamRoutes } from './team-routes.js'
 import { createApiTokenService } from './api-tokens.js'
@@ -414,6 +416,7 @@ function buildRoutes(
       ...workspaceExportRoutes(config, createWorkspaceExport(config), workspaces),
       ...workspaceErasureRoutes(createWorkspaceErasure(config), workspaces),
       ...teamRoutes(teams),
+      ...spendLimitRoutes(createSpendLimitService(config)),
       ...apiTokenRoutes(tokens),
       ...repositoryRoutes(repositories),
       ...runRoutes(config, afterDecision),

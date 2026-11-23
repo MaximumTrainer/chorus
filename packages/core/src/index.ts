@@ -99,6 +99,8 @@ export type {
 } from './policies.js'
 export { evaluateSpendGuard, periodStart } from './spend-guard.js'
 export type { ScopedSpend, SpendPeriod, SpendVerdict } from './spend-guard.js'
+export { MAX_SPEND_LIMIT_CENTS, SPEND_PERIODS, parseSpendLimit } from './spend-limits.js'
+export type { SpendLimitInput } from './spend-limits.js'
 export {
   NOTIFICATION_CHANNELS,
   NOTIFICATION_KINDS,
