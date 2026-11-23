@@ -172,6 +172,17 @@ async function main(): Promise<void> {
       connectors: sources,
       entities: createEntityStore(dbConfig),
       memberships: createScopeMemberships(dbConfig),
+      // Signal text is embedded through the workspace's cache (BRAIN-1 AC6), under
+      // the embed tier's model name — the name a retriever must also use to find it.
+      // Without a model configured, signals are found by their terms alone.
+      ...(models
+        ? {
+            embedding: {
+              model: models.embed[0]!.ref.model,
+              embed: (texts: readonly string[]) => providersFromEnv().embed([...texts], models.embed[0]!.ref),
+            },
+          }
+        : {}),
     },
   })
 

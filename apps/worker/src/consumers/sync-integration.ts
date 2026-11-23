@@ -10,7 +10,7 @@ import {
   type CredentialStore,
   type IntegrationRecord,
 } from '@chorus/connectors'
-import type { EntityStore, ScopeMemberships } from '@chorus/brain'
+import { createSignalEmbedder, type EntityStore, type ScopeMemberships, type SignalEmbed } from '@chorus/brain'
 import { createDeterministicExtractor } from '../extract.js'
 import { createConfluenceMembershipSync } from '../membership-sync.js'
 
@@ -25,6 +25,9 @@ import { createConfluenceMembershipSync } from '../membership-sync.js'
  * (AC5); one the source rate-limited continues after the delay the source asked
  * for. A failed sync has already recorded its health; the next scheduled tick
  * tries again, so it is not retried here as well.
+ *
+ * After each sync, new signal text is embedded — once per distinct text, through
+ * the workspace's embedding cache (BRAIN-1 AC6).
  *
  * After a Confluence sync, the membership sync runs (NFR-4): the groups and
  * spaces the pages are restricted to are read, and granted to the people who
@@ -53,6 +56,12 @@ export interface SyncIntegrationDeps {
   readonly entities: EntityStore
   /** Where Confluence group and space access is recorded (NFR-4). */
   readonly memberships?: ScopeMemberships
+  /**
+   * How to embed signal text, and under which model's name the vectors are
+   * cached (BRAIN-1 AC6). Absent when no embedding model is configured: signals
+   * are then found by their terms alone until one is.
+   */
+  readonly embedding?: { readonly embed: SignalEmbed; readonly model: string }
   readonly now?: () => Date
   readonly fetch?: typeof fetch
   /** Pages one job may pull before handing on to a follow-up job. */
@@ -77,6 +86,8 @@ export function syncIntegrationConsumer(deps: SyncIntegrationDeps) {
     connectorsByKind: deps.connectors,
     entities: deps.entities,
   })
+
+  const embedder = deps.embedding ? createSignalEmbedder(deps.dbConfig, deps.embedding) : null
 
   const now = deps.now ?? (() => new Date())
   const contextFor = async (integration: IntegrationRecord): Promise<ConnectorContext> => ({
@@ -108,6 +119,10 @@ export function syncIntegrationConsumer(deps: SyncIntegrationDeps) {
     const outcome = await runner.sync(workspaceId, integrationId, connector)
 
     if (outcome.ingested > 0) await extractor.extract(workspaceId)
+
+    // Every run, not only one that ingested: with nothing pending it is a single
+    // cache lookup, and it lets content whose embedding failed last time catch up.
+    if (embedder) await embedder.embedPending(workspaceId)
 
     // Once caught up, not after every page batch of a backfill: each run reads
     // every restricting group and space, and the follow-up jobs would repeat it.
