@@ -40,7 +40,8 @@ primary_region = "lhr"
   # Secrets, set with `fly secrets set` and never here: CHORUS_DB_PASSWORD,
   # CHORUS_DB_APP_PASSWORD, CHORUS_REDIS_PASSWORD, CHORUS_AUTH_SECRET,
   # CHORUS_MASTER_KEY_ID, CHORUS_MASTER_KEY, and the model endpoint
-  # (CHORUS_MODEL_BASE_URL, CHORUS_MODEL_API_KEY, CHORUS_MODEL_TIERS).
+  # (CHORUS_MODEL_BASE_URL, CHORUS_MODEL_API_KEY, CHORUS_MODEL_TIERS), and the
+  # mail relay CHORUS_SMTP_URL (it carries the relay's credentials; ADR-0025).
 
 [processes]
   api = "node apps/api/dist/main.js"
